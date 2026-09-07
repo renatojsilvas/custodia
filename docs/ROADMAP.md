@@ -3568,13 +3568,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     **do custo inteiro** em vez do lucro. O preço médio é o **insumo** da base. **Fórmula, e
     ela é a decisão:** `base = valorFinanceiro_da_venda − preco_medio × quantidade`,
     **com piso em zero**. **A evidência é do simulador que esta própria fase manda portar**
-    (`../tesouro-direto-api`), e ela é literal: `src/TesouroDireto.Application/Tributos/
-    TributosPadrao.cs` linhas **46** e **70** declaram os dois tributos como
-    `BaseCalculo.**Rendimento**` — não preço —; `src/TesouroDireto.Domain/Simulador/
-    SimuladorService.cs` linha **139** calcula `rendimentoBruto = valorBruto −
-    input.ValorInvestido`; e `TributosPadrao.cs:52-57` traz o IR como
-    `TipoCalculo.FaixaPorDias` com as faixas `(0,180) (181,360) (361,720) (721,∞)`, e o IOF
-    como `TabelaDiaria` de **29 dias** (`:8-12`). *Esta fase manda "portar e conferir contra o
+    (`../tesouro-direto-api`), e ela é literal — **conferida linha a linha no arquivo, não
+    citada de memória**: `src/TesouroDireto.Application/Tributos/TributosPadrao.cs` linhas
+    **46** e **71** declaram os dois tributos como `BaseCalculo.**Rendimento**` — não preço
+    —; `src/TesouroDireto.Domain/Simulador/SimuladorService.cs` linha **138** calcula
+    `rendimentoBruto = Math.Round(valorBruto − input.ValorInvestido, 2)`; e
+    `TributosPadrao.cs:51-57` traz o IR como `TipoCalculo.FaixaPorDias` com as faixas
+    `(0,180) (181,360) (361,720) (721,999_999)`, e o IOF como `TabelaDiaria` sobre o vetor
+    `IofAliquotas` de **29** alíquotas diárias (linha **8** em diante). *Esta fase manda "portar e conferir contra o
     simulador"; portar o motor com a base errada é conferir uma coisa contra outra.*
     **Base negativa — venda com prejuízo — tem regra, e ela não estava escrita:** piso em
     zero, `IR = 0` e `IOF = 0`, e as linhas `ir:` e `iof` **NÃO EXISTEM** (não se grava zero),
@@ -3631,9 +3632,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   fase passam por VACUIDADE**. O (c) exige "o dia exato da virada de faixa, o dia 30 do IOF" —
   não se testa a fronteira de uma grandeza indefinida: o executor **define** `prazo` enquanto
   escreve o teste, e o teste certifica o que ele acabou de decidir. E o (i), "alíquotas
-  conferidas contra o simulador", é **inexecutável**: o `SimulacaoInput` do simulador modela
-  **uma aplicação** (um `DataCompra`, um `ValorInvestido`) e não sabe responder sobre uma
-  posição de custo médio com N compras — a conferência só existe depois de `prazo` ter uma
+  conferidas contra o simulador", é **inexecutável**: o `SimulacaoInput`
+  (`src/TesouroDireto.Domain/Simulador/SimulacaoInput.cs`, conferido) modela **uma
+  aplicação** — um `DataCompra` e um `ValorInvestido`, campos escalares — e não sabe
+  responder sobre uma posição de custo médio com N compras — a conferência só existe depois de `prazo` ter uma
   definição que se possa traduzir em `DataCompra`.
 
   - **Tributar a partir de um `preco_medio` PROVISÓRIO: grava, sinaliza, e o conserto é
@@ -3973,12 +3975,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   "Base = preco medio DO LIVRO" (7.3) e ELIPSE — o preco medio e o INSUMO da base. Lida
   literalmente, ela manda cobrar ~22,5% DO CUSTO INTEIRO em vez do lucro, numa tabela sem
   UPDATE. A EVIDENCIA ESTA NO SIMULADOR QUE ESTE PROMPT MANDA PORTAR (../tesouro-direto-api),
-  e e literal: src/TesouroDireto.Application/Tributos/TributosPadrao.cs linhas 46 e 70
-  declaram os DOIS tributos como BaseCalculo.Rendimento (nao preco);
-  src/TesouroDireto.Domain/Simulador/SimuladorService.cs linha 139 faz
-  rendimentoBruto = valorBruto - input.ValorInvestido; TributosPadrao.cs:52-57 traz o IR
-  como TipoCalculo.FaixaPorDias com as faixas (0,180) (181,360) (361,720) (721,inf), e o
-  IOF como TabelaDiaria de 29 DIAS (:8-12). Portar o motor com a base errada e conferir
+  e e literal (conferida no arquivo, nao citada de memoria):
+  src/TesouroDireto.Application/Tributos/TributosPadrao.cs linhas 46 e 71 declaram os DOIS
+  tributos como BaseCalculo.Rendimento (nao preco);
+  src/TesouroDireto.Domain/Simulador/SimuladorService.cs linha 138 faz
+  rendimentoBruto = Math.Round(valorBruto - input.ValorInvestido, 2);
+  TributosPadrao.cs:51-57 traz o IR como TipoCalculo.FaixaPorDias com as faixas (0,180)
+  (181,360) (361,720) (721,999_999), e o IOF como TabelaDiaria sobre o vetor IofAliquotas
+  de 29 aliquotas diarias (linha 8 em diante). Portar o motor com a base errada e conferir
   uma coisa contra outra.
   BASE NEGATIVA (venda com PREJUIZO): piso em zero, IR = 0 e IOF = 0, e as linhas ir: e
   iof: NAO EXISTEM — nao grave zero, exatamente como ja vale para o IOF ausente. E
@@ -4285,8 +4289,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   `valorFinanceiro`, `preco_medio` e `quantidade` tais que `base = valorFinanceiro − pm ×
   quantidade` seja **diferente** de `pm × quantidade`, senão as duas fórmulas dão o mesmo
   número e o teste não distingue a implementação certa da que cobra imposto sobre o custo.
-  *Limite declarado, e ele decorre da PENDÊNCIA do `prazo`:* o `SimulacaoInput` do simulador
-  modela **uma aplicação** (um `DataCompra`, um `ValorInvestido`) e **não sabe responder**
+  *Limite declarado, e ele decorre da PENDÊNCIA do `prazo`:* o `SimulacaoInput`
+  (`src/TesouroDireto.Domain/Simulador/SimulacaoInput.cs`) modela **uma aplicação** — um
+  `DataCompra` e um `ValorInvestido` escalares — e **não sabe responder**
   sobre uma posição de custo médio com N compras — a conferência só é executável com um
   fixture de **compra única**, e é assim que ela tem de estar escrita. Estender a conferência
   a posições de N compras depende de a pendência do `prazo` ter sido decidida, e o critério
@@ -4689,7 +4694,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   **Dependência externa nova: o Hub publicando `eod.ready`.**
 
   Handler de `EodPricesReady(D)` materializando o snapshot de **todos** os clientes num
-  batch, sobre o intervalo `[U_anterior + 1, D]` e gravando `eod_processado(D)` — a
+  batch, sobre o intervalo `[U_anterior + 1, D]` percorrido em **ordem crescente** e gravando
+  **`eod_processado(d)` para cada dia `d`, na mesma transação que fecha aquele dia** — a
   **DDL nova desta fase**, uma linha por data materializada, com `data_ref date` e
   `processado_em timestamptz`, e não é projeção do livro; `snapshots_posicao` versionado (marca a versão anterior `vigente = false` e
   **INSERE** a nova com `calculado_em`); o worker `recalcular(cliente?, instrumento, desde)`
@@ -5547,8 +5553,12 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      algoritmo e escrever um palpite sobre o relogio de outro servico.
      eod_processado E A DDL NOVA DESTA FASE (nao "a unica tabela nova do roadmap": o F5
      tambem cria uma, o CALENDARIO DE DIAS UTEIS, que e configuracao semeada por
-     migration). Uma linha por data cujo batch fechou em COMPLETUDE, gravada pelo proprio
-     handler. A DDL INTEIRA, JA DECIDIDA — NAO A REDESENHE:
+     migration). UMA LINHA POR DIA MATERIALIZADO — nao uma por D anunciado —, gravada na
+     MESMA TRANSACAO que fecha aquele dia inteiro, pelo handler ou pelo comando
+     administrativo, que aqui fazem a MESMA coisa. Um eod.ready(D) que materializa [D-4, D]
+     deixa CINCO linhas, e a de D exatamente uma. NAO ESCREVA "uma linha por D cujo batch
+     fechou em COMPLETUDE": essa formulacao descrevia outra tabela e fazia a alinea (iii) da
+     reconciliacao alertar em operacao normal. A DDL INTEIRA, JA DECIDIDA — NAO A REDESENHE:
        eod_processado (
          data_ref      date        PRIMARY KEY,
          processado_em timestamptz NOT NULL
