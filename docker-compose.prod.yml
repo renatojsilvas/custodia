@@ -1,0 +1,83 @@
+services:
+  custodia:
+    build: .
+    container_name: custodia-app
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=${CUSTODIA_DB_HOST:-tesouro-direto-db};Port=5432;Database=${CUSTODIA_DB_NAME:-custodia};Username=custodia;Password=${CUSTODIA_APP_PASSWORD:?CUSTODIA_APP_PASSWORD e obrigatorio (senha da role custodia no Postgres compartilhado)}
+      - ApiKey__Key=${CUSTODIA_API_KEY:?CUSTODIA_API_KEY e obrigatorio (chave que a custodia exige de quem le os extratos)}
+      - Loki__Uri=${CUSTODIA_LOKI_URI:-http://alloy:3100}
+
+    # VARIAVEIS QUE AINDA NAO ESTAO AQUI, E POR QUE.
+    # O precedente deste ecossistema (ver o F4 do operacoes) e acrescentar a credencial
+    # obrigatoria NA FASE QUE A TORNA REAL, nunca antes: variavel com `:?` que o codigo
+    # ainda nao le derruba o deploy sem motivo, e o operador perde tempo procurando
+    # defeito onde so ha antecipacao.
+    #
+    #   RabbitMq__{Host,User,Password}  -> entra quando o consumidor de eventos existir
+    #                                      (ARQUITETURA §9 item 3). O broker NAO sobe
+    #                                      neste compose: e servico da PLATAFORMA,
+    #                                      provisionado pelo hub-precos; a custodia so
+    #                                      entra na rede "plataforma" e fala com o alias
+    #                                      "plataforma-rabbitmq".
+    #   Hub__{BaseUrl,ApiKey}           -> entra quando o bootstrap REST da projecao de
+    #                                      precos existir (§7.1) ou a resolucao
+    #                                      nome->id do onboarding (§7.2).
+    #
+    # Ao acrescentar qualquer uma, siga a guarda de boot do PADROES §6: fora dos
+    # ambientes isentos, segredo ausente DERRUBA O BOOT — nunca significa "sem
+    # verificacao" — e a guarda de API key checa comprimento minimo e placeholder, nao
+    # so vazio, tanto para a chave que este servico EXIGE quanto para a que ele ENVIA.
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+    # LIMITES: MEDIDOS na VPS em 2026-09-07, nao herdados por copia.
+    #   nproc = 1;  free -m -> total 1967 MB, disponivel 859 MB
+    #   vizinhos hoje: tesouro-direto-app 256m, tesouro-direto-db 256m,
+    #                  tesouro-direto-alloy 256m, tesouro-direto-web 160m,
+    #                  hub-precos-rabbitmq 256m, operacoes-app 192m,
+    #                  hub-precos-app SEM LIMITE (0) — e a lacuna da §10.12 aberta hoje:
+    #                  o GC dele enxerga os 1,9 GB do host, nao um cgroup.
+    # 192m e o mesmo teto do operacoes, que e o vizinho de perfil mais parecido (API
+    # pequena, sem broker embutido). Nao e chute: e o numero do molde, e cabe nos 859 MB
+    # disponiveis. Servico novo muda o teto dos VIZINHOS, nao so o seu (§10.14) — se a
+    # custodia crescer (o worker de snapshots da §7.4 e o candidato), MECA de novo com
+    # `docker stats` antes de subir este numero, e olhe o que sobra para os outros.
+    # cpu_shares e PESO (vale sob contencao). O teto de cpus num host de UM nucleo nao
+    # contem runaway nenhum, so corta rajada (§10.13) — por isso 1.0, e nao um numero
+    # "folgado" inventado.
+    cpu_shares: 512
+    memswap_limit: 192m
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 192m
+
+    networks:
+      tesouro-net:
+      plataforma:
+        aliases:
+          # O nome vira ALIAS DNS na rede compartilhada, e colisao ja derrubou um
+          # vizinho em producao (§10.1). OCUPADOS quando este arquivo foi escrito
+          # (medido com `docker ps` na VPS em 2026-09-07):
+          #   app, db, web, alloy, tesouro-direto-app, tesouro-direto-db,
+          #   tesouro-direto-web, tesouro-direto-alloy, hub-precos-app,
+          #   hub-precos-rabbitmq, operacoes-app, plataforma-rabbitmq.
+          # `custodia-app` estava LIVRE — confirme com `docker ps` antes do primeiro
+          # deploy, porque a lista envelhece.
+          - custodia-app
+
+networks:
+  # Ambas external: nenhuma pertence a este servico. A tesouro-net e criada pelo
+  # compose do tesouro-direto; a plataforma, pelo preflight do deploy.
+  tesouro-net:
+    external: true
+  plataforma:
+    external: true

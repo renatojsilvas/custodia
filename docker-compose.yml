@@ -1,0 +1,81 @@
+services:
+  custodia:
+    build: .
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=custodia;Username=custodia;Password=${CUSTODIA_APP_PASSWORD:?CUSTODIA_APP_PASSWORD e obrigatorio no .env (senha da role custodia)}
+      - ApiKey__Key=${CUSTODIA_API_KEY:?CUSTODIA_API_KEY e obrigatorio no .env (chave que o custodia exige de quem o chama)}
+      # VARIAVEIS QUE AINDA NAO ESTAO AQUI — mesmo criterio do docker-compose.prod.yml:
+      # a credencial entra NA FASE QUE A TORNA REAL. Alem de derrubar o `up` sem motivo,
+      # uma variavel com `:?` que ninguem le quebra o `docker compose config -q` do CI.
+      #
+      #   Hub__{BaseUrl,ApiKey}  -> quando existir o bootstrap REST da projecao de precos
+      #                             (ARQUITETURA §7.1) ou a resolucao nome->id do
+      #                             onboarding (§7.2). O Hub e servico externo (repo
+      #                             hub-precos) e nao sobe aqui; na rede "plataforma" o
+      #                             alias e "hub-precos-app", nao "app" (§10.1).
+      #   RabbitMq__*            -> quando existir o consumidor de eventos (§9 item 3).
+      #                             O broker e da PLATAFORMA e nao sobe aqui. Localmente:
+      #                               docker network create plataforma     (uma vez)
+      #                               docker compose -f ../hub-precos/docker-compose.yml \
+      #                                 up -d plataforma-rabbitmq
+      #                             Em dev guest/guest serve; em producao as duas sao
+      #                             obrigatorias, sem default.
+    ports:
+      # Portas LOCAIS do desenvolvedor (nao da VPS). O operacoes usa 5081 (app) e 5434
+      # (pg); estas sao as seguintes. Se colidirem com outro servico SEU, troque aqui, no
+      # bloco `db` abaixo e no README — nao ha registro central de portas locais.
+      - "127.0.0.1:5082:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # O nome do serviço não pode ser genérico ("app"): o Compose registra um alias DNS
+    # igual ao NOME DO SERVIÇO em toda rede em que ele entra, e isso vale mesmo com
+    # container_name definido — "aliases:" ACRESCENTA, não substitui esse alias (medido
+    # na VPS: o container do tesouro-direto responde por "tesouro-direto-app" E "app" ao
+    # mesmo tempo). Um serviço chamado "app" entrando na "plataforma" arrisca colidir com
+    # QUALQUER outro "app" que já esteja lá — é o incidente do PADROES.md §10.1 do molde,
+    # que derrubou o front do tesouro-direto no Hub por colisão de alias DNS. O custodia
+    # precisa falar com o plataforma-rabbitmq pela rede compartilhada, então entra na
+    # "plataforma" sim — mas com nome único: "custodia".
+    networks:
+      - default
+      - plataforma
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_ADMIN_PW:-admin123}
+      POSTGRES_DB: custodia
+      CUSTODIA_APP_PASSWORD: ${CUSTODIA_APP_PASSWORD:?CUSTODIA_APP_PASSWORD e obrigatorio no .env}
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ./infra/postgres/sql:/opt/custodia/sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d custodia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  pgdata:
+
+networks:
+  # Rede compartilhada da plataforma, onde vive o broker. External de proposito: ela
+  # NAO e deste servico — se este compose a criasse, um "docker compose down" daqui a
+  # removeria por baixo dos outros. Crie uma vez com: docker network create plataforma
+  plataforma:
+    external: true

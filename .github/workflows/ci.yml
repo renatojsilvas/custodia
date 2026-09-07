@@ -1,0 +1,295 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore
+
+      # TESTCONTAINERS_RYUK_DISABLED: o Ryuk e um container auxiliar que o Testcontainers
+      # puxa do Docker Hub UMA VEZ por execucao para faxinar containers orfaos ao final.
+      # Num runner efemero ele nao tem funcao: a VM inteira e destruida junto com o job,
+      # entao nao ha orfao para limpar. O que ele tem e custo: vira ponto unico de falha
+      # para TODA a suite de integracao. Em 2026-08-24 o Docker Hub devolveu HTTP 500 ao
+      # servir o manifesto dele e, no operacoes, 163 dos 208 testes de API quebraram juntos em
+      # 9,8s — inclusive os de Postgres, que nada tem a ver com o relay. A mesma falha ja
+      # tinha acontecido numa maquina local, com o container do Ryuk preso em "Created",
+      # com exatamente o mesmo placar 163/45.
+      # Fica ligado no desenvolvimento local (onde a maquina persiste e a faxina serve);
+      # aqui e desligado de proposito.
+      - name: Testes (com cobertura)
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+        run: dotnet test --no-build --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./test-results/coverage -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: Coverage gate (line >= 85%)
+        run: python3 scripts/coverage-gate.py ./test-results/coverage --threshold 85 --verbose
+
+      - name: SonarQube Scan
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      # Gate barato (segundos): docker-compose.prod.yml exige ${CUSTODIA_APP_PASSWORD:?...}
+      # e ${CUSTODIA_API_KEY:?...} (sem default em produção, de propósito). Este bloco env:
+      # é a ÚNICA fonte das obrigatórias aqui — o runner não tem `.env` (não é versionado);
+      # sem estas dummies o `config -q` do docker-compose.prod.yml abaixo falha e o job
+      # `test` reprova (mesma armadilha documentada no molde
+      # ../tesouro-direto-api/.github/workflows/deploy.yml para TD_APP_PASSWORD: o bug não
+      # aparece em teste local porque `docker compose` lê o `.env` do diretório
+      # automaticamente e mascara a variável faltante — para reproduzir a condição do CI use
+      # `--env-file /dev/null`).
+      #
+      # AS DUMMIES TÊM QUE ESPELHAR EXATAMENTE as variáveis `:?` dos composes — nem a mais,
+      # nem a menos. Uma a menos e o `config -q` reprova; uma a mais e ninguém percebe que
+      # sobrou, até alguém concluir do CI que o serviço depende de algo que ele não usa.
+      # `Hub__*` e `RabbitMq__*` NÃO estão nos composes desta fase — entram na fase que os
+      # tornar reais (ver o bloco "VARIAVEIS QUE AINDA NAO ESTAO AQUI" no
+      # docker-compose.prod.yml) — então também não estão aqui.
+      - name: Compose config gate (sintaxe + tags existem no registry)
+        env:
+          CUSTODIA_APP_PASSWORD: dummy
+          CUSTODIA_API_KEY: dummy
+        run: |
+          set -e
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.prod.yml config -q
+
+          images=$(docker compose -f docker-compose.yml config --format json \
+            | jq -r '.services[] | select(.build == null) | .image' | sort -u)
+
+          failed=0
+          for image in $images; do
+            if output=$(docker manifest inspect "$image" 2>&1); then
+              echo "OK    $image"
+            elif echo "$output" | grep -qiE 'no such manifest|manifest unknown|not found'; then
+              echo "FALHA $image (tag inexistente no registry)"
+              echo "$output"
+              failed=1
+            else
+              echo "AVISO $image: falha ao consultar o manifest (ignorado)"
+              echo "$output"
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Gate reprovado: pelo menos uma tag pinada não existe no registry."
+            exit 1
+          fi
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # A parada em erro vem do `set -e` na primeira linha do script, NAO de
+          # `script_stop: true`: esse input foi removido do appleboy/ssh-action, e o tag
+          # flutuante `@v1` ja aponta para uma versao que nao o conhece — o run anota
+          # "Unexpected input(s) 'script_stop'" e segue. Ele estava aqui sem efeito
+          # nenhum. Ver LEIA-ME-KIT.md, "Guarda que sumiu junto com um tag flutuante".
+          envs: CUSTODIA_APP_PASSWORD,CUSTODIA_API_KEY
+          script: |
+            set -e
+            REPO_DIR=/opt/custodia
+            mkdir -p "$REPO_DIR"
+            cd "$REPO_DIR"
+
+            echo "== preflight =="
+            docker network inspect tesouro-net >/dev/null 2>&1 || {
+              echo "ERRO: rede docker 'tesouro-net' não existe. O compose do tesouro-direto a cria;"
+              echo "sem ela o custodia subiria numa rede isolada e não enxergaria o Postgres."
+              docker network ls
+              exit 1
+            }
+            # "plataforma" é diferente de "tesouro-net": é a rede da PLATAFORMA (custodia
+            # não é dono dela), criada aqui na primeira vez que qualquer serviço precisar
+            # dela — hoje é o plataforma-rabbitmq do Hub. A custodia entra nela desde já
+            # porque vai consumir eventos desse broker (§9 item 3). Por ser
+            # external:true no compose, o "up" abortaria se ela não existisse; diferente
+            # de tesouro-net, aqui não há por que abortar o deploy — criar é seguro e
+            # idempotente (docker network create falha alto se já existir e o inspect
+            # acima já filtrou esse caso).
+            docker network inspect plataforma >/dev/null 2>&1 || {
+              echo "rede docker 'plataforma' não existe nesta VPS ainda — criando."
+              docker network create plataforma
+            }
+            docker ps --format '{{.Names}}' | grep -qx tesouro-direto-db || {
+              echo "ERRO: container 'tesouro-direto-db' não está rodando — é o Postgres compartilhado (§12 do plano)."
+              docker ps --format '  {{.Names}}'
+              exit 1
+            }
+            echo "preflight ok"
+
+            if [ ! -d .git ]; then
+              git clone https://github.com/${{ github.repository }} .
+            fi
+            git fetch origin main
+            git reset --hard origin/main
+
+            CUSTODIA_APP_PASSWORD="$(printf '%s' "$CUSTODIA_APP_PASSWORD" | tr -d '\r\n')"
+            if [ -z "$CUSTODIA_APP_PASSWORD" ]; then
+              echo "ERRO: secret CUSTODIA_APP_PASSWORD vazio (ou só com quebras de linha)."
+              exit 1
+            fi
+
+            CUSTODIA_API_KEY="$(printf '%s' "$CUSTODIA_API_KEY" | tr -d '\r\n')"
+            if [ -z "$CUSTODIA_API_KEY" ]; then
+              echo "ERRO: secret CUSTODIA_API_KEY vazio (ou só com quebras de linha). É a chave que o"
+              echo "      custodia exige de quem o chama (X-Api-Key); sem ela o container sobe e o"
+              echo "      ApiKeyGuard derruba o boot em ambiente Production."
+              exit 1
+            fi
+
+            # SECRETS QUE AINDA NAO SAO VALIDADOS AQUI: Hub__* e RabbitMq__*. Eles nao estao
+            # nos composes desta fase, entao nao entram no .env — e validar secret que
+            # ninguem consome so cria motivo de reprovar deploy sem causa. Ao acrescenta-los,
+            # normalize na ORIGEM com `tr -d '\r\n'` (§10.4), como as duas acima, E lembre
+            # de incluir no printf do .env abaixo E no `envs:` do ssh-action.
+
+            # ATENÇÃO: este .env é reescrito POR COMPLETO a cada deploy — não é um merge com
+            # o que já existe na VPS. Qualquer variável obrigatória (${VAR:?...} no compose)
+            # que não entrar neste MESMO printf derruba o serviço no próximo "up", mesmo que
+            # a variável já tivesse valor num .env anterior. Já houve incidente neste
+            # ecossistema com um script sobrescrevendo o .env com só parte das variáveis e
+            # reportando sucesso — as obrigatórias têm que estar juntas aqui.
+            printf 'CUSTODIA_APP_PASSWORD=%s\nCUSTODIA_API_KEY=%s\n' \
+              "$CUSTODIA_APP_PASSWORD" "$CUSTODIA_API_KEY" > .env
+            chmod 600 .env
+
+            echo "== provisionamento do banco =="
+            ./infra/postgres/provision-remote.sh
+
+            echo "== guarda de colisão de alias em redes compartilhadas =="
+            # Exclui só custodia-app: este compose sobe um único serviço, sem broker
+            # próprio. O broker plataforma-rabbitmq é da PLATAFORMA, sobe no hub-precos, nunca
+            # aqui.
+            outros=$(docker ps --format '{{.Names}}' | grep -vx -e custodia-app || true)
+            servicos=$(CUSTODIA_APP_PASSWORD=dummy CUSTODIA_API_KEY=dummy \
+              docker compose -f docker-compose.prod.yml config --services)
+            for rede in tesouro-net plataforma; do
+              if ! docker network inspect "$rede" >/dev/null 2>&1; then
+                echo "  '$rede': rede ainda não existe nesta VPS, pulando checagem de colisão."
+                continue
+              fi
+
+              alheios=$(for c in $outros; do
+                docker inspect -f '{{range $n,$v := .NetworkSettings.Networks}}{{if eq $n "'"$rede"'"}}{{range $v.Aliases}}{{.}}{{"\n"}}{{end}}{{end}}{{end}}' "$c" 2>/dev/null
+              done | sort -u | grep -v '^$' || true)
+
+              for s in $servicos; do
+                if echo "$alheios" | grep -qx "$s"; then
+                  echo "ERRO: o serviço '$s' colide com um alias DNS já registrado na rede $rede"
+                  echo "      por outro container. Subir assim faria o DNS do Docker alternar entre os"
+                  echo "      dois, quebrando METADE das chamadas de ambos os lados, sem erro visível."
+                  echo "      Renomeie o serviço em docker-compose.prod.yml para algo único na rede."
+                  echo "      Aliases já registrados por terceiros em '$rede':"
+                  echo "$alheios" | sed 's/^/        /'
+                  exit 1
+                fi
+              done
+              echo "  '$rede': sem colisão"
+            done
+            echo "sem colisão"
+
+            echo "== build e up =="
+            docker compose -f docker-compose.prod.yml build
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # NAO HA AQUI verificacao de credencial do broker nem smoke test de relay.
+            # O molde `operacoes` tem os dois porque PUBLICA na outbox; a custodia CONSOME
+            # eventos (ADR-10) e nesta fase nem broker usa. Quando o consumidor existir,
+            # a prova equivalente NAO e a mesma: o que importa la e que a fila e o binding
+            # existem ANTES da primeira publicacao — evento em exchange topic sem binding
+            # casando e descartado EM SILENCIO, com o produtor marcando sucesso (ja
+            # aconteceu nesta plataforma). Ver LEIA-ME-KIT, "Perder o volume do broker".
+
+            echo "== esperando ficar healthy =="
+            timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" custodia-app 2>/dev/null)" = "healthy" ]; do
+              sleep 5
+            done' || {
+              echo "ERRO: container não ficou healthy. Últimas linhas do log:"
+              docker logs --tail 50 custodia-app || true
+              exit 1
+            }
+
+            echo "== smoke test autenticado (CUSTODIA_API_KEY realmente autentica) =="
+            # Prova equivalente, sem depender de rota nenhuma: um caminho
+            # QUALQUER sob /v1/ tem que responder 401 SEM chave (o ApiKeyMiddleware está
+            # ativo) e 404 COM a CUSTODIA_API_KEY provisionada (autenticado, mas a rota não
+            # existe). As duas juntas provam o fato — só o 401 não provaria nada, porque
+            # passaria também com a chave errada.
+            unauthenticated_status=$(docker exec custodia-app curl -s -o /dev/null -w '%{http_code}' \
+              http://localhost:8080/v1/smoke-inexistente)
+            if [ "$unauthenticated_status" != "401" ]; then
+              echo "ERRO: GET /v1/smoke-inexistente SEM chave não retornou 401 (retornou"
+              echo "      $unauthenticated_status). Isso significa que a autenticação por API key"
+              echo "      não está ativa e o deploy subiria servindo /v1/* sem exigir credencial."
+              docker logs --tail 50 custodia-app || true
+              exit 1
+            fi
+            echo "    sem chave: 401 ok"
+
+            authenticated_status=$(docker exec custodia-app curl -s -o /dev/null -w '%{http_code}' \
+              -H "X-Api-Key: $CUSTODIA_API_KEY" http://localhost:8080/v1/smoke-inexistente)
+            if [ "$authenticated_status" != "404" ]; then
+              echo "ERRO: GET /v1/smoke-inexistente com a CUSTODIA_API_KEY provisionada não retornou"
+              echo "      404 (retornou $authenticated_status). Rota inexistente autenticada deveria"
+              echo "      passar pelo ApiKeyMiddleware e cair no roteamento sem endpoint — 401 aqui"
+              echo "      significaria que a chave do secret CUSTODIA_API_KEY diverge da chave que a"
+              echo "      aplicação está aceitando."
+              docker logs --tail 50 custodia-app || true
+              exit 1
+            fi
+            echo "    com CUSTODIA_API_KEY: 404 ok (autenticado, rota inexistente)"
+
+            echo "== deploy concluído =="
+            docker image prune -f
+        env:
+          CUSTODIA_APP_PASSWORD: ${{ secrets.CUSTODIA_APP_PASSWORD }}
+          CUSTODIA_API_KEY: ${{ secrets.CUSTODIA_API_KEY }}
+
+  guarda-deploy:
+    # PADROES §10.17: o `deploy` depende do `test`; um teste instável pula o deploy em
+    # silêncio, e nada na leitura casual do histórico distingue "nunca deployado" de
+    # "deployado" — foi assim que um PR ficou 12 dias mergeado e fora do ar. Este job
+    # roda SEMPRE (mesmo se `test`/`deploy` falharem ou forem pulados) só em push na
+    # main, e falha ALTO quando o deploy não aconteceu de fato — o commit fica com um
+    # check vermelho e nomeado, em vez de um "skipped" cinza fácil de não notar numa
+    # lista de checks.
+    if: always() && github.event_name == 'push'
+    needs: [test, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confere que este commit da main chegou a produção
+        run: |
+          if [ "${{ needs.deploy.result }}" != "success" ]; then
+            echo "ERRO: push em main no commit ${{ github.sha }} NÃO chegou a produção"
+            echo "      (test: ${{ needs.test.result }}, deploy: ${{ needs.deploy.result }})."
+            echo "      Corrija e mande um novo push — reveja PADROES.md §10.17."
+            exit 1
+          fi
+          echo "commit ${{ github.sha }} deployado com sucesso."
