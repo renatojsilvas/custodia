@@ -139,7 +139,7 @@ else
     || vermelho "falta infra/grafana/dashboards/$NOME.json"
   grep -q "$NOME" "$REPO_TD/scripts/grafana-cloud/apply-cloud.sh" 2>/dev/null \
     && verde "'$NOME' citado no apply-cloud.sh" \
-    || vermelho "'$NOME' NAO esta no apply-cloud.sh — copiar o JSON nao basta, o nome entra na lista"
+    || vermelho "'$NOME' NAO aparece no apply-cloud.sh — servico vizinho entra por BLOCOS 'if -f' proprios (cinco pontos), nao por uma lista fixa"
   # O nome do arquivo de regras nao e derivavel do nome do servico: o hub usa
   # 'rules-hub.yaml' e o repo se chama 'hub-precos'. O que importa e que o
   # apply-cloud.sh leia ALGUM rules-*.yaml e que esse arquivo exista.

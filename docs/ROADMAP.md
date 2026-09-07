@@ -158,8 +158,8 @@ no `operacoes` (`LEIA-ME-KIT`, "Especificar só a metade permissiva").
 | I1 | `movimentos` é append-only (UPDATE e DELETE bloqueados por trigger) | F3 |
 | I2 | dedupe por `UNIQUE (cliente_id, ref_externa)`, com `ref_externa` **NOT NULL** e derivada por MOVIMENTO | F3 / F4 |
 | I3 | `TradeRegistered` ↔ movimento, nas duas direções | F4 |
-| I4 | `posicao_corrente` é dobra pura do livro nas **três** colunas: Σ `qtd_delta` = `quantidade`, e `preco_medio`/`custo_total` reproduzidos pela mesma dobra — **sem filtro por relógio** | F4 |
-| I5 | `eod.ready` é o **único** gatilho da valoração **DIÁRIA** (ADR-9, §7.3) — o qualificador é a metade do invariante: a **exceção nomeada** é o gatilho 2 da §7.4 (`PriceObserved` com `revisao > 0`), que **reversiona o passado** e nunca materializa o dia corrente | F7 |
+| I4 | `posicao_corrente` é dobra pura do livro nas **três** colunas: Σ `qtd_delta` = `quantidade`, e `preco_medio`/`custo_total` reproduzidos pela mesma dobra — **sem filtro por relógio**. A dobra é a da **V1 do F3**, escrita **por tipo, para os dez**: regra que cobre dois tipos deixa oito colunas sem definição com a suíte verde | F3 (a regra) · F4 (a aplicação) |
+| I5 | `eod.ready` é o **único** gatilho da valoração **DIÁRIA** (ADR-9, §7.3) — o qualificador é a metade do invariante: a **exceção nomeada** é o gatilho 2 da §7.4 (`PriceObserved` com `revisao > 0`). O mecanismo que faz as duas coisas conviverem é **recorte de intervalo**: o worker percorre `[desde, hoje−1]` e **insere quando difere do vigente OU quando não existe linha** — cria dia passado que faltava e reversiona dia passado que mudou, e o **dia corrente fica fora do intervalo**, materializado só pelo `eod.ready`. É **desvio parcial da §7.4**, que escreve `[desde, hoje]`, e está rotulado no F7 | F7 |
 | I6 | só existe linha de snapshot em dia útil com posição ≠ 0 | F7 |
 | I7 | versionar preserva a versão anterior legível (`calculado_em`) | F7 |
 | I8 | `recalcular` é determinístico e idempotente (rodar duas vezes não cria terceira versão) | F7 |
@@ -169,10 +169,10 @@ no `operacoes` (`LEIA-ME-KIT`, "Especificar só a metade permissiva").
 | I12 | banco privado: exatamente **uma** connection string, para o próprio banco (ADR-12) | F1 / F3 |
 | I13 | **a chave de dedupe só se consome quando o movimento gravado está CORRETO E COMPLETO** | F3 (regra) · F4, F5, F6, F9 (aplicação) |
 | I14 | fila e bindings existem **ANTES** da primeira publicação | F2 |
-| I15 | toda condição de parada de laço declara **completude** ou **limite**, e as duas produzem resultados diferentes (§10.31) | F2, F4, F6, F7, F9 |
+| I15 | toda condição de parada de laço declara **completude** ou **limite**, e as duas produzem resultados diferentes (§10.31) | F2 (verificação do deploy), F4 (consumo e drenador), F5 (job de liquidação), F6 (os dois laços de coleta), F7 (batch do `eod.ready` e worker), F8 (cursor com clamp), F9 (fan-out por cliente) — **toda fase com laço, e a lista é a prova disso** |
 | I16 | não existe verbo de escrita sob `/v1` (ADR-10), provado por teste e não por prosa | F8 |
 | I17 | `caixa:BRL` e `caixa:a_liquidar` são ids **locais** desta casa, com preço **1,000000 por definição** — nunca recebem `PriceObserved`, nunca são pedidos ao Hub, nunca entram no alerta de preço ausente | F3 (regra) · F6, F7 (aplicação) |
-| I18 | a Custódia não publica **nenhum evento de contrato da §5.1** e não tem outbox nem relay; o único tráfego AMQP que ela emite é infraestrutura interna dela (`custodia.retry`, `custodia.parked`, `custodia.prices.dlq`), que não é evento de domínio | F1 (texto) · F2 (topologia) · F4 (uso) |
+| I18 | a Custódia não publica **nenhum evento de contrato da §5.1** e não tem outbox nem relay; o único tráfego AMQP que **a aplicação** emite é infraestrutura interna dela (`custodia.retry.in`, `custodia.parking`, e o que dead-letra para a `custodia.prices.dlq`), que não é evento de domínio. **Ressalva nomeada, para o invariante não ser lido como falso:** o *passo de deploy* do F2 publica `prices.smoke` no exchange `prices`, que é do Hub — é prova de fumaça de topologia, executada por script, e não a aplicação | F1 (texto) · F2 (topologia) · F4 (uso) |
 | I19 | uma linha do livro é revertida **no máximo uma vez** (`UNIQUE (ref_estorno) WHERE ref_estorno IS NOT NULL`), e estorno **de** estorno continua possível | F3 |
 
 **I13 é a regra de governo deste roadmap**, e ela decide sozinha os casos que este
@@ -195,8 +195,12 @@ a metade **comportamental** vai para o **F4** (consumidor).
   é barrado pela trigger, e o `UNIQUE (cliente_id, ref_externa)` torna a reentrega um
   no-op, então a linha apontaria para o nada **para sempre**.
 - F4: estorno órfão **não grava nada e não consome a chave de dedupe** (I13) → é
-  **republicado na `custodia.retry`** (fila com `x-message-ttl` e DLX de volta para a
-  `custodia.prices`, declarada no F2) e **confirmado na fila principal**. O atraso é
+  **republicado pelo exchange `custodia.retry.in`, que entrega na `custodia.retry`** (fila
+  com `x-message-ttl` e DLX de volta para a
+  `custodia.prices`, declarada no F2) e **confirmado na fila principal**. *Publica-se
+  sempre em **exchange**, nunca direto numa fila: a default exchange com routing key =
+  nome da fila foi **rejeitada nominalmente** no F2, e escrever "republicado na
+  `custodia.retry`" sem dizer por onde é o que convida a usá-la.* O atraso é
   real, a cabeça da fila é liberada, e a mensagem volta sozinha depois do TTL.
   *O motivo tem nome, e não é "backoff": é **head-of-line blocking**.* Com **uma** fila,
   **um** consumidor, `prefetchCount: 1` e consumo serial, `nack(requeue: true)` devolve a
@@ -231,7 +235,20 @@ a metade **comportamental** vai para o **F4** (consumidor).
   `trades.registered` não tem caminho de recuperação por contrato: ack antes do confirm é
   **perda definitiva e silenciosa**, o modo de falha exato que o F2 existe para impedir.
   Confirm negado ou timeout ⇒ `nack(requeue: true)` da original — aqui o requeue é o certo,
-  porque a alternativa é perder.
+  porque a alternativa é perder. **E o confirm negado PERSISTENTE tem desfecho próprio, sem
+  o qual esta regra reproduz os dois desfechos que este arquivo rejeita.** Com uma fila, um
+  consumidor, prefetch 1 e consumo serial, o `nack(requeue: true)` reentrega **na hora**;
+  se a causa do confirm negado não for transitória — o caso previsto é a `custodia.retry`
+  ter nascido com `x-overflow: reject-publish` (saída (i) do F2) e estar cheia —, o
+  resultado seria `nack → reentrega → publish → reject → nack` sem atraso nenhum, que é o
+  **laço quente** da §10.13, e o `x-delivery-limit` queimaria em milissegundos levando a
+  mensagem para a `custodia.prices.dlq`, que é o "DLQ na primeira tentativa" **rejeitado
+  abaixo**. Regra: **teto de tentativas de republish por mensagem** (mesmo teto de voltas,
+  contado em memória dentro da entrega corrente); estourado, a mensagem vai para a
+  `custodia.parked` pelo `custodia.parking`, com o motivo **`retry_indisponivel`** e
+  alerta — preserva a mensagem, sem laço quente e sem DLQ. O valor entra na **lista fechada
+  e sem default** de `x-custodia-motivo` do F4, junto dos outros: "com motivo nomeado" sem
+  dizer o nome é o default voltando pela porta dos fundos.
   *E a frequência decide o que NÃO se corta:* com a FK composta em Operações e o relay
   publicando em ordem de `id`, um confirm por vez, o órfão **por corrida** é praticamente
   inexistente. Os casos que de fato vão acontecer são os **incuráveis** — original perdido
@@ -240,8 +257,14 @@ a metade **comportamental** vai para o **F4** (consumidor).
   dia for preciso cortar escopo aqui, o candidato é **reduzir as 10 voltas** (2 ou 3 cobrem
   a corrida real), **nunca** remover o parking.
   *Rejeitados:* `nack(requeue: true)` com ou sem backoff (o head-of-line acima); gravar
-  pendente e reconciliar (segunda tabela mutável ao lado do livro, proibida pela §9 dos
-  padrões); DLQ na primeira tentativa (transforma atraso de segundos em intervenção
+  pendente e reconciliar — cria uma **segunda fonte de verdade mutável ao lado de um livro
+  append-only**, com política de expiração, dreno e reconciliação próprios, e o estorno
+  pendente ficaria **invisível** para o extrato de movimentação do F8, que é `SELECT` do
+  livro (§7.5). *(A §9 dos padrões **não** proíbe isso nominalmente — a versão anterior
+  deste arquivo lhe atribuía uma regra que ela não tem. O que ela nomeia é "estado de
+  controle duplicando dados (flags de bootstrap)", que é caso vizinho e não este;
+  alternativa rejeitada por norma inexistente é rejeição sem fundamento, e o motivo real
+  está escrito acima.)*; DLQ na primeira tentativa (transforma atraso de segundos em intervenção
   manual); segunda fila só para `trades.registered` (mudaria a topologia da §5, que dá
   **uma** fila ao consumidor, e não resolveria o órfão que chega depois do seu próprio
   original).
@@ -255,7 +278,8 @@ corrigir é manual.
 
 - F4: `posicao_corrente` se reconstrói por **comando administrativo executado dentro do
   container** (`dotnet Custodia.API.dll --reconstruir-posicoes [cliente] [instrumento]`),
-  que é uma dobra pura sobre o livro e refaz **as três** colunas (`quantidade`,
+  que é a **dobra da V1 do F3** (por tipo, para os dez, ignorando os pares revertidos)
+  aplicada ao livro inteiro daquela chave, e refaz **as três** colunas (`quantidade`,
   `preco_medio`, `custo_total`), nunca só a quantidade — reconstruir uma das três e
   deixar as outras duas como estavam é divergência plantada pela própria ferramenta de
   conserto. *Rejeitados:* endpoint admin protegido por API key
@@ -369,6 +393,18 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   título — e os títulos têm acento). Não o reescreva: rode-o com `VPS`, `GC_GRAFANA_URL`
   e `GC_GRAFANA_TOKEN` exportados. O SKIP da prova 5 é permanente por construção — é a mão.
 
+  **Uma exceção nominal à proibição de reescrever, e só ela: a mensagem de falha da linha
+  142.** Ela diz *"'custodia' NAO esta no apply-cloud.sh — copiar o JSON nao basta, **o
+  nome entra na lista**"*, e essa "lista" é exatamente a que os cinco pontos acima
+  desmentem: serviço vizinho entra por **blocos `if -f` próprios**, e a única lista fixa
+  (`for d in tesouro-direto host`, linha 281) publica na pasta do TD. Deixar a mensagem
+  como está faz quem rodar o script ler a instrução errada **com o aval desta fase** —
+  e a instrução errada leva ao desfecho (a) do parágrafo acima, que é silencioso. Corrija
+  **essa linha e só ela**, mantendo a proibição sobre todo o resto do arquivo (a lógica, os
+  códigos de saída, a busca por `uid`, o `grep -oE "rules-[a-z0-9-]+\.yaml"`). Texto que
+  fecha a contradição: *"'custodia' NAO aparece no apply-cloud.sh — servico vizinho entra
+  por BLOCOS `if -f` proprios (cinco pontos), nao por uma lista fixa"*.
+
   **Entra também, e não é cosmético: as afirmações que o porte herdou do molde e que a
   ADR-10 desmente** (§10.20 — "porte herda também as afirmações que só valiam para o
   molde"). São **seis** ocorrências, em **seis** arquivos — `.env.example` (itens 1, 2 e
@@ -384,9 +420,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
      está em compose nenhum; não há `src/`). §10.22 — afirmação de cobertura inexistente é
      pior que a lacuna. **Cuidado:** o mesmo arquivo cita, nas linhas 21-24, o
      `ApiKeyGuard.cs`, que **esta fase cria** — a citação certa não morre com a errada.
-  2. `.env.example`, mesmo bloco: oferece "resolução nome→id do onboarding (§7.2)", que a
-     ADR-10 revogou. Corrigir metade do bloco deixa a outra metade autorizando um
-     `HubCatalogoClient` de validação que esta casa não tem.
+  2. `.env.example`, **outro bloco, e é por isso que ele escapa de quem corrige só o
+     primeiro**: a oferta de "resolução nome→id do onboarding (§7.2)", que a ADR-10
+     revogou, está nas **linhas 39-40**, dentro do bloco `--- AINDA NAO USADAS NESTA FASE
+     ---` (linhas 30-42) — **não** no bloco `CUSTODIA_HUB_*`, que só começa na linha 44.
+     Corrigir um bloco e deixar o outro mantém metade do arquivo autorizando um
+     `HubCatalogoClient` de validação que esta casa não tem. *(A versão anterior deste
+     inventário dizia "mesmo bloco" e mandava o executor para o lugar errado; o Pronto (f)
+     pega assim mesmo porque é `grep`, mas inventário que nomeia o lugar errado é
+     inventário que envelhece.)*
   3. **A mesma frase do onboarding está nos DOIS composes** (`docker-compose.yml` 13-17 e
      `docker-compose.prod.yml` 24-26). É comentário, não valor — mas é comentário que
      autoriza a fase errada a acrescentar a variável pelo motivo errado.
@@ -532,8 +574,11 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
      que TAMBEM nao existe hoje — mas esse arquivo e criado POR VOCE nesta fase, e a
      afirmacao passa a ser verdadeira no fim dela. A que morre e a do HubConfigGuard.
      Nao use "arquivo citado que nao existe" como criterio: ele leva as duas.
-  2. .env.example, mesmo bloco: oferece "ou resolucao nome->id do onboarding (7.2)".
-     Quem resolve nome->id e Operacoes, na borda (ADR-10).
+  2. .env.example: a oferta de "ou resolucao nome->id do onboarding (7.2)" NAO esta no
+     bloco CUSTODIA_HUB_* — ela esta nas LINHAS 39-40, dentro do bloco
+     "--- AINDA NAO USADAS NESTA FASE ---" (linhas 30-42), e o bloco CUSTODIA_HUB_* so
+     comeca na linha 44. Corrija OS DOIS: quem resolve nome->id e Operacoes, na borda
+     (ADR-10).
   3. A MESMA frase do onboarding esta nos DOIS composes: docker-compose.yml linhas
      13-17 e docker-compose.prod.yml linhas 24-26. E comentario, nao valor — mas e
      comentario que autoriza a fase errada a acrescentar a variavel pelo motivo errado.
@@ -552,9 +597,12 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
      broker) sobre series custodia_outbox_* e custodia_relay_*, que nunca vao existir.
      Remova. O substituto (metricas de CONSUMO) esta agendado no F2 e no F4 deste
      roadmap — nao invente metrica que ainda nao tem produtor.
-  6. infra/grafana/README.md chama este servico de "Operacoes" em TODAS as ocorrencias
-     que `grep -n 'Operações' infra/grafana/README.md` listar. Nao confie em numero
-     escrito aqui — rode o grep.
+  6. infra/grafana/README.md chama ESTE servico de "Operacoes". Nao confie em numero
+     escrito aqui — rode `grep -n 'Operações' infra/grafana/README.md`. O criterio NAO e
+     "zero ocorrencias": mencao que nomeia o servico IRMAO como TERCEIRO e legitima e pode
+     ser a redacao certa ("diferente do Hub e do Operacoes, este container tem limite de
+     memoria"). Mate toda ocorrencia que se refira a ESTE servico, e JUSTIFIQUE
+     NOMINALMENTE, uma a uma, as que sobrarem.
 
   AS EDICOES NO ../tesouro-direto-api (metrica e pull, mora la):
   1. alvo de scrape em infra/alloy/config.alloy com job="custodia";
@@ -612,7 +660,14 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
   O F1 NAO termina quando compila. Termina com CI/CD funcionando, deploy na VPS e
   metrica no Grafana. Ao final rode ./scripts/verificar-f1.sh (ele JA EXISTE neste repo,
-  ja com a correcao da prova 4 — nao o reescreva) e me mostre a saida. ATENCAO AO CODIGO
+  ja com a correcao da prova 4 — NAO O REESCREVA, com UMA EXCECAO NOMINAL: a mensagem de
+  falha da LINHA 142 afirma que "o nome entra na lista" do apply-cloud.sh, e isso e
+  falso — servico vizinho entra por BLOCOS `if -f` proprios, e a unica lista fixa
+  (`for d in tesouro-direto host`) publica na pasta do TD. Troque o texto DESSA LINHA por
+  "'$NOME' NAO aparece no apply-cloud.sh — servico vizinho entra por BLOCOS `if -f`
+  proprios (cinco pontos), nao por uma lista fixa" e NAO TOQUE EM MAIS NADA do arquivo:
+  nem na logica, nem nos codigos de saida, nem na busca por uid, nem no
+  grep -oE "rules-[a-z0-9-]+\.yaml") e me mostre a saida. ATENCAO AO CODIGO
   DE SAIDA: o script termina com `[ "$pulado" -eq 0 ] || exit 2`, e a prova 5 (alerta no
   Telegram) e um SKIP PERMANENTE por construcao — e a mao. Entao `exit 2` com ZERO
   FALHAS e o desfecho ESPERADO desta fase; nao "conserte" o script para ele sair 0, e
@@ -637,7 +692,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   `CUSTODIA_API_KEY` = 404 — só o 401 passaria também com a chave errada. Mais:
   (a) depois do merge, o run de **push** com `deploy: success`, não o do PR (§10.17);
   (b) `grep -rn 'outbox\|relay' infra/grafana/cloud/*.yaml infra/grafana/dashboards/*.json`
-  sem resultado, e nenhuma ocorrência de "Operações" no `infra/grafana/README.md`. **O grep
+  sem resultado, e `grep -n 'Operações' infra/grafana/README.md` **sem nenhuma linha que
+  chame ESTE serviço de "Operações"** — as ocorrências de hoje (rode o grep; são 10 agora e
+  o número envelhece) descrevem todas este container e todas morrem. **O critério não é
+  "zero ocorrências", e isso é deliberado:** uma menção que nomeia o serviço **irmão como
+  terceiro** é legítima e pode ser a redação certa (ex.: "diferente do Hub e do Operações,
+  este container tem limite de memória"); um critério absoluto reprovaria a entrega
+  **correta**. A entrega justifica **nominalmente** cada ocorrência sobrevivente, uma a
+  uma. É o mesmo cuidado que o parágrafo seguinte aplica aos arquivos de dado, e a versão
+  anterior deste Pronto não o aplicava aqui. **O grep de `outbox|relay`
   é sobre os arquivos de DADO de propósito:** a §10.20, que esta fase invoca, manda
   "substituir por uma asserção equivalente ao remover" — se o executor explicar no
   `infra/grafana/README.md` por que não há painel de outbox aqui, uma varredura do
@@ -737,7 +800,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   - **A fila de retry com atraso, e é ela que sustenta a Decisão A.** `custodia.retry`
     (quorum, durable, **sem consumidor**) com `x-message-ttl` e
     `x-dead-letter-exchange = custodia.retry.dlx` (fanout) → de volta para
-    `custodia.prices`. O consumidor republica o órfão ali e confirma a mensagem original,
+    `custodia.prices`. O consumidor republica o órfão **pelo exchange `custodia.retry.in`**
+    (nunca direto na fila) e confirma a mensagem original,
     liberando a cabeça da fila; passado o TTL, o broker devolve a mensagem à fila
     principal sozinho. `x-message-ttl = 30000` (30 s) e teto de **10** voltas — cerca de
     5 minutos antes de estacionar visivelmente. **Confira o intervalo real do relay do
@@ -753,7 +817,13 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     saídas, e a fase escolhe uma **medindo contra o `rabbitmq:4` real**: (i) declarar
     `x-dead-letter-strategy: at-least-once` na `custodia.retry`, o que **exige**
     `x-overflow: reject-publish` nela — aceitável aqui porque o único publicador dessa fila
-    somos nós, e o reject volta como **confirm negado**, que a Decisão A já sabe tratar; ou
+    somos nós, e o reject volta como **confirm negado**, que a Decisão A trata **pelo ramo
+    persistente**: teto de tentativas de republish e, estourado, parking com
+    `retry_indisponivel`. *Não é "a Decisão A já sabe tratar" e pronto: o tratamento
+    ingênuo do confirm negado — `nack(requeue: true)` e repete — com a `custodia.retry`
+    cheia é laço quente e DLQ, os dois desfechos que este arquivo rejeita. É por causa
+    desta saída (i) que aquele ramo existe nomeado; escolher (i) sem ele é escolher o laço
+    quente.* Ou
     (ii) a fila nascer `classic` **durable** — é fila de atraso, sem consumidor e sem dado
     próprio, o único lugar deste desenho onde `classic` é aceitável. **O fecho da fase
     registra qual foi E POR QUÊ**, com a razão escrita como "estratégia de DLX", nunca como
@@ -827,18 +897,44 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   vira **reprova**. Três caminhos, nesta ordem, e a fase não fecha sem um deles:
 
   1. **Medir** se o `plataforma-rabbitmq` já é raspado pelo alloy (`LEIA-ME-KIT`,
-     "Especular em vez de medir"). Se for, a regra `custodia-topologia-ausente` — sobre a
-     existência da `custodia.prices` e a contagem de bindings do `prices` — entra em
-     `rules-custodia.yaml` **nesta fase**.
+     "Especular em vez de medir"). Se for, a regra `custodia-topologia-ausente` entra em
+     `rules-custodia.yaml` **nesta fase**, ancorada em
+     `absent(rabbitmq_queue_messages_ready{queue="custodia.prices"})`.
   2. Se **não** for raspado, o F2 **torna-o raspado**: acrescenta o alvo em
      `../tesouro-direto-api/infra/alloy/config.alloy`, do mesmo jeito que o F1 acrescentou
-     o da custódia. Confira com o **comando literal** que o endpoint de métricas do broker
-     responde antes de escrever o alvo (§10.9) — não presuma que o plugin de Prometheus do
-     `rabbitmq:4` está habilitado no container real.
-  3. Se o endpoint de métricas do broker não existir e não puder ser habilitado (é
-     container de **outro** repo), então a regra não tem como existir, e a consequência é
+     o da custódia. **E a §10.9 se aplica à SÉRIE, não ao endpoint:** conferir com o
+     comando literal que o endpoint de métricas responde prova que o plugin está
+     habilitado, e **não** prova que a série que a regra vai usar existe. O comando literal
+     a rodar é o que busca **`rabbitmq_queue_messages_ready{queue="custodia.prices"}` no
+     corpo da resposta**, com a fila já declarada. Sem esse passo, a regra nasce sobre uma
+     série que nunca existiu, e o Pronto por `noDataState` a aprova — ver a armadilha
+     abaixo.
+  3. Se o endpoint de métricas do broker não existir, ou existir **sem a série** acima, e
+     não puder ser habilitado (é container de **outro** repo), então a regra não tem como
+     existir, e a consequência é
      a inversão acima: o passo passa a **reprovar** também no caso "broker inacessível", e
      isso fica escrito no comentário do step com o motivo.
+
+  **O sinal escolhido, e o que ele NÃO cobre — escrito porque a versão anterior desta fase
+  escolheu um sinal que não existe.** A regra é `absent()` sobre
+  `rabbitmq_queue_messages_ready{queue="custodia.prices"}`, isto é, sobre a **existência da
+  fila**, que o `rabbitmq_prometheus` expõe de verdade, por fila. *Rejeitado:* **contagem
+  de bindings do `prices`** — como dizia a versão anterior. Dois defeitos, e o primeiro é
+  fatal: (i) o plugin expõe séries **por fila** e contagens globais, e **não** expõe
+  contagem de bindings **por exchange**; a regra nasceria sobre uma série inexistente,
+  disparando todo dia para sempre — o "alerta diário permanente para o qual ninguém olha
+  mais" que o F7 usa como argumento contra pôr `caixa:*` no alerta de preço ausente;
+  (ii) a contagem de bindings do `prices` **muda quando outro serviço binda uma fila nova**
+  (a §5 prevê: "consumidor novo = fila nova com seus bindings") — seria alerta nosso
+  disparando por mudança alheia, a mesma família de "estragar o alheio por causa de um
+  serviço que não é seu" que esta fase invoca para justificar o `::warning::`.
+  **A lacuna que sobra é declarada:** a fila existir não prova que os **quatro bindings**
+  existem. O incidente real — volume do broker perdido — leva fila **e** bindings juntos, e
+  a ausência da série cobre exatamente esse caso; o que fica descoberto é a remoção
+  cirúrgica de um binding com a fila intacta, e para isso a cobertura é a **verificação
+  bloqueante do deploy** (management API, onde binding é conferível), no próximo deploy.
+  Lacuna escrita é lacuna; lacuna coberta por uma série que não existe é lacuna **com
+  alerta verde**.
 
   **A regra de topologia só existe quando chega à nuvem** — as duas cópias do
   `rules-custodia.yaml`, o valor do token conferido e a prova pela API do Grafana Cloud
@@ -927,7 +1023,11 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
       MEDINDO contra o rabbitmq:4 real: (i) declarar x-dead-letter-strategy:
       at-least-once na custodia.retry, o que EXIGE x-overflow: reject-publish nela —
       aceitavel porque o unico publicador dessa fila somos nos e o reject volta como
-      CONFIRM NEGADO, que a Decisao A do F4 ja trata; ou (ii) custodia.retry nasce
+      CONFIRM NEGADO — mas so pelo RAMO PERSISTENTE da Decisao A do F4 (teto de
+      tentativas de republish e, estourado, parking com motivo `retry_indisponivel`).
+      O tratamento ingenuo do confirm negado (nack e repete) com a custodia.retry CHEIA
+      e laco quente + DLQ, os dois desfechos que este arquivo rejeita: se voce escolher
+      (i), o ramo persistente NAO E OPCIONAL; ou (ii) custodia.retry nasce
       `classic` durable — fila de ATRASO, sem consumidor e sem dado proprio, o unico
       lugar deste desenho onde classic e aceitavel. ESCREVA NO FECHO QUAL FOI E POR QUE,
       com a razao dita como "estrategia de DLX", NUNCA como "quorum nao suporta TTL",
@@ -974,17 +1074,32 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
   ALERTA DE TOPOLOGIA — INCONDICIONAL NESTA FASE, e e ele que autoriza o ::warning::
   acima. MECA primeiro se o plataforma-rabbitmq ja e raspado pelo alloy; nao especule.
-    (1) se for  -> a regra `custodia-topologia-ausente` (existencia da custodia.prices e
-                   contagem de bindings do prices) entra AGORA em rules-custodia.yaml;
+    (1) se for  -> a regra `custodia-topologia-ausente` entra AGORA em
+                   rules-custodia.yaml, ancorada em
+                   absent(rabbitmq_queue_messages_ready{queue="custodia.prices"});
     (2) se nao for -> o F2 TORNA-O RASPADO: acrescente o alvo em
                    ../tesouro-direto-api/infra/alloy/config.alloy, do mesmo jeito que o
-                   F1 acrescentou o da custodia. Confira com o COMANDO LITERAL que o
-                   endpoint de metricas do broker responde antes de escrever o alvo
-                   (PADROES 10.9) — nao presuma que o plugin de Prometheus do rabbitmq:4
-                   esta habilitado no container real;
-    (3) se o endpoint nao existir e nao puder ser habilitado (container de OUTRO repo)
+                   F1 acrescentou o da custodia. E A 10.9 SE APLICA A SERIE, NAO AO
+                   ENDPOINT: conferir que o endpoint de metricas responde prova que o
+                   plugin esta habilitado e NAO prova que a serie da sua regra existe.
+                   O comando literal a rodar e o que procura
+                   `rabbitmq_queue_messages_ready{queue="custodia.prices"}` NO CORPO da
+                   resposta, com a fila ja declarada;
+    (3) se o endpoint nao existir, ou existir SEM ESSA SERIE, e nao puder ser habilitado
+                   (container de OUTRO repo)
                 -> nao ha regra possivel, e entao o passo passa a REPROVAR tambem no
                    caso "broker inacessivel", com o motivo escrito no comentario do step.
+  NAO ANCORE A REGRA EM CONTAGEM DE BINDINGS DO `prices`, como dizia a versao anterior
+  desta fase, e sao dois motivos: (i) o rabbitmq_prometheus expoe series POR FILA e
+  contagens globais, e NAO expoe contagem de bindings POR EXCHANGE — a regra nasceria
+  sobre uma serie que nunca existiu, disparando todo dia para sempre, que e o alerta
+  permanente que ninguem olha; (ii) a contagem de bindings do `prices` MUDA QUANDO OUTRO
+  SERVICO BINDA UMA FILA NOVA (a secao 5 preve isso), e seria alerta NOSSO disparando por
+  mudanca ALHEIA. A LACUNA QUE SOBRA E DECLARADA: a fila existir nao prova que os quatro
+  bindings existem. O incidente real (volume do broker perdido) leva fila E bindings
+  juntos, entao a ausencia da serie cobre esse caso; a remocao cirurgica de um binding com
+  a fila intacta fica coberta pela VERIFICACAO BLOQUEANTE DO DEPLOY, que le a management
+  API, onde binding E conferivel. Escreva isso no comentario da regra.
   A regra NAO PODE ficar adiada para o F4: entre o F2 e o F4 a fila pode nao existir com
   tudo verde, que e exatamente a janela que esta fase existe para fechar.
 
@@ -1056,9 +1171,16 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   destrutiva.** (i) O passo de deploy é rodado uma vez apontado para um **host
   inalcançável** (endereço de management API inexistente, por variável, numa execução
   manual): prova que o laço de espera roda, que o desfecho é `::warning::` e não `exit 1`,
-  e que o deploy segue verde. (ii) O alerta de topologia é provado **pela avaliação da
-  regra contra série ausente** — `noDataState` configurado para disparar, conferido no
-  Grafana Cloud —, que é o estado real que um broker fora produz na métrica. *Rejeitado:*
+  e que o deploy segue verde. (ii) O alerta de topologia é provado em **duas metades, e a
+  primeira é CONTROLE POSITIVO, sem o qual a segunda passa por vacuidade**: primeiro, com a
+  `custodia.prices` declarada e o broker no ar, a série
+  `rabbitmq_queue_messages_ready{queue="custodia.prices"}` **está presente** — conferida na
+  consulta do Grafana Cloud, não no arquivo de regra — e a regra avalia em **OK**; só então
+  a segunda metade, `noDataState` configurado para disparar, é aceita como prova do estado
+  "broker fora". *Sem o controle positivo, uma regra construída sobre uma série que **nunca
+  existiu** satisfaz a prova perfeitamente — e depois dispara todo dia, para sempre. Era
+  esse o buraco da versão anterior deste Pronto, e ele casava com a escolha de sinal
+  (contagem de bindings) que a fase agora rejeita nominalmente.* *Rejeitado:*
   derrubar o broker de propósito durante a janela; o estrago é no plantão do vizinho e a
   §10.8 já é satisfeita pelo controle negativo acima. Se **nenhuma** das duas partes for
   executável, a linha 2 da tabela de desfecho **não está autorizada** e o passo passa a
@@ -1102,7 +1224,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   demais, e por isso elas estão num bloco só, com um nome só para cada linha. **Fase que
   usar nome diferente para a mesma linha é defeito**, e o `guardiao-padroes` reprova.
 
-  **V1 · O enum de `tipo`, enumerado literalmente.**
+  **V1 · O enum de `tipo`, enumerado literalmente — e a dobra das três colunas de
+  `posicao_corrente` para cada um dos dez (segunda metade, logo abaixo do enum).**
 
   ```
   compra | venda | aporte | cupom | resgate | ir_retido | iof | a_liquidar |
@@ -1120,6 +1243,97 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   cliente declarou: apagá-lo é apagar informação para sempre, numa tabela sem UPDATE. *Rejeitado:* a taxonomia completa da B3 no dia 1 — cada valor a mais é um valor
   no CHECK de uma tabela append-only que ninguém exercita (§9 da `ARQUITETURA`, nota final;
   dividendo/desdobramento/grupamento/bonificação são fase 2).
+
+  **A DOBRA DAS TRÊS COLUNAS DE `posicao_corrente`, POR TIPO, PARA OS DEZ — é a SEGUNDA
+  METADE DA V1, e as fases a citam com esse nome ("a dobra da V1"), sem símbolo novo.**
+  Está aqui, junto do enum, porque é aqui que o vocabulário é fechado — e a regra escrita
+  por nome de tipo só é conferível se cobrir todos os nomes. A versão anterior deste arquivo
+  escrevia a regra em duas frases ("na compra…, na venda…") e deixava **oito** tipos sem
+  dobra definida, enquanto o I4 afirmava que as três colunas são "dobra pura do livro".
+  Uma implementação `switch (tipo) { case compra: …; case venda: …; }` é a leitura literal
+  daquele texto, e ela **infla o preço médio para sempre** no `aporte` e **corrompe** o
+  preço médio no `ajuste` de uma venda. Os dois casos estão nos números abaixo.
+
+  | `tipo` | `quantidade` | `custo_total` | `preco_medio` |
+  |---|---|---|---|
+  | `compra` | `+= qtd_delta` | `+= valor_financeiro` | `= custo_total / quantidade` |
+  | `aporte` | `+= qtd_delta` | `+= valor_financeiro` | `= custo_total / quantidade` |
+  | `venda` | `+= qtd_delta` (negativo) | `= preco_medio × quantidade` (baixa proporcional) | **inalterado** |
+  | `resgate` (vencimento) | `+= qtd_delta` (negativo) | `= preco_medio × quantidade` | **inalterado** |
+  | `cupom` | `+= 0` | **inalterado** | **inalterado** |
+  | `ir_retido` · `iof` · `a_liquidar` · `liquidacao` | `+= qtd_delta` | `= quantidade` | `= 1,000000` |
+  | `ajuste` | `+= qtd_delta` | **recalculado** (regra abaixo) | **recalculado** (regra abaixo) |
+
+  Quatro linhas dessa tabela precisam do porquê escrito, senão viram opinião:
+
+  1. **`aporte` dobra EXATAMENTE como `compra`.** É o corolário direto da V2 ("a diferença
+     é SÓ O RÓTULO"), e está escrito aqui porque a regra por nome de tipo não o deduz:
+     `aporte` não é `compra`, e uma implementação que só conhece os dois nomes da frase
+     antiga aumenta a `quantidade` (via Σ `qtd_delta`) e **não** mexe no `custo_total` —
+     `preco_medio` inflado, para sempre, numa coluna que o F5 usa como base de IR e o F7
+     grava em cada snapshot.
+  2. **`cupom` não toca `custo_total` nem `preco_medio`.** Ele tem `qtd_delta = 0` e
+     `valor_financeiro > 0` no instrumento do título: é **renda**, não custo de aquisição.
+     Somar o `valor_financeiro` ao custo mudaria o preço médio **sem que a posição mudasse**
+     — e, com a posição zerada no mesmo dia, seria **divisão por zero**.
+  3. **`caixa:*` é definição, não caso especial.** Para as quatro linhas de caixa a V4
+     fixa `preco_medio = 1,000000` e `custo_total = quantidade`; não há média ponderada a
+     manter, e a regra vale igual para `ir_retido`, `iof`, `a_liquidar` e `liquidacao`
+     porque **todas** escrevem em `caixa:*`.
+  4. **`venda` e `resgate` mantêm o `preco_medio` e baixam o custo proporcionalmente** —
+     que é o mesmo que dizer `custo_total = preco_medio × quantidade`, e é essa forma que
+     torna o **invariante conferível**: depois de qualquer `compra`/`aporte`/`venda`/
+     `resgate`, `custo_total = preco_medio × quantidade` (a menos do arredondamento de 2
+     casas do financeiro). Um teste que afirma essa igualdade pega a implementação que
+     baixa uma coluna e esquece a outra.
+
+  **A dobra do `ajuste`, e ela é a decisão desta seção.** Um `ajuste` **não** é "uma compra
+  quando `qtd_delta > 0`": ele **desfaz** a linha que `ref_estorno` aponta. A dobra é
+  definida assim, e vale tanto para a reconstrução em lote quanto para o handler:
+
+  > A dobra das três colunas percorre o livro **ignorando os pares (linha revertida,
+  > `ajuste` que a reverte)**, com "revertida" resolvido recursivamente: uma linha é
+  > **efetiva** quando não existe `ajuste` **efetivo** apontando para ela. Como o par soma
+  > **zero nas duas colunas** (V2), `Σ qtd_delta = quantidade` continua valendo **literalmente**
+  > — I4 não muda uma vírgula —, e o que muda é só o cálculo de `preco_medio`/`custo_total`,
+  > que deixa de depender da ordem em que o estorno chegou.
+
+  Consequência operacional para o F4: os **nove** outros tipos aplicam-se
+  **incrementalmente** em O(1) na mesma transação; **ao gravar um `ajuste`, o handler
+  recalcula as três colunas daquela chave `(cliente_id, instrumento_id)` dobrando o livro**
+  — a mesma operação do comando de reconstrução, com escopo de uma chave. O custo é
+  O(movimentos daquela chave), que a §11 descreve como minúsculo, e a alternativa custa
+  correção de dado.
+
+  Os números que **obrigam** essa forma, porque são o caso que a regra ingênua erra:
+
+  ```
+  compra 10 @ 100         -> quantidade 10, custo_total 1000, preco_medio 100
+  venda   4 por Y = 600   -> quantidade  6, custo_total  600, preco_medio 100
+     (o preço subiu para 150; a venda NÃO mexe no preço médio)
+  estorno da venda: ajuste com qtd_delta +4 e valor_financeiro -600 (simétrico, V2)
+     regra ingênua ("qtd_delta > 0, logo compra"):
+        custo_total = 600 + 600 = 1200, preco_medio = 1200/10 = 120   <- ERRADO
+     dobra desta seção (o par venda+ajuste sai da dobra):
+        quantidade 10, custo_total 1000, preco_medio 100              <- correto
+  ```
+
+  A regra ingênua deixa o `preco_medio` **20% errado e permanente**: o F5 tributa com
+  "base = preço médio **do livro**" (§7.3) e a próxima venda calcula IR sobre a base errada;
+  o F7 grava esse `preco_medio` em **cada snapshot**, que é documento que o cliente vê (P2);
+  e o `ajuste` — cuja razão de existir é desfazer — passa a não desfazer.
+
+  *Rejeitado:* **regra inversa por tipo** (o `ajuste` aplica o inverso da dobra do tipo da
+  linha revertida, em O(1), sem recálculo). Ela acerta o exemplo acima e **erra sob
+  intercalação**, que é o caso comum quando o estorno chega dias depois: `compra 10 @ 100`,
+  `venda 4`, `compra 10 @ 200`, `estorno da venda` devolve `custo_total = 3250`, quando o
+  livro sem o par vale `3000`. E ela fica ambígua no estorno **de** estorno, que a V5
+  permite de propósito — o inverso do inverso teria de ser reconstruído caso a caso. A
+  dobra que ignora pares acerta os dois por construção, e é a mesma definição usada pelo
+  comando de reconstrução do F4, então **não existem duas regras para divergirem**.
+  *Rejeitado:* deixar `preco_medio`/`custo_total` fora da dobra e recomputá-los só sob
+  demanda — I4 exige as três colunas na projeção, e o F5 lê a coluna dentro do cálculo de
+  imposto.
 
   **V2 · O mapeamento `operacao` (§5.1) → `tipo` (§7.1). É a tradução entre dois
   vocabulários que NÃO coincidem, e sem ela cada fase inventa o seu.**
@@ -1199,21 +1413,45 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   de fato, desconto embutido — contra a convenção 3 da §7.1, que existe justamente para o
   extrato ser conferível contra o da corretora.
 
-  **A conta do patrimônio, escrita aqui porque três critérios de pronto pendem dela.**
-  Patrimônio do dia = Σ (`quantidade` × `preço`) sobre todas as linhas, com `caixa:*` a
-  preço 1 por definição (V4). Seja `P` o preço do título em D e `Y = q × P`:
+  **A aritmética do resgate, escrita aqui porque vários critérios de pronto pendem dela — e
+  ela é INDEPENDENTE DE PREÇO de propósito.** Patrimônio do dia = Σ (`quantidade` ×
+  `preço`) sobre todas as linhas do snapshot, com `caixa:*` a preço 1 por definição (V4).
+  São **três invariantes**, e é sobre eles que os Prontos se apoiam:
+
+  1. **O saldo do fato em `caixa:a_liquidar` é uma soma do livro:** `Σ qtd_delta` das linhas
+     daquele fato em `caixa:a_liquidar`, depois de D, é `Y − t − f`; **depois da liquidação
+     de D+1, é 0**. É o que prova que "tributo é movimento próprio" virou dado — com IR
+     embutido no valor da venda, a soma bateria **sem** as linhas de tributo.
+  2. **A liquidação é transferência pura:** `Σ qtd_delta(caixa:a_liquidar) +
+     Σ qtd_delta(caixa:BRL)` é **inalterado** pelas duas pernas. Corolário que dispensa
+     preço: as duas pernas são `caixa:*`, a preço 1 por definição, e somam zero — **a
+     liquidação, sozinha, não muda o patrimônio**. Logo a variação de patrimônio entre D e
+     D+1 é **exatamente** a variação de preço da posição residual do título, e nada mais.
+  3. **A queda de patrimônio entre D-1 e D é `t + f` — SOB A HIPÓTESE, DO FIXTURE, DE PREÇO
+     CONGELADO entre os dois dias.** É hipótese de fixture, **nunca** invariante do sistema.
+
+  **Por que o item 3 é hipótese e não invariante, com a conta feita** — porque a versão
+  anterior deste arquivo o escrevia como invariante e o punha em quatro critérios de pronto,
+  onde uma implementação **correta** reprova. O snapshot de D-1 é, pela §7.1/§7.4,
+  `quantidade × preco(último ≤ D-1)`, isto é `P₍D-1₎` — **não** o preço de D. Com posição
+  total `Q`, caixa preexistente `C` e a venda de `q` por `Y`:
 
   ```
-  D-1 : q × P                              = Y
-  D   : (q - q) × P  +  (Y - t - f) × 1    = Y - t - f
-  D+1 : 0 (caixa:a_liquidar)  +  (Y - t - f) × 1 (caixa:BRL)  = Y - t - f
+  patrimônio(D-1) = Q·P₍D-1₎ + C
+  patrimônio(D)   = (Q−q)·P₍D₎ + C + (Y − t − f)
+  queda           = Q·P₍D-1₎ − (Q−q)·P₍D₎ − Y + t + f
   ```
 
-  Duas leituras, e as duas são critério: entre **D-1 e D** o patrimônio cai **exatamente
-  pelo tributo** (`t + f`) — o dinheiro que saiu do cliente saiu de verdade; entre **D e
-  D+1** ele é **constante** — a liquidação só troca de bolso. É este segundo número que o
-  Pronto do F7 exige ("patrimônio constante entre D e D+1") e que o Pronto do F8 confere no
-  extrato ("soma dos instrumentos + caixa").
+  Isso só vale `t + f` quando `P₍D-1₎ = P₍D₎` **e** `Y = q·P₍D₎`. A §8.4 fixa a segunda
+  condição de propósito (`"livro: venda (qtd -X, valor = X x PU_venda(D))"`), o que deixa a
+  **primeira** — preço parado de um dia para o outro — como única hipótese que faz a conta
+  fechar. E preço parado é justamente o que **não** acontece: a variação diária de preço é o
+  motivo de o sistema existir. O mesmo vale para "entre D e D+1 o patrimônio é constante":
+  só é verdade porque o exemplo **zera** a posição; com posição residual `Q > q`,
+  `patrimônio(D+1) − patrimônio(D) = (Q−q)·(P₍D+1₎ − P₍D₎)`, e o `eod.ready(D+1)` traz preço
+  novo por construção. O invariante independente de preço é o **item 2** acima; a
+  constância é consequência do fixture que zera a posição, e tem de estar escrita **no
+  fixture**.
 
   Duas armadilhas nomeadas, porque as duas já apareceram em rascunho deste arquivo:
 
@@ -1226,8 +1464,30 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     `aplicacao` **é** `compra`. `aporte`, ao contrário, ganha valor próprio (V1) porque é o
     rótulo que o extrato preserva.
 
+  **A DISPENSA DECLARADA DO ESTORNO — a única desta V2, e ela existe porque sem ela a
+  guarda estrita abaixo fica ambígua exatamente no caso que mais importa.** O
+  `TradeRegistered` de estorno carrega `instrumentoId`, `quantidade` e `valorFinanceiro`
+  **próprios** — são campos **obrigatórios** do envelope da §5.1, não opcionais —, e o
+  mapeamento acima manda usar os valores do **movimento estornado, por lookup**. Regra
+  escrita, para não ficar por conta do executor: **esses três campos do evento de estorno
+  são CONFERIDOS contra o movimento original e NÃO são usados para gravar.** A conferência
+  é campo a campo: `instrumentoId` igual ao `instrumento_id` do movimento revertido,
+  `quantidade` igual a `|qtd_delta|` dele, `valorFinanceiro` igual ao `valor_financeiro`
+  dele. **Divergir em qualquer um deles não é caso feliz nem detalhe:** hoje a reversão
+  **total** seria gravada em silêncio sobre um payload que pede outra coisa (estorno
+  parcial, ou erro em Operações), numa tabela sem UPDATE. Desfecho: **nada é gravado, a
+  chave de dedupe não é consumida (I13), a mensagem estaciona com o motivo
+  `estorno_divergente` e alerta** — valor que entra na lista fechada e sem default de
+  `x-custodia-motivo` do F4. *Rejeitado:* aplicar o payload em vez do original — o sinal do
+  ajuste depende do tipo da operação estornada, que o payload não carrega (corolário da
+  §10.32 no F4), e estorno parcial não está no contrato da §5.1. *Rejeitado:* ignorar os
+  três campos sem conferir — é a dispensa silenciosa que a guarda abaixo existe para
+  proibir, e nenhum teste a distinguiria de um mapeamento errado.
+
   **Guarda estrita do mapeamento, e ela é do invariante I3:** **nenhum campo do
-  `TradeRegistered` pode ser descartado sem regra escrita nesta V2.** Foi exatamente um
+  `TradeRegistered` pode ser descartado sem regra escrita nesta V2** — e "conferido contra o
+  original e não usado", acima, **é** uma regra escrita, que o teste estrito afirma como
+  tal (não como dispensa implícita). Foi exatamente um
   descarte silencioso (`instrumentoId` e `quantidade` do `aporte`) que passou pela versão
   anterior deste arquivo. O teste que prova I3 na direção estrita tem de afirmar isso — que
   cada campo do payload ou aparece numa coluna do movimento, ou tem aqui a regra escrita que
@@ -1373,7 +1633,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     vence** —, então a guarda não bloqueia caminho nenhum previsto. *Rejeitado:* confiar só
     na borda; é a mesma classe de "afirmação de cobertura que não existe" da §10.22, e a
     borda é de **outro repo**.
-  - **`preco_medio` e `custo_total` de `posicao_corrente` têm dono, e é o F4.** As três
+  - **`preco_medio` e `custo_total` de `posicao_corrente` têm dono, e é o F4 — mas a REGRA
+    de dobra é desta fase, e está na V1.** As três
     colunas nascem aqui e são preenchidas **na mesma transação** pelo handler do F4 (I4).
     Escrito nesta fase porque a coluna sem dono é o que produz o defeito: o F5 tributa com
     "base = **preço médio do livro**" (§7.3) e o F7 grava `preco_medio` e `custo` em cada
@@ -1454,6 +1715,53 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
       NAO acrescente a taxonomia da B3 (dividendo, desdobramento,
       grupamento, bonificacao sao fase 2).
 
+      SEGUNDA METADE DA V1 — A DOBRA DAS TRES COLUNAS DE posicao_corrente, POR TIPO,
+      PARA OS DEZ. Quem PREENCHE e o F4 (item 5b abaixo); quem FECHA A REGRA e voce,
+      aqui, junto do enum — regra escrita por NOME DE TIPO so e conferivel se cobrir
+      todos os nomes. A versao anterior deste arquivo escrevia so "na compra..., na
+      venda...", e deixava OITO tipos sem dobra, com o I4 afirmando que as tres colunas
+      sao dobra pura do livro.
+        compra   -> quantidade += qtd_delta; custo_total += valor; pm = custo/quantidade
+        aporte   -> IDENTICO a compra (corolario da V2: a diferenca e so o rotulo)
+        venda    -> quantidade += qtd_delta (negativo); pm INALTERADO;
+                    custo_total = pm x quantidade  (baixa proporcional)
+        resgate  -> IDENTICO a venda (vencimento e venda compulsoria)
+        cupom    -> quantidade += 0; custo_total INALTERADO; pm INALTERADO.
+                    E RENDA, NAO CUSTO DE AQUISICAO: somar o valor ao custo mudaria o
+                    preco medio SEM a posicao mudar, e com a posicao zerada no mesmo dia
+                    seria DIVISAO POR ZERO.
+        ir_retido | iof | a_liquidar | liquidacao -> todas escrevem em caixa:*, entao
+                    vale a V4: quantidade += qtd_delta; custo_total = quantidade;
+                    pm = 1,000000. Nao ha media ponderada a manter.
+        ajuste   -> ver a regra abaixo. NAO E "compra quando qtd_delta > 0".
+      INVARIANTE CONFERIVEL que sai disso: depois de compra/aporte/venda/resgate,
+      custo_total = pm x quantidade (a menos do arredondamento de 2 casas). Um teste que
+      afirma essa igualdade pega a implementacao que baixa uma coluna e esquece a outra.
+
+      A DOBRA DO `ajuste` — a decisao desta secao. O ajuste DESFAZ a linha que
+      ref_estorno aponta. A dobra percorre o livro IGNORANDO OS PARES (linha revertida,
+      ajuste que a reverte), com "revertida" resolvido recursivamente: uma linha e
+      EFETIVA quando nao existe ajuste EFETIVO apontando para ela (e o que faz estorno DE
+      estorno restaurar o original, que a V5 permite de proposito). Como o par soma ZERO
+      nas duas colunas (V2), "Σ qtd_delta = quantidade" continua valendo LITERALMENTE e o
+      I4 nao muda uma virgula; o que muda e so o calculo de pm/custo_total, que deixa de
+      depender da ordem em que o estorno chegou.
+      OS NUMEROS QUE OBRIGAM ESSA FORMA:
+        compra 10 @ 100        -> qtd 10, custo 1000, pm 100
+        venda   4 por Y = 600  -> qtd  6, custo  600, pm 100  (o preco subiu para 150)
+        estorno da venda: ajuste qtd_delta +4, valor -600 (simetrico, V2)
+          regra ingenua ("qtd_delta > 0, logo compra"):
+             custo = 600 + 600 = 1200, pm = 120                 <- ERRADO
+          dobra desta secao (o par venda+ajuste sai da dobra):
+             qtd 10, custo 1000, pm 100                         <- correto
+      Com a regra ingenua o pm fica 20% errado E PERMANENTE: o F5 tributa com "base =
+      preco medio do livro" (7.3) e o F7 grava esse pm em CADA SNAPSHOT, que e documento
+      que o cliente ve (P2) — e o `ajuste`, cuja razao de existir e desfazer, nao desfaz.
+      REJEITADO: regra inversa por tipo em O(1) — acerta o exemplo e ERRA SOB
+      INTERCALACAO (compra 10@100, venda 4, compra 10@200, estorno da venda devolve
+      custo 3250 quando o livro sem o par vale 3000), e fica ambigua no estorno DE
+      estorno.
+
   V2. O MAPEAMENTO operacao (5.1) -> tipo (7.1). Os dois vocabularios NAO coincidem.
       CONVENCAO DE SINAL, uma vez para todas as linhas: qtd_delta CARREGA O SINAL (entra
       positivo, sai negativo) e valor_financeiro e a MAGNITUDE BRUTA daquela linha, nao
@@ -1503,13 +1811,30 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
       teriam efeito em projecao nenhuma (documentacao pura) e o tributo voltaria a ser
       desconto embutido, contra a convencao 3 da 7.1.
 
-      A CONTA DO PATRIMONIO (patrimonio = Σ quantidade x preco, caixa a preco 1 por V4;
-      P = preco do titulo em D, Y = q x P):
-        D-1 : q x P                            = Y
-        D   : 0 + (Y - t - f) x 1              = Y - t - f
-        D+1 : 0 + (Y - t - f) x 1 (caixa:BRL)  = Y - t - f
-      Entre D-1 e D o patrimonio cai EXATAMENTE pelo tributo; entre D e D+1 ele e
-      CONSTANTE. O Pronto do F7 exige o segundo numero e o do F8 o confere no extrato.
+      A ARITMETICA DO RESGATE — TRES INVARIANTES, E OS DOIS PRIMEIROS SAO INDEPENDENTES
+      DE PRECO DE PROPOSITO (patrimonio = Σ quantidade x preco, caixa a preco 1 por V4):
+        (1) Σ qtd_delta das linhas do fato em caixa:a_liquidar = Y - t - f depois de D,
+            e ZERO depois da liquidacao de D+1;
+        (2) Σ qtd_delta(caixa:a_liquidar) + Σ qtd_delta(caixa:BRL) e INALTERADO pelas
+            duas pernas — transferencia pura. Corolario: as duas pernas sao caixa:*, a
+            preco 1 por definicao, e somam zero, entao A LIQUIDACAO SOZINHA NAO MUDA O
+            PATRIMONIO; a variacao entre D e D+1 e EXATAMENTE a variacao de preco da
+            posicao residual do titulo, e nada mais;
+        (3) a queda de patrimonio entre D-1 e D e t + f SOB A HIPOTESE, DO FIXTURE, DE
+            PRECO CONGELADO entre os dois dias. HIPOTESE DE FIXTURE, NUNCA INVARIANTE.
+      POR QUE (3) NAO E INVARIANTE, e isso reprova uma implementacao CORRETA se voce o
+      escrever como criterio: o snapshot de D-1 vale quantidade x preco(ultimo <= D-1),
+      isto e P(D-1), nao o preco de D. Com posicao total Q e caixa preexistente C:
+        patrimonio(D-1) = Q.P(D-1) + C
+        patrimonio(D)   = (Q-q).P(D) + C + (Y - t - f)
+        queda           = Q.P(D-1) - (Q-q).P(D) - Y + t + f
+      que so vale t + f se P(D-1) = P(D) E Y = q.P(D). A 8.4 fixa a segunda condicao
+      ("livro: venda (qtd -X, valor = X x PU_venda(D))"), o que deixa a PRIMEIRA — preco
+      parado de um dia para o outro — como unica hipotese que faz a conta fechar. E preco
+      parado e justamente o que nao acontece: a variacao diaria de preco e o motivo de o
+      sistema existir. "Entre D e D+1 o patrimonio e constante" tem o mesmo defeito: so e
+      verdade porque o exemplo ZERA a posicao. Escreva (3) no FIXTURE, nunca no
+      invariante.
 
       DUAS ARMADILHAS, e as duas ja apareceram em rascunho:
       - `resgate` do EVENTO nao e `resgate` do LIVRO. No enum, `resgate` e VENCIMENTO
@@ -1518,8 +1843,24 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
       - `aplicacao` nao existe no enum da 7.1: aplicacao E compra. `aporte` existe, por
         V1, porque e o rotulo que o extrato preserva.
 
+      A DISPENSA DECLARADA DO ESTORNO — a UNICA desta V2, e sem ela a guarda estrita
+      abaixo fica ambigua exatamente no caso que mais importa. O TradeRegistered de
+      estorno carrega instrumentoId, quantidade e valorFinanceiro PROPRIOS (sao campos
+      OBRIGATORIOS do envelope da 5.1, nao opcionais) e o mapeamento manda usar os
+      valores do movimento estornado, POR LOOKUP. Regra escrita: esses tres campos do
+      evento de estorno sao CONFERIDOS contra o movimento original e NAO SAO USADOS para
+      gravar — instrumentoId = instrumento_id do revertido, quantidade = |qtd_delta| do
+      revertido, valorFinanceiro = valor_financeiro do revertido. DIVERGIR EM QUALQUER UM
+      NAO E CASO FELIZ: hoje a reversao TOTAL seria gravada em silencio sobre um payload
+      que pede outra coisa (estorno parcial, ou erro em Operacoes), numa tabela sem
+      UPDATE. Desfecho: NADA e gravado, a chave de dedupe NAO e consumida (I13), a
+      mensagem estaciona com o motivo `estorno_divergente` e ALERTA — valor que entra na
+      lista fechada e sem default de x-custodia-motivo do F4.
+
       GUARDA ESTRITA (invariante I3): NENHUM CAMPO DO TradeRegistered PODE SER
-      DESCARTADO SEM REGRA ESCRITA NESTA V2. Foi um descarte silencioso (instrumentoId e
+      DESCARTADO SEM REGRA ESCRITA NESTA V2 — e "conferido contra o original e nao
+      usado", acima, E uma regra escrita, que o teste estrito afirma COMO TAL e nao como
+      dispensa implicita. Foi um descarte silencioso (instrumentoId e
       quantidade do aporte) que passou pela versao anterior deste roadmap. O teste da
       direcao estrita tem que afirmar isso — cada campo do payload ou aparece numa coluna
       do movimento, ou tem aqui a regra escrita que o dispensa —, senao ele CODIFICA o
@@ -1573,7 +1914,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
       Em posicao_corrente, linha de caixa tem preco_medio = 1,000000 e
       custo_total = quantidade.
       CHECK ENUMERANDO os ids de caixa permitidos (caixa:BRL, caixa:a_liquidar), pela
-      PADROES 10.21: como a identidade e gravada CRUA (sem ToLowerInvariant, V6), um
+      PADROES 10.21: como a identidade e gravada CRUA (sem ToLowerInvariant — item 4 de
+      DECISOES JA TOMADAS, mais abaixo; o vocabulario vai de V1 a V5 e nao existe "V6"), um
       `caixa:brl` digitado uma vez viraria um SEGUNDO instrumento de caixa para sempre,
       e o patrimonio passaria a somar duas linhas onde havia uma. Um caixa:USD futuro
       custa uma migration de uma linha.
@@ -1620,12 +1962,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
      DESCARTAVEIS, e FK atrapalharia o TRUNCATE + reconstrucao que as define.
 
   5b. posicao_corrente tem TRES colunas de valor (quantidade, preco_medio, custo_total)
-     e as tres nascem aqui. QUEM AS PREENCHE E O F4, na mesma transacao — escreva isso
+     e as tres nascem aqui. QUEM AS PREENCHE E O F4, na mesma transacao; QUEM FECHA A
+     REGRA DE DOBRA E VOCE, na segunda metade da V1, para os DEZ tipos — escreva isso
      no lugar onde o proximo executor vai ler (nome de teste, estrutura), nao em
      comentario. Coluna sem dono e o que produz o defeito: o F5 tributa com "base =
      preco medio DO LIVRO" (7.3) e o F7 grava preco_medio e custo em cada snapshot
      (7.4); um executor do F5 encontrando a coluna vazia inventaria a regra de preco
-     medio DENTRO do calculo de imposto.
+     medio DENTRO do calculo de imposto. E REGRA DE DOBRA COBRINDO SO DOIS DOS DEZ TIPOS
+     produz o mesmo defeito com a suite verde — foi o que a versao anterior deste arquivo
+     fazia.
 
   5c. preco_atual MANTEM A PK DA 7.1 (instrumento_id) e guarda SO o campoPosicao — a DDL
      de la da UMA LINHA POR INSTRUMENTO, com uma coluna `campo` singular. Quem guarda
@@ -1700,10 +2045,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   `iof`, `a_liquidar` e **as DUAS pernas** da liquidação — provando que **nenhuma
   `ref_externa` colide**. O Pronto anterior só testava `ref_externa` nula/vazia, e a
   colisão das duas pernas passaria intacta por ele. **E o mesmo conjunto serve de prova
-  aritmética da V2**, com os números da tabela de linhas derivadas: `Σ qtd_delta` de
+  aritmética da V2**, com os números da tabela de linhas derivadas, nos **dois invariantes
+  independentes de preço**: `Σ qtd_delta` de
   `caixa:a_liquidar` = `Y − t − f` depois de D e **zero** depois da liquidação; `Σ qtd_delta`
-  de `caixa:BRL` = `Y − t − f`; e o patrimônio (`Σ quantidade × preço`, caixa a 1) **igual em
-  D e em D+1**. É a conta escrita na V2, executada — e é ela que impede a próxima fase de
+  de `caixa:BRL` = `Y − t − f`; e `Σ qtd_delta(caixa:a_liquidar) + Σ qtd_delta(caixa:BRL)`
+  **inalterado** pelas duas pernas — transferência pura, e é dele que sai "a liquidação
+  sozinha não muda o patrimônio", sem hipótese nenhuma sobre preço. *A versão anterior deste
+  Pronto exigia "patrimônio igual em D e em D+1", que só fecha a preço constante e com a
+  posição inteira liquidada — critério que reprova a implementação correta.* É a aritmética
+  escrita na V2, executada — e é ela que impede a próxima fase de
   gravar `a_liquidar` líquido por conta própria;
   (l) o conjunto completo de um **cupom** e o de um **vencimento** gravados do mesmo jeito
   (chaves da família de corpaction), e o conjunto de **reversão de um resgate**
@@ -1763,7 +2113,17 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     2. **ordem obrigatória: publica → espera o publisher confirm → só então ack.**
        `trades.registered` não tem recuperação por contrato; ack antes do confirm é perda
        definitiva e silenciosa. Confirm negado ou timeout ⇒ `nack(requeue: true)` da
-       original — aqui o requeue é o certo, porque a alternativa é perder;
+       original — aqui o requeue é o certo, porque a alternativa é perder. **E o confirm
+       negado PERSISTENTE tem ramo próprio, senão esta regra produz os dois desfechos que a
+       Decisão A rejeita:** com prefetch 1 e consumo serial, o `nack(requeue: true)`
+       reentrega **na hora**, e se a causa não for transitória — o caso previsto é a
+       `custodia.retry` com `x-overflow: reject-publish` cheia (saída (i) do F2), cujo
+       reject **é** um confirm negado — o resultado é `nack → reentrega → publish → reject
+       → nack` sem atraso: laço quente num host de um núcleo (§10.13) e `x-delivery-limit`
+       queimado em milissegundos, levando à DLQ que este roadmap declara sem história de
+       dreno. Regra: **teto de tentativas de republish para a mesma entrega**; estourado, a
+       mensagem vai para a `custodia.parked` pelo `custodia.parking` com motivo
+       **`retry_indisponivel`** e alerta;
     3. **o teto é o que entrega valor, não a cura.** O órfão por corrida é raro (FK composta
        em Operações, relay em ordem de `id`, um confirm por vez); o que vai acontecer de
        verdade são os casos **incuráveis**, e para eles o retry só adia. Cortar escopo aqui
@@ -1786,6 +2146,13 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     cliente. Regra: (1) busca no **mesmo cliente** — achou, grava; (2) não achou, busca em
     **qualquer cliente** — achou, é `estorno_cliente_divergente`: **parking imediato e
     alerta, sem passar pelo retry**; (3) não achou em ninguém: é órfão, e vale a Decisão A.
+    **E achado o movimento no mesmo cliente, o passo (1) ainda não terminou: os três campos
+    próprios do payload de estorno (`instrumentoId`, `quantidade`, `valorFinanceiro`) são
+    CONFERIDOS contra ele** — é a dispensa declarada da V2 do F3. Divergindo qualquer um,
+    **nada é gravado, a chave de dedupe não é consumida (I13)** e a mensagem estaciona como
+    `estorno_divergente`, com alerta. Sem esse passo, um estorno parcial (ou um erro em
+    Operações) grava a reversão **total** em silêncio, numa tabela sem UPDATE, e não há
+    motivo nomeado que o distinga de um estorno correto.
   - **Violação do V5 tem desfecho, e sem ele vira mensagem-veneno.** Um segundo estorno do
     **mesmo** movimento chega com `tradeId` próprio, passa pelo `UNIQUE (cliente_id,
     ref_externa)` — é exatamente o argumento que sustenta o V5 — e estoura no
@@ -1805,7 +2172,9 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     é exato; com `double` no meio do caminho ela testaria outra coisa.
   - **Estacionamento (`custodia.parked`), e o corolário que propaga:** evento de tipo que
     esta fase ainda não sabe escriturar — `prices.*`, `corpactions.*`, `eod.ready`, todos
-    bindados desde o F2 — é **republicado na `custodia.parked` e só então confirmado**.
+    bindados desde o F2 — é **republicado pelo exchange `custodia.parking`, que entrega na
+    `custodia.parked`, e só então confirmado** (nunca direto na fila: a default exchange com
+    routing key = nome da fila está **rejeitada nominalmente** no F2).
     Nunca ack-e-descarta (perderia corpaction, que é irrecuperável) e nunca `nack` em laço:
     com `x-delivery-limit` declarado, requeue por semanas estoura o limite e dead-letra a
     mensagem, que é exatamente a perda que se quer impedir — e até lá é laço quente com
@@ -1817,10 +2186,19 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     distinção viajar com o dado, num campo obrigatório; default faz um produtor futuro
     esquecer de marcar, em silêncio"). Valores desta fase: `tipo_nao_tratado_prices`,
     `tipo_nao_tratado_corpactions`, `tipo_nao_tratado_eod`, `estorno_orfao_expirado`,
-    `estorno_cliente_divergente`, `estorno_duplicado`, `versao_nao_suportada`,
-    `payload_invalido`. **A lista é fechada e sem default**; o F9 acrescenta **um** valor,
-    `acao_desconhecida`, e ele já está nomeado aqui para a regra "sem default" não ser
-    furada por uma fase que só diz "com motivo nomeado". *Rejeitado:* o drenador decidir por **routing key** — é
+    `estorno_cliente_divergente`, `estorno_duplicado`, `estorno_divergente`,
+    `retry_indisponivel`, `versao_nao_suportada`,
+    `payload_invalido`. **São DEZ, e a lista é fechada e sem default**; o F9 acrescenta
+    **um** valor, `acao_desconhecida`, e ele já está nomeado aqui para a regra "sem default"
+    não ser furada por uma fase que só diz "com motivo nomeado". Os dois últimos a entrar,
+    com a decisão que os criou: **`estorno_divergente`** é a dispensa declarada do estorno
+    na V2 do F3 — os três campos próprios do payload de estorno são **conferidos** contra o
+    movimento original, e divergência não pode ser aplicada em silêncio; **`retry_indisponivel`**
+    é o ramo de **confirm negado persistente** da Decisão A, sem o qual o republish em
+    `custodia.retry` cheia vira laço quente e DLQ. *Acrescentar valor a esta lista é edição
+    em mais de um lugar de propósito: a prosa aqui, o prompt abaixo e o desfecho nomeado na
+    direção estrita — uma lista declarada fechada que cresce em um lugar só é uma lista com
+    default informal.* *Rejeitado:* o drenador decidir por **routing key** — é
     re-derivação do que quem estacionou já sabia, e apodrece no primeiro caso novo (dois
     motivos diferentes podem chegar pela mesma routing key: um `prices.td` parado por tipo
     não tratado e um `prices.td` parado por payload inválido não se drenam juntos).
@@ -1829,18 +2207,40 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     seguinte a usa: o drenador é comando administrativo dentro do container, recebe **um
     motivo** como argumento, lê `messages_ready` da `custodia.parked` **antes de começar**
     (N), consome **no máximo N** mensagens, processa as do motivo pedido e **republica as
-    demais no fim da própria fila** pelo `custodia.parking`, preservando o cabeçalho.
+    demais no fim da própria fila** pelo `custodia.parking`, preservando o cabeçalho
+    `x-custodia-motivo` e carimbando `x-custodia-passagem-id` com o id da passagem corrente
+    (sobrescrevendo o de passagens anteriores).
     - **COMPLETUDE** = as N mensagens que existiam no início da volta foram examinadas e
       todas as que restam são de outros motivos → sucesso, **e a passagem publica o
       residual por motivo** (é essa a origem da contagem, não um gauge de processo).
-    - **LIMITE** = N acima do teto configurado, ou uma mensagem que volta a aparecer sem
-      ter sido examinada → **falha**, nunca sucesso com conjunto parcial.
+    - **LIMITE** = N acima do teto configurado, **ou uma mensagem que já foi examinada
+      NESTA passagem reaparece antes de as N terem sido examinadas** → **falha**, nunca
+      sucesso com conjunto parcial. *A segunda condição só é detectável porque o drenador
+      carimba um `x-custodia-passagem-id` (sobrescrito a cada passagem) em tudo que ele
+      republica: consumir uma mensagem que já traz o id da passagem **corrente** é a
+      definição de "deu a volta". A formulação anterior — "uma mensagem que volta a aparecer
+      **sem ter sido examinada**" — era autocontraditória (voltar a aparecer implica ter
+      sido consumida e republicada, isto é, examinada) e, sem identidade preservada no
+      republish, inimplementável: o ramo sobrava como "N acima do teto" e mais nada.*
     - "Fila vazia" **não serve** como completude: drenar seletivamente obriga a reconsumir
       e republicar o que aquela fase não trata, e essas mensagens voltam para a mesma fila.
   - **Corolário que vale para toda fase seguinte, e a forma dele importa mais que o
     número:** a fase que passa a tratar um tipo **drena o estacionamento daquele motivo**, e
     o Pronto dela é *"a **passagem completa** do drenador daquele motivo devolve
-    **COMPLETUDE** e **residual 0** para ele"*. **Não** é "o gauge está em 0", e **não** é
+    **COMPLETUDE** e **residual 0** para ele, **tendo examinado e processado N ≥ 1 mensagem
+    daquele motivo**"*. **A cláusula do N ≥ 1 é metade do corolário, e sem ela ele passa por
+    vacuidade:** com `N = 0` — fila vazia — "as N mensagens foram examinadas e todas as que
+    restam são de outros motivos" é **verdadeiro por vacuidade**, e a passagem devolve
+    COMPLETUDE com residual 0 sem ter feito nada. E `N = 0` é exatamente o estado que
+    produzem (i) um binding do F2 que nunca funcionou, (ii) um consumidor que deu
+    ack-e-descarta em vez de estacionar, (iii) um drenador que nunca rodou e (iv) alguém que
+    purgou a `custodia.parked` — a mesma família do "gauge que zera no deploy" que o
+    parágrafo abaixo combate, entrando pela porta ao lado. Regra: **`N = 0` é
+    INCONCLUSIVO, nunca sucesso**, e o teste da fase **planta pelo menos uma mensagem
+    daquele motivo antes de rodar** (controle positivo, §10.8). O peso disso é maior no F9:
+    corpaction é o **único** evento estacionado que não se recupera por REST, e fechar a
+    fase com a `custodia.parked` vazia por engano é perdê-la em definitivo com o checkbox
+    marcado. **Não** é "o gauge está em 0", e **não** é
     "0 mensagens de `prices.#`" no broker. As três formas erradas e por quê: o broker conta
     **mensagens, não tipos** (o motivo viaja em header, invisível para ele), e contar por
     routing key só seria verificável esvaziando a fila destrutivamente; e um **gauge em
@@ -1864,13 +2264,21 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     primeira: I4 falava só de `qtd_delta`, o Pronto conferia só quantidade, e ninguém
     dizia quem mantém as outras duas. Não é detalhe adiável — o F5 tributa com "base =
     preço médio **do livro**" (§7.3) e o F7 grava `preco_medio` e `custo` em cada snapshot
-    (§7.4). Regra: **preço médio ponderado**, atualizado na mesma transação que a
-    quantidade; na **compra**, `custo_total += valor` e `preco_medio = custo_total /
-    quantidade`; na **venda**, `custo_total` baixa **proporcionalmente à quantidade
-    vendida** e o **`preco_medio` fica inalterado** (é o que torna o lucro tributável do F5
-    calculável e o que a prática de custódia faz). Linha de `caixa:*`:
-    `preco_medio = 1,000000`, `custo_total = quantidade` (V4 do F3). Teste obrigatório de
-    **compra-compra-venda-compra**, não só compra-venda. *Rejeitado:* deixar as colunas
+    (§7.4). **A regra de dobra NÃO se escreve aqui: ela está fechada na segunda metade da
+    V1 do F3, POR TIPO, PARA OS DEZ — copie-a, não a reescreva.** O que esta fase faz é
+    aplicá-la na mesma transação que a quantidade: os **nove** tipos que não são `ajuste`
+    aplicam-se **incrementalmente**, em O(1); ao gravar um **`ajuste`**, o handler
+    **recalcula as três colunas daquela chave `(cliente_id, instrumento_id)` dobrando o
+    livro** — a mesma dobra do comando de reconstrução, com escopo de uma chave, porque a
+    dobra da V1 ignora os pares (linha revertida, `ajuste`). *A versão anterior deste
+    arquivo escrevia a regra em duas frases — "na compra…, na venda…" — e deixava oito dos
+    dez tipos sem dobra: `aporte` inflava o preço médio para sempre e o `ajuste` de uma
+    venda o corrompia em 20% no exemplo da V1, com o F5 tributando e o F7 fotografando a
+    coluna errada.* Linha de `caixa:*`:
+    `preco_medio = 1,000000`, `custo_total = quantidade` (V4 do F3). Testes obrigatórios:
+    **compra-compra-venda-compra** (não só compra-venda), **aporte** (que dobra como
+    compra), e **compra → venda a preço diferente do custo → estorno da venda**, que é o
+    único cenário que distingue a dobra certa da ingênua. *Rejeitado:* deixar as colunas
     NULL "até alguém precisar" — a metade permissiva de I4 fica verde com `preco_medio`
     NULL para sempre, e quem descobre é o F5, dentro do cálculo de imposto.
   - **Decisão B, primeira metade:** comando administrativo dentro do container para
@@ -1975,16 +2383,35 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     VENCIMENTO, e vencimento e do F9. Nao use a mesma palavra para as duas coisas.
     ref_externa = <tradeId> (a convencao V3 do F3). E posicao_corrente atualizada NA
     MESMA TRANSACAO, NAS TRES COLUNAS.
-  - preco_medio e custo_total, com a regra de baixa ESCRITA: preco medio PONDERADO;
-    na COMPRA custo_total += valor e preco_medio = custo_total / quantidade; na VENDA o
-    custo_total baixa PROPORCIONALMENTE a quantidade vendida e o preco_medio fica
-    INALTERADO. Linha de caixa:*: preco_medio = 1,000000 e custo_total = quantidade.
-    TESTE COMPRA-COMPRA-VENDA-COMPRA, nao so compra-venda. Sem isso o F5 vai tributar
-    com "base = preco medio do livro" (7.3) contra uma coluna vazia e inventar a regra
-    dentro do calculo de imposto, e o F7 vai gravar preco_medio nulo em cada snapshot.
+  - preco_medio e custo_total. A REGRA DE DOBRA NAO SE ESCREVE AQUI: ela esta fechada na
+    SEGUNDA METADE DA V1 DO F3, POR TIPO, PARA OS DEZ — copie a tabela de la, nao a
+    reescreva. NAO IMPLEMENTE "switch (tipo) { case compra: ...; case venda: ...; }": e a
+    leitura literal do texto ANTIGO deste roadmap, deixa OITO tipos sem dobra, INFLA o
+    preco medio para sempre no `aporte` (que dobra IGUAL a compra) e CORROMPE o preco
+    medio no `ajuste` de uma venda.
+    O QUE ESTA FASE FAZ e APLICAR aquela dobra na mesma transacao que a quantidade:
+      - os NOVE tipos que nao sao `ajuste` aplicam-se INCREMENTALMENTE, em O(1);
+      - ao gravar um `ajuste`, RECALCULE as tres colunas daquela chave (cliente_id,
+        instrumento_id) DOBRANDO O LIVRO — a mesma dobra do comando de reconstrucao, com
+        escopo de uma chave —, porque a dobra da V1 IGNORA OS PARES (linha revertida,
+        ajuste que a reverte), e ignorar uma linha no meio da historia muda as medias
+        seguintes: nao da para aplicar como delta.
+    Linha de caixa:*: preco_medio = 1,000000 e custo_total = quantidade.
+    TESTES OBRIGATORIOS, e sao TRES: (1) COMPRA-COMPRA-VENDA-COMPRA, nao so compra-venda;
+    (2) APORTE, provando que ele dobra igual a compra (o teste de preco medio anterior
+    nao o incluia, e o Pronto (d2) so conferia instrumento e quantidade); (3) COMPRA ->
+    VENDA A PRECO DIFERENTE DO CUSTO -> ESTORNO DA VENDA, exigindo que AS TRES COLUNAS
+    voltem ao estado anterior a venda (compra 10 @ 100, venda 4 por 600, estorno: tem que
+    voltar a qtd 10, custo 1000, pm 100 — a regra ingenua devolve custo 1200 e pm 120).
+    E o unico cenario que distingue a dobra certa da ingenua, e nenhum outro teste desta
+    fase o cobre.
+    Sem isso o F5 vai tributar com "base = preco medio do livro" (7.3) contra uma coluna
+    vazia ou errada e inventar a regra dentro do calculo de imposto, e o F7 vai gravar
+    preco_medio errado em cada snapshot — documento que o cliente ve (P2).
   - Validacao de magnitude E ESCALA dos numeric no Dominio (PADROES 10.25).
   - Comando administrativo dentro do container para reconstruir posicao_corrente a
-    partir do livro (dobra pura), NAS TRES COLUNAS — reconstruir uma e deixar as outras
+    partir do livro, aplicando A MESMA DOBRA DA V1 DO F3 (por tipo, para os dez,
+    ignorando os pares revertidos), NAS TRES COLUNAS — reconstruir uma e deixar as outras
     duas e divergencia plantada pela propria ferramenta de conserto. SEM ENDPOINT — a
     fronteira da ADR-10 e ARQUITETURAL, nao de autenticacao.
   - Metricas de consumo e alerta de profundidade/idade da fila, da DLQ, do RETRY e do
@@ -1993,8 +2420,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   DECISOES JA TOMADAS:
 
   A) Estorno orfao (o trade estornado ainda nao chegou): NAO grava nada e NAO CONSOME A
-     CHAVE DE DEDUPE. E REPUBLICADO na custodia.retry (fila com x-message-ttl e DLX de
-     volta para custodia.prices, declarada no F2) e a mensagem original e CONFIRMADA,
+     CHAVE DE DEDUPE. E REPUBLICADO PELO EXCHANGE custodia.retry.in, que entrega na fila
+     custodia.retry (com x-message-ttl e DLX de
+     volta para custodia.prices, declarada no F2), e a mensagem original e CONFIRMADA,
      liberando a cabeca da fila; passado o TTL o broker a devolve sozinho.
      `nack(requeue: true)` ESTA PROIBIDO AQUI, e o motivo tem nome: HEAD-OF-LINE
      BLOCKING. Com UMA fila, UM consumidor, prefetch 1 e consumo serial, a mensagem
@@ -2024,9 +2452,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
          trades.registered NAO tem caminho de recuperacao por contrato: ack antes do
          confirm e PERDA DEFINITIVA E SILENCIOSA, o modo de falha exato que o F2 existe
          para impedir. Confirm negado ou timeout => nack(requeue: true) da ORIGINAL —
-         aqui o requeue e o certo, porque a alternativa e perder. (Se a custodia.retry
-         tiver nascido com x-overflow: reject-publish no F2, o reject chega justamente
-         como confirm negado, e cai nesta regra.)
+         aqui o requeue e o certo, porque a alternativa e perder.
+         E O CONFIRM NEGADO PERSISTENTE TEM RAMO PROPRIO, SENAO ESTA REGRA PRODUZ OS DOIS
+         DESFECHOS QUE A DECISAO A REJEITA. Com prefetch 1 e consumo serial, o
+         nack(requeue: true) reentrega NA HORA; se a causa nao for transitoria — e o caso
+         previsto e a custodia.retry ter nascido com x-overflow: reject-publish no F2 e
+         estar CHEIA, cujo reject E um confirm negado — o resultado e
+         nack -> reentrega -> publish -> reject -> nack SEM ATRASO NENHUM: LACO QUENTE
+         com prefetch 1 num host de UM nucleo (PADROES 10.13), e o x-delivery-limit
+         queima em milissegundos levando a mensagem para a DLQ, que e o "DLQ na primeira
+         tentativa" REJEITADO. Regra: TETO DE TENTATIVAS DE REPUBLISH para a mesma
+         entrega; estourado, a mensagem vai para a custodia.parked PELO custodia.parking,
+         com motivo `retry_indisponivel` e ALERTA. Preserva a mensagem, sem laco quente e
+         sem DLQ.
      (3) O TETO E O QUE ENTREGA VALOR, NAO A CURA: orfao por corrida e raro (FK composta
          em Operacoes, relay em ordem de id, um confirm por vez). O que vai acontecer de
          verdade sao os casos INCURAVEIS (original perdido na janela sem binding, ou
@@ -2047,6 +2485,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
           voltas de 30 s para estacionar com o motivo ERRADO
           (estorno_orfao_expirado);
        3. nao achou em ninguem -> e orfao, e vale a decisao A.
+     E O PASSO (1) NAO TERMINA AO ACHAR: os TRES campos proprios do payload de estorno
+     (instrumentoId, quantidade, valorFinanceiro — OBRIGATORIOS no envelope da 5.1, nao
+     opcionais) sao CONFERIDOS contra o movimento encontrado: instrumentoId = o
+     instrumento_id dele, quantidade = |qtd_delta| dele, valorFinanceiro =
+     valor_financeiro dele. E a DISPENSA DECLARADA da V2 do F3 ("conferidos e nao
+     usados"). Divergindo QUALQUER UM: NADA e gravado, a chave de dedupe NAO e consumida
+     (I13), e a mensagem estaciona como `estorno_divergente` com ALERTA. Sem esse passo,
+     um estorno parcial (ou um erro em Operacoes) grava a reversao TOTAL em silencio,
+     numa tabela sem UPDATE, e nenhum motivo nomeado o distingue de um estorno correto.
      E A VIOLACAO DO V5 TEM DESFECHO PROPRIO: um segundo estorno do MESMO movimento chega
      com tradeId proprio, passa pelo UNIQUE (cliente_id, ref_externa) — e esse justamente
      o argumento do V5 — e estoura no UNIQUE (ref_estorno) EM TODA REENTREGA. Sem
@@ -2055,8 +2502,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      motivo `estorno_duplicado`, parking + alerta.
 
   C) Evento de tipo que esta fase ainda nao sabe escriturar (prices.*, corpactions.*,
-     eod.ready — todos bindados desde o F2) e REPUBLICADO na custodia.parked e SO ENTAO
-     confirmado. Nunca ack-e-descarta, nunca nack em laco (com x-delivery-limit, requeue
+     eod.ready — todos bindados desde o F2) e REPUBLICADO PELO EXCHANGE custodia.parking,
+     que entrega na fila custodia.parked, e SO ENTAO
+     confirmado. Publique sempre em EXCHANGE, nunca direto numa fila: a default exchange
+     com routing key = nome da fila foi REJEITADA NOMINALMENTE no F2.
+     Nunca ack-e-descarta, nunca nack em laco (com x-delivery-limit, requeue
      por semanas dead-letra a mensagem, e ate la e laco quente com prefetch 1 num host de
      UM nucleo — PADROES 10.13).
      O MOTIVO viaja num cabecalho OBRIGATORIO, `x-custodia-motivo`, SEM DEFAULT, escrito
@@ -2064,8 +2514,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      faz um produtor futuro esquecer de marcar, em silencio). Valores desta fase:
      tipo_nao_tratado_prices, tipo_nao_tratado_corpactions, tipo_nao_tratado_eod,
      estorno_orfao_expirado, estorno_cliente_divergente, estorno_duplicado,
-     versao_nao_suportada, payload_invalido. A LISTA E FECHADA E SEM DEFAULT; o F9
-     acrescenta UM valor, acao_desconhecida, ja nomeado aqui. NAO deixe o drenador decidir por ROUTING
+     estorno_divergente, retry_indisponivel, versao_nao_suportada, payload_invalido.
+     SAO DEZ. A LISTA E FECHADA E SEM DEFAULT; o F9
+     acrescenta UM valor, acao_desconhecida, ja nomeado aqui.
+     Os dois ultimos a entrar, com a decisao que os criou: `estorno_divergente` e a
+     dispensa declarada do estorno na V2 do F3 (os tres campos proprios do payload sao
+     CONFERIDOS contra o movimento original); `retry_indisponivel` e o ramo de CONFIRM
+     NEGADO PERSISTENTE da decisao A, sem o qual o republish numa custodia.retry cheia
+     vira laco quente + DLQ. NAO deixe o drenador decidir por ROUTING
      KEY: e re-derivacao do que quem estacionou ja sabia, e apodrece no primeiro caso
      novo — dois motivos diferentes chegam pela MESMA routing key (um prices.td parado
      por tipo nao tratado e um prices.td parado por payload invalido nao se drenam
@@ -2075,12 +2531,30 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      dentro do container, recebe UM motivo como argumento, le messages_ready da
      custodia.parked ANTES de comecar (N), consome NO MAXIMO N mensagens, processa as do
      motivo pedido e REPUBLICA AS DEMAIS no fim da propria fila pelo custodia.parking,
-     preservando o cabecalho.
-       COMPLETUDE = as N mensagens que existiam no inicio da volta foram examinadas e
-                    todas as que restam sao de outros motivos -> sucesso, E A PASSAGEM
-                    PUBLICA O RESIDUAL POR MOTIVO.
-       LIMITE     = N acima do teto configurado, ou uma mensagem reaparecendo sem ter
-                    sido examinada -> FALHA, nunca sucesso com conjunto parcial.
+     preservando o cabecalho x-custodia-motivo e CARIMBANDO x-custodia-passagem-id com o
+     id da passagem corrente (sobrescrevendo o de passagens anteriores).
+       COMPLETUDE = as N mensagens que existiam no inicio da volta foram examinadas,
+                    todas as que restam sao de outros motivos, E N >= 1 MENSAGEM DAQUELE
+                    MOTIVO FOI EXAMINADA E PROCESSADA -> sucesso, E A PASSAGEM PUBLICA O
+                    RESIDUAL POR MOTIVO.
+       N = 0      -> INCONCLUSIVO, NUNCA SUCESSO. Com a fila vazia, "as N foram
+                    examinadas e todas as que restam sao de outros motivos" e VERDADEIRO
+                    POR VACUIDADE, e a passagem devolveria COMPLETUDE e residual 0 sem
+                    ter feito nada — que e o mesmo defeito do gauge que zera no deploy,
+                    entrando pela porta ao lado. E N = 0 e exatamente o estado que
+                    produzem um binding do F2 que nunca funcionou, um consumidor que deu
+                    ack-e-descarta, um drenador que nunca rodou, ou uma custodia.parked
+                    purgada. O TESTE PLANTA PELO MENOS UMA MENSAGEM DO MOTIVO ANTES DE
+                    RODAR (controle positivo, PADROES 10.8).
+       LIMITE     = N acima do teto configurado, OU uma mensagem que JA FOI EXAMINADA
+                    NESTA PASSAGEM reaparecendo antes de as N terem sido examinadas
+                    (detectavel porque ela ja traz o x-custodia-passagem-id CORRENTE)
+                    -> FALHA, nunca sucesso com conjunto parcial.
+                    A formulacao anterior — "uma mensagem que volta a aparecer SEM TER
+                    SIDO EXAMINADA" — era autocontraditoria (voltar a aparecer implica
+                    ter sido consumida e republicada, isto e, examinada) e, sem
+                    identidade preservada no republish, INIMPLEMENTAVEL: sobrava so "N
+                    acima do teto".
      "Fila vazia" NAO SERVE como completude: drenar seletivamente obriga a reconsumir e
      republicar o que esta fase nao trata, e essas mensagens voltam para a mesma fila.
      A CONTAGEM POR MOTIVO SAI DESSA PASSAGEM, NAO DE UM GAUGE EM MEMORIA. O consumidor
@@ -2091,8 +2565,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      comecar, examina as N e le o header de cada uma. Entao exporte
      custodia_parked_mensagens{motivo=} COMO RESULTADO DA PASSAGEM, e o Pronto das fases
      seguintes e "a passagem completa do drenador do motivo X devolve COMPLETUDE e
-     residual 0" — nao "o gauge esta em 0" e nao inspecao de routing key no broker (o
-     broker conta MENSAGENS, nao tipos).
+     residual 0, TENDO EXAMINADO E PROCESSADO N >= 1 MENSAGEM DAQUELE MOTIVO" — nao "o
+     gauge esta em 0" e nao inspecao de routing key no broker (o broker conta MENSAGENS,
+     nao tipos). A clausula do N >= 1 e METADE DO COROLARIO: sem ela o Pronto passa por
+     vacuidade com a fila vazia, e no F9 isso significa perder corpaction em definitivo
+     com o checkbox marcado (sao os unicos eventos estacionados que nao voltam por REST).
 
   D) Camada 3 da 6.1 / ADR-11: resgate maior que a posicao e venda sem compra ENTRAM no
      livro e sao SINALIZADOS por metrica + log estruturado + alerta. NAO rejeite:
@@ -2117,14 +2594,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     ESTRITA: NENHUMA linha nasce de payload com operacao desconhecida, campo
       obrigatorio ausente, estorno sem estornaTradeId, estornaTradeId DE OUTRO CLIENTE
       (-> estorno_cliente_divergente), estornaTradeId inexistente (-> orfao/retry),
-      segundo estorno do MESMO movimento (-> estorno_duplicado), envelope `v` nao
+      segundo estorno do MESMO movimento (-> estorno_duplicado), ESTORNO CUJO
+      instrumentoId/quantidade/valorFinanceiro DIVERGEM do movimento original
+      (-> estorno_divergente), envelope `v` nao
       suportado (-> versao_nao_suportada), ou decimal fora da escala da coluna. Cada um
       com desfecho NOMEADO e DISTINGUIVEL — nunca "algo deu errado", e nunca dois casos
       com o mesmo nome.
     ESTRITA, A SEGUNDA METADE, e ela e a que pega erro de MAPEAMENTO: NENHUM CAMPO DO
       TradeRegistered E DESCARTADO SEM REGRA ESCRITA NA V2 DO F3. O teste percorre os
       campos do payload e exige, para cada um, ou uma coluna do movimento que o recebeu,
-      ou a regra escrita que o dispensa. Foi um descarte silencioso (instrumentoId e
+      ou a regra escrita que o dispensa. A UNICA DISPENSA E A DO ESTORNO
+      (instrumentoId/quantidade/valorFinanceiro "conferidos e nao usados"), e o teste a
+      afirma COMO DISPENSA DECLARADA — provando a CONFERENCIA, com um caso divergente que
+      tem que virar estorno_divergente. "Vem do lookup" nao e dispensa; e origem. Foi um descarte silencioso (instrumentoId e
       quantidade do `aporte`) que passou por uma versao anterior deste roadmap; sem esta
       metade, o teste CODIFICA o proximo erro de mapeamento em vez de pega-lo.
     Valor monetario chega como STRING DECIMAL, nunca float JSON (5.1): parse para
@@ -2170,8 +2652,12 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   <br>**Pronto:** (**permissiva**) um `POST /v1/operacoes` real no Operações aparecendo no
   livro da Custódia **por evento** — que é literalmente o critério de pronto do item 3 da
   §9, e só é verificável com os dois serviços; reentrega da mesma mensagem sendo no-op
-  (uma linha, não duas); `posicao_corrente` batendo com a dobra do livro **nas três
-  colunas**, incluindo o caso compra-compra-venda-compra. (**Estrita**)
+  (uma linha, não duas); `posicao_corrente` batendo com a dobra da **V1 do F3** **nas três
+  colunas**, nos três cenários que a dobra exige: compra-compra-venda-compra, **um
+  `aporte`** (que dobra como compra) e **compra → venda a preço diferente do custo →
+  estorno da venda**, este último exigindo que as três colunas voltem ao estado anterior à
+  venda. Mais o invariante que atravessa todos eles: depois de
+  compra/aporte/venda/resgate, `custo_total = preco_medio × quantidade`. (**Estrita**)
   nenhuma linha nasce de payload com `operacao` desconhecida, campo obrigatório ausente,
   `estorno` sem `estornaTradeId`, `estornaTradeId` de outro cliente, `estornaTradeId`
   inexistente, ou decimal fora da escala — cada um com desfecho nomeado;
@@ -2196,8 +2682,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   `estorno_cliente_divergente`, **sem** passar pelo retry (o teste conta as voltas: tem de
   ser zero), e um segundo estorno do **mesmo** movimento estaciona como
   `estorno_duplicado` em vez de queimar o `x-delivery-limit`; um `v` desconhecido estaciona
-  como `versao_nao_suportada`. Os três no mesmo teste, para que confundir um com o outro
-  reprove;
+  como `versao_nao_suportada`; e um estorno cujo `instrumentoId`, `quantidade` ou
+  `valorFinanceiro` **divergem** do movimento original estaciona como `estorno_divergente`
+  **sem gravar nada** — com **controle positivo**: o mesmo estorno com os três campos
+  batendo grava o ajuste normalmente. Os quatro no mesmo teste, para que confundir um com o
+  outro reprove;
+  (b4) **confirm negado PERSISTENTE não vira laço quente:** com o publisher confirm forçado
+  a negar sempre, o republish para o retry para no **teto de tentativas** e a mensagem
+  estaciona como `retry_indisponivel` — nunca reentregando em laço e nunca caindo na DLQ.
+  Provado por injeção, contando as tentativas;
   (c) **bijeção sobre um conjunto de eventos CONHECIDO**, não varredura genérica: publicar
   N eventos, drenar, e afirmar os dois sentidos (nenhum evento do conjunto sem linha,
   nenhuma linha fora do conjunto), **com controle positivo** — uma linha plantada fora do
@@ -2210,10 +2703,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   mesma fila**, provando que drena um e devolve o outro, que a passagem completa devolve
   **COMPLETUDE com o residual por motivo publicado** (é dela que a contagem sai — não de um
   gauge, que zeraria no deploy seguinte), e que a parada por **limite** devolve falha e não
-  sucesso parcial;
-  (d2) **um `aporte` gravando o `instrumento_id` do evento e a `quantidade` do evento** —
-  com a varredura da segunda metade estrita provando que nenhum campo do payload foi
-  descartado sem regra escrita na V2;
+  sucesso parcial. **E as duas condições de parada novas, cada uma com seu teste:**
+  a passagem com a fila **vazia** (`N = 0`) devolve **INCONCLUSIVO**, jamais COMPLETUDE —
+  é o Pronto das fases seguintes que passaria por vacuidade sem isso —, e uma mensagem que
+  **dá a volta** dentro da passagem corrente (reconhecida pelo `x-custodia-passagem-id`)
+  devolve **LIMITE**, provando que o ramo é detectável e não só decorativo;
+  (d2) **um `aporte` gravando o `instrumento_id` do evento e a `quantidade` do evento, E
+  dobrando `preco_medio`/`custo_total` como uma compra** — conferir só instrumento e
+  quantidade era o buraco da versão anterior deste Pronto: o `aporte` passava com a coluna
+  de custo intacta e o preço médio inflado. Mais a varredura da segunda metade estrita,
+  provando que nenhum campo do payload foi descartado sem regra escrita na V2;
   (e) o comando de reconstrução rodado com a projeção propositalmente corrompida
   (`UPDATE` em `posicao_corrente`, permitido porque ela **não** é o livro) devolvendo **as
   três colunas** ao valor do livro;
@@ -2249,8 +2748,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   reduzem — o valor a receber é uma **soma do livro**, não um número calculado na escrita.
   Em D nascem a venda, os tributos e o `a_liquidar`; em **D+1 útil** nasce a `liquidacao`,
   que **zera o saldo** de `caixa:a_liquidar` daquele fato e credita `caixa:BRL`. O snapshot
-  de D mostra o limbo honestamente (Fluxo 3, §8.4), e a conta do patrimônio de D e D+1 está
-  escrita na V2.
+  de D mostra o limbo honestamente (Fluxo 3, §8.4), e a **aritmética de D e D+1 — os dois
+  invariantes independentes de preço, mais a hipótese de fixture** — está escrita na V2.
 
   **Decisões desta fase:**
 
@@ -2267,9 +2766,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     proíbe misturar o critério de "dia sem pregão" com o de "repete o preço".
   - **A `liquidacao` é gravada EM D+1 ÚTIL, por um job de liquidação — não antecipada no
     instante do resgate. Isto é um DESVIO POR CORREÇÃO do texto literal da §7.3 —
-    registre-o e grave-o na memória ao fechar a fase**, na mesma convenção do `aporte` na
-    V1, do `ref_externa NOT NULL` na V3, do `posicao_corrente`→livro no F9 e do cursor no
-    F8. A §7.3 põe "`+ a_liquidar → liquidacao` (D+1 útil)" **dentro do handler**; esta
+    registre-o e grave-o na memória ao fechar a fase**, na mesma convenção dos outros
+    desvios rotulados deste arquivo: o `aporte` na
+    V1, o `ref_externa NOT NULL` na V3, o `posicao_corrente`→livro no F9, o cursor no
+    F8, o **recorte `[desde, hoje−1]`** da §7.4 no F7 e a **derivação da ausência de preço**
+    (§10.32) no F7. A §7.3 põe "`+ a_liquidar → liquidacao` (D+1 útil)" **dentro do handler**; esta
     fase move a segunda metade para um `IHostedService`. O apoio é a **§8.4**, que põe a
     liquidação em outro momento com todas as letras ("Note over C: dia D+1 útil") — a §7.3 é
     a linha do tempo comprimida, o Fluxo 3 é ela esticada. **Sem o rótulo**, o executor que
@@ -2313,6 +2814,26 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     mais, numa tabela onde não há DELETE. (Este é, aliás, mais um custo da gravação
     antecipada: lá a linha de liquidação já estaria no livro e precisaria de uma reversão
     própria de um fato que nunca aconteceu.)
+    **E o filtro sozinho NÃO basta, porque o job e o consumidor são CONCORRENTES.** O job é
+    um `IHostedService`, com thread própria; o handler de estorno roda no `BackgroundService`
+    do consumidor. São dois processos no mesmo container, e entre o `SELECT` do job e o seu
+    `INSERT` há uma janela — que a decisão (c), de **ciclo curto**, torna frequente. Os dois
+    desfechos são permanentes num livro sem DELETE: (i) o estorno commita **entre** o
+    `SELECT` e o `INSERT` e o job liquida um `a_liquidar` já revertido — exatamente o dano
+    que o filtro existe para impedir, agora por corrida em vez de por esquecimento;
+    (ii) o job insere **entre** a decisão do handler ("não há `liq` a reverter") e a
+    gravação do conjunto `est:`, e o conjunto `est:liq:` nunca é escrito — o
+    `UNIQUE (ref_estorno)` não ajuda, porque nada foi gravado.
+    **Regra: a linha `aliq:<fato>` é o PONTO DE SERIALIZAÇÃO do fato.** Tanto o job quanto o
+    handler de estorno a travam com `SELECT … FOR UPDATE`, **na mesma transação** em que
+    gravam. Assim, qualquer que seja a ordem: se o job chega primeiro, o handler encontra as
+    duas pernas já no livro e as reverte junto; se o estorno chega primeiro, o job encontra
+    o `a_liquidar` revertido e não liquida. *Rejeitado:* `SERIALIZABLE` no nível da
+    transação — resolve, mas com retry sob falha de serialização em dois caminhos que hoje
+    não têm essa política, e é martelo maior que o prego. *Rejeitado:* rodar o job dentro do
+    laço serial do consumidor — amarraria a cadência do job ao fluxo de mensagens, e ele
+    precisa rodar com a fila parada. **O Pronto (f), sequencial, passa com a corrida
+    intacta:** a prova é por injeção, com barreira entre o `SELECT` e o `INSERT`.
     **Três condições do job que são de dado irreversível, e por isso ficam escritas aqui:**
     1. **Catch-up depois de dias fora do ar grava `data_evento` NO PASSADO** — e a §7.3 diz
        que movimento com `data_evento < hoje` **dispara `recalcular`**. Se o job "não
@@ -2423,8 +2944,20 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   calculado na escrita —, e e exatamente esse saldo que o job liquida em D+1.
   Tributos sao MOVIMENTOS PROPRIOS, nunca desconto embutido no valor da venda (7.1) — e
   o que deixa o extrato conferivel contra o da corretora.
-  A CONTA QUE ISSO TEM QUE FECHAR (esta escrita na V2 do F3): entre D-1 e D o patrimonio
-  cai EXATAMENTE por t+f; entre D e D+1 ele e CONSTANTE.
+  A ARITMETICA QUE ISSO TEM QUE FECHAR (esta escrita na V2 do F3, e os DOIS PRIMEIROS
+  ITENS SAO INDEPENDENTES DE PRECO DE PROPOSITO):
+    (1) Σ qtd_delta das linhas do fato em caixa:a_liquidar = Y - t - f depois de D, e
+        ZERO depois da liquidacao;
+    (2) Σ qtd_delta(caixa:a_liquidar) + Σ qtd_delta(caixa:BRL) INALTERADO pelas duas
+        pernas — transferencia pura, logo A LIQUIDACAO SOZINHA NAO MUDA O PATRIMONIO.
+  NAO ESCREVA "entre D-1 e D o patrimonio cai EXATAMENTE por t+f" COMO INVARIANTE, como
+  dizia a versao anterior deste prompt: o snapshot de D-1 usa preco(ultimo <= D-1) e o de
+  D usa preco(ultimo <= D), entao a queda so vale t+f SE O PRECO NAO SE MOVER — e preco
+  se movendo e o motivo de o sistema existir. Uma implementacao CORRETA reprovaria esse
+  criterio, e a unica forma de deixa-lo verde seria um fixture com preco congelado e
+  posicao inteira liquidada, que nao distingue implementacao nenhuma. Essa igualdade e
+  HIPOTESE DO FIXTURE: escreva "com o preco do titulo congelado entre D-1 e D" no
+  fixture, e deixe o INVARIANTE com os itens (1) e (2).
 
   PORTE, NAO REINVENCAO: as regras de IR e IOF ja existem validadas no simulador da TD
   API (ARQUITETURA 11). Porte-as e confira contra ele — reimplementar a partir da prosa
@@ -2471,6 +3004,24 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      O FILTRO "que nao foram revertidas" NAO E DETALHE: se o estorno chegar em D, antes
      de a liquidacao existir, liquidar um a_liquidar ja revertido creditaria dinheiro em
      caixa:BRL de uma operacao que nao existe mais, numa tabela sem DELETE.
+     E O FILTRO SOZINHO NAO BASTA, PORQUE O JOB E O CONSUMIDOR SAO CONCORRENTES: o job e
+     um IHostedService com thread propria e o handler de estorno roda no BackgroundService
+     do consumidor — dois processos no mesmo container, e a decisao (c) (ciclo CURTO)
+     torna a janela entre o SELECT e o INSERT do job FREQUENTE. Dois desfechos, os dois
+     permanentes num livro sem DELETE: (i) o estorno commita ENTRE o SELECT e o INSERT e
+     o job liquida um a_liquidar JA REVERTIDO; (ii) o job insere ENTRE a decisao do
+     handler ("nao ha liq a reverter") e a gravacao do conjunto est:, e o est:liq: nunca
+     e escrito — o UNIQUE (ref_estorno) nao ajuda, porque nada foi gravado.
+     REGRA: A LINHA aliq:<fato> E O PONTO DE SERIALIZACAO DO FATO. O job E o handler de
+     estorno a travam com SELECT ... FOR UPDATE, NA MESMA TRANSACAO em que gravam.
+     Qualquer que seja a ordem, o resultado e correto: job primeiro -> o handler acha as
+     duas pernas e as reverte junto; estorno primeiro -> o job acha o a_liquidar revertido
+     e nao liquida. REJEITADO: SERIALIZABLE (resolve, mas exige politica de retry sob
+     falha de serializacao em dois caminhos que nao a tem); REJEITADO: rodar o job dentro
+     do laco serial do consumidor (amarraria a cadencia do job ao fluxo de mensagens, e
+     ele precisa rodar com a fila parada).
+     O TESTE SEQUENCIAL ("revertido antes de liquidar nao e liquidado") PASSA COM A
+     CORRIDA INTACTA: prove por INJECAO, com barreira entre o SELECT e o INSERT do job.
      O VALOR LIQUIDADO E O SALDO DO FATO em caixa:a_liquidar (soma dos qtd_delta das
      linhas daquele fato: +Y -t -f), nao o valor da linha aliq: sozinha — a_liquidar e
      BRUTO por decisao da V2.
@@ -2533,9 +3084,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   **somando as linhas**: `Σ qtd_delta` de `caixa:a_liquidar` naquele fato = `Y − IR − IOF`,
   que é exatamente o valor que o job liquida em D+1. É a prova de que "tributos são
   movimentos próprios" virou dado e não intenção — se o IR estivesse embutido, a soma bateria
-  sem as linhas de tributo, e é isso que o teste tem de reprovar. **E a conta do patrimônio
-  da V2, executada:** entre D-1 e D ele cai **exatamente** por `IR + IOF`; entre D e D+1 é
-  **constante**;
+  sem as linhas de tributo, e é isso que o teste tem de reprovar. **E os dois invariantes
+  independentes de preço da V2, executados:** `Σ qtd_delta` de `caixa:a_liquidar` do fato é
+  `Y − IR − IOF` depois de D e **zero** depois da liquidação; e
+  `Σ qtd_delta(caixa:a_liquidar) + Σ qtd_delta(caixa:BRL)` é **inalterado** pelas duas
+  pernas — transferência pura, logo a liquidação sozinha não muda o patrimônio. *A versão
+  anterior deste Pronto exigia "entre D-1 e D o patrimônio cai exatamente por IR + IOF; entre
+  D e D+1 é constante" — as duas só valem a preço parado, e uma implementação **correta**
+  reprova. A queda por `IR + IOF` continua sendo teste, mas com a hipótese "preço do título
+  congelado entre D-1 e D" escrita **no fixture**, nunca no invariante;*
   (b) reprocessamento do mesmo evento não duplica **nenhum** dos derivados (teste por
   movimento, não só pelo principal), e o **job rodado duas vezes** faz zero INSERT na
   segunda;
@@ -2550,11 +3107,24 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (d) não existe movimento de tributo ou de liquidação **sem** o resgate que o originou
   (varredura do livro);
   (e) **estorno de um resgate nos três cenários** — antes da liquidação, depois da
-  liquidação, e sem IOF: depois do estorno, Σ por instrumento **volta ao estado anterior**
-  (inclusive `caixa:BRL` e `caixa:a_liquidar`) e **não sobra nenhuma linha derivada sem
-  contrapartida**, provado por varredura e não pelo caminho feliz;
+  liquidação, e sem IOF: depois do estorno, **AS TRÊS COLUNAS de `posicao_corrente` voltam
+  ao estado anterior** para **cada** instrumento tocado (o título, `caixa:BRL` e
+  `caixa:a_liquidar`), e **não sobra nenhuma linha derivada sem contrapartida**, provado
+  por varredura e não pelo caminho feliz. **O cenário obrigatório é `compra → venda a preço
+  DIFERENTE do custo → estorno`**, com números: `compra 10 @ 100`, `venda 4 por 600`,
+  estorno → `quantidade 10, custo_total 1000, preco_medio 100`. *A versão anterior deste
+  Pronto dizia "Σ por instrumento volta ao estado anterior", e **Σ é só `qtd_delta`**: ele
+  fica verde com `preco_medio` em 120 e `custo_total` em 1200, que é exatamente o defeito
+  da dobra ingênua do `ajuste` (V1 do F3). Preço igual ao custo também não serve — nesse
+  fixture a regra certa e a errada dão o mesmo número;*
   (f) `a_liquidar` **revertido antes de liquidar não é liquidado pelo job** — controle
   positivo: um `a_liquidar` não revertido, vencido no mesmo ciclo, **é**;
+  (f2) **a corrida job × handler de estorno, provada por INJEÇÃO nos dois sentidos** — o
+  teste sequencial de (f) passa com a corrida intacta, então ele não substitui esta prova:
+  com uma barreira entre o `SELECT` e o `INSERT` do job, um estorno **commitado dentro da
+  janela** não produz liquidação; e um job que insere dentro da janela do handler resulta
+  no conjunto `est:liq:` gravado, não omitido. É o `SELECT … FOR UPDATE` sobre a linha
+  `aliq:<fato>` que se está provando, e sem ele os dois casos gravam linha eterna;
   (g) a parada do job por **limite** devolve falha, não sucesso com conjunto parcial;
   (h) o backfill rodado duas vezes com resultado idêntico, **nas duas metades** (resgate
   sem derivados e estorno sem reversão), e as três consultas de guarda devolvendo 0
@@ -2685,16 +3255,38 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   violação de contrato, nunca "não tem dado". O boundary a testar é a **fatia cheia** (o
   tamanho exato do lote) e a resposta a que **falta exatamente um** id, que tem de reprovar.
 
-  **A marcação do produtor, que o F7 consome sem re-derivar (§10.32).** A §4.5 **já** marca
-  o caso: `dataRef: null`, `campos: null`, `"motivo": "sem_preco_ate_a_data"`. Isso é
-  **ausência marcada pela fonte**, e a Custódia a grava como tal: **não** vira linha em
-  `preco_atual` nem em `historico_precos`, e alimenta a métrica de "instrumento posicionado
-  sem preço". É ela que sustenta a decisão do F7 — "dia sem preço é **sinal**, não
-  preenchimento" — sem que o F7 precise descobrir sozinho, comparando valores ou contando
-  linhas, que não houve preço. O **outro** `motivo` da §4.5, `instrumento_desconhecido`, é
-  caso **diferente** (um instrumento do nosso livro que o Hub não conhece) e tem desfecho
-  **próprio e nomeado**, com alerta: nunca se misturam. Confundir os dois é exatamente a
-  re-derivação que a §10.32 diz que apodrece no primeiro caso novo.
+  **A marcação do produtor, o que ela cobre e o que ela NÃO cobre — e este parágrafo é a
+  correção de um buraco que atravessava F6→F7.** A §4.5 **já** marca o caso na resposta do
+  `asof`: `dataRef: null`, `campos: null`, `"motivo": "sem_preco_ate_a_data"`. Isso é
+  **ausência marcada pela fonte**, e a Custódia a trata como tal **no ponto onde ela
+  chega**: **não** vira linha em `preco_atual` nem em `historico_precos` (não há valor a
+  gravar, e gravar zero seria fabricar observação), e **alimenta a métrica** de "instrumento
+  posicionado sem preço", no bootstrap e nas chamadas do worker. O **outro** `motivo` da
+  §4.5, `instrumento_desconhecido`, é caso **diferente** (um instrumento do nosso livro que
+  o Hub não conhece) e tem desfecho **próprio e nomeado**, com alerta: nunca se misturam.
+  Confundir os dois é exatamente a re-derivação que a §10.32 diz que apodrece no primeiro
+  caso novo — **e é aqui, entre os dois `motivo`, que a §10.32 morde de verdade nesta fase.**
+
+  **O que a marcação NÃO cobre, escrito porque a versão anterior deste arquivo mandava o F7
+  "ler a marcação" e ela não existe para ele.** São dois fatos, e os dois são de contrato:
+  (i) `sem_preco_ate_a_data` é campo da **resposta REST** do `/prices/asof` — o
+  `PriceObserved` da §5.1 **não tem campo `motivo`**, e ausência de preço no caminho de
+  push simplesmente **não gera evento nenhum**; (ii) o caminho diário do F7 é o handler de
+  `eod.ready(D)`, que **não chama o `asof`** — ele lê `preco_atual` e `historico_precos`.
+  Somando: **não existe marcação persistida para o F7 ler**, e não existiria mesmo que esta
+  fase gravasse uma, porque o produtor da marcação só fala pelo REST. A consequência está
+  escrita na decisão "Dia sem preço ≤ D" do F7, rotulada lá como **desvio da §10.32**: o F7
+  deriva a ausência consultando as próprias tabelas — "não existe linha de preço com
+  `data_ref ≤ D` para o instrumento X" —, que é uma **consulta definida**, não uma
+  comparação de valores. *Rejeitado, e era a outra saída possível:* gravar a ausência **como
+  dado** (linha em `historico_precos` com `valor NULL` mais uma coluna `motivo`, ou tabela
+  `precos_ausentes(instrumento_id, data_ref, motivo)`). Custaria schema, portanto seria
+  decisão do **F3** e não desta fase, e ainda assim **não resolveria**: a tabela seria
+  alimentada só pelo caminho REST (bootstrap e worker), ficando **vazia justamente nos dias
+  cobertos só por push** — uma marcação que existe em alguns dias e falta em outros é pior
+  que uma derivação uniforme, porque o F7 teria de tratar "sem linha na tabela de ausências"
+  como inconclusivo e cair na derivação de qualquer jeito, agora com dois caminhos para
+  divergir.
 
   **NÃO ENTRA:** recálculo (F7) — nesta fase `revisao > 0` apenas corrige o histórico,
   marca e registra; não há snapshot para reversionar ainda, e quando o F7 chegar ele calcula
@@ -2821,14 +3413,24 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   com a fatia CHEIA (o tamanho exato do lote) e com a resposta a que falta EXATAMENTE UM
   id, que tem que REPROVAR.
 
-  A MARCACAO JA VEM DO PRODUTOR — NAO A RE-DERIVE (PADROES 10.32). A 4.5 marca o caso
-  com dataRef: null, campos: null e "motivo": "sem_preco_ate_a_data". Grave isso COMO
-  AUSENCIA MARCADA: nao vira linha em preco_atual nem em historico_precos, e alimenta a
-  metrica de "instrumento posicionado sem preco". E ela que sustenta a decisao do F7
-  ("dia sem preco e SINAL, nao preenchimento") sem que o F7 precise descobrir sozinho,
-  comparando valores ou contando linhas. O OUTRO motivo da 4.5,
+  A MARCACAO DO PRODUTOR — O QUE ELA COBRE E O QUE ELA NAO COBRE. A 4.5 marca o caso na
+  RESPOSTA DO asof com dataRef: null, campos: null e "motivo": "sem_preco_ate_a_data".
+  Trate como AUSENCIA MARCADA no ponto onde ela chega: NAO vira linha em preco_atual nem
+  em historico_precos (nao ha valor a gravar, e gravar zero seria fabricar observacao), e
+  ALIMENTA A METRICA de "instrumento posicionado sem preco". O OUTRO motivo da 4.5,
   `instrumento_desconhecido`, e caso DIFERENTE (instrumento do nosso livro que o Hub nao
-  conhece) e tem desfecho PROPRIO E NOMEADO, com alerta. Nunca misture os dois.
+  conhece) e tem desfecho PROPRIO E NOMEADO, com alerta. NUNCA misture os dois — e e AQUI,
+  entre os dois motivos, que a PADROES 10.32 morde nesta fase.
+  O QUE ELA NAO COBRE, e nao tente resolver: NAO grave "ausencia de preco" como linha para
+  o F7 ler depois. Dois fatos de contrato: (i) sem_preco_ate_a_data e campo da RESPOSTA
+  REST do /prices/asof — o PriceObserved da 5.1 NAO TEM campo `motivo`, e ausencia de
+  preco no caminho de push nao gera evento nenhum; (ii) o caminho diario do F7 e o handler
+  de eod.ready(D), que NAO CHAMA O asof — ele le preco_atual e historico_precos. Logo uma
+  tabela de ausencias so seria alimentada pelo caminho REST e ficaria VAZIA justamente nos
+  dias cobertos so por push: marcacao que existe em alguns dias e falta em outros e PIOR
+  que derivacao uniforme. O F7 deriva a ausencia consultando as proprias tabelas ("nao
+  existe linha com data_ref <= D para o instrumento X"), e isso esta ROTULADO LA como
+  desvio da 10.32. Nao invente schema aqui para sustentar aquela leitura.
 
   E use `campoPosicao` do proprio item (4.5): faca item.campos[item.campoPosicao]. NAO
   hard-codeie `pu_venda` nem duplique a tabela de classes — a regra mora no Hub, e a 4.5
@@ -2866,7 +3468,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
 
   <br>**Pronto:** (**permissiva**) preço do dia chegando **por push** do Hub e aparecendo
   em `preco_atual`; **a passagem completa do drenador do motivo `tipo_nao_tratado_prices`
-  devolvendo COMPLETUDE e residual 0 para esse motivo** — é a varredura que sabe o estoque,
+  devolvendo COMPLETUDE e residual 0 para esse motivo, tendo examinado e processado
+  N ≥ 1 mensagem dele** — o teste **planta** a mensagem antes de rodar, porque com `N = 0`
+  a passagem devolve COMPLETUDE e residual 0 **por vacuidade**, que é o mesmo defeito do
+  gauge que zera no deploy; é a varredura que sabe o estoque,
   não um gauge (que zeraria no deploy seguinte) e não inspeção de routing key no broker (que
   conta mensagens, não tipos); uma `revisao > 0`
   reprocessada substituindo o valor em `preco_atual`, deixando **as duas** revisões no
@@ -2953,14 +3558,39 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   - **ADR-9 travada por teste, não por disciplina — E COM O QUALIFICADOR INTEIRO.** A §7.3
     diz que `eod.ready` é o único gatilho **da valoração diária**, e o qualificador é metade
     da regra: a **exceção nomeada** é o **gatilho 2 da §7.4**, que esta fase implementa e
-    que **reversiona o passado** (`recalcular(TODOS os posicionados, desde=dataRef)`) sem
-    nunca materializar o dia corrente. Ler "único gatilho de valoração" sem o "diária"
+    que **trabalha sobre o passado** (`recalcular(TODOS os posicionados, desde=dataRef)`) —
+    versionando o dia que mudou **e criando o dia que faltava** — sem nunca materializar o
+    dia corrente. Ler "único gatilho de valoração" sem o "diária"
     proíbe o gatilho 2 — e sem o gatilho 2 **o Fluxo 5 não existe**, que é metade do critério
     de pronto do item 4 da §9. As duas coisas convivem porque fazem coisas diferentes:
-    `eod.ready` **materializa o dia**; `revisao > 0` **reversiona dias já materializados**.
+    `eod.ready` **materializa o dia corrente**; o worker **trabalha sobre o passado**.
     *Rejeitado:* materializar snapshot **do dia corrente** ao receber `prices.td` "para ficar
     mais fresco" — são ~400 pings/dia e o resultado é o mesmo; a regressão que reintroduziria
     isso é barata de escrever e cara de perceber.
+  - **O MECANISMO que faz as duas conviverem é RECORTE DE INTERVALO, e ele é um DESVIO
+    PARCIAL da §7.4 — rotulado, na mesma convenção dos outros desvios deste arquivo.** O
+    worker percorre **`[desde, hoje−1]`** e **INSERE quando o valor difere do vigente OU
+    QUANDO NÃO EXISTE LINHA**. A §7.4 escreve `para cada dia útil D em [desde, hoje]` e
+    `se difere do vigente (ou NÃO EXISTE LINHA)`: o desvio é **só o `hoje`**, que sai do
+    intervalo porque materializar o dia corrente é do `eod.ready` (ADR-9); a cláusula "não
+    existe linha" fica **literal**, como está lá. *Sem o rótulo, o executor que ler a §7.4
+    — como o próprio prompt manda — encontra a contradição sem explicação e tende a seguir
+    a `ARQUITETURA`.*
+    **A formulação anterior — "reversiona dias já materializados e nunca cria linha" — não
+    era um recorte: era uma regra a mais, e ela QUEBRAVA O GATILHO 1 no caso mais comum.**
+    Uma compra registrada retroativamente para um período em que o cliente tinha posição
+    zero não tem snapshot para "reversionar" (§7.1, convenção 2: só há linha em dia com
+    posição ≠ 0) — o worker tem de **criar** as linhas, e aquela regra o proibia. É
+    exatamente o cenário que o F4 nomeia como típico: *"para registro manual posição
+    negativa costuma significar 'falta lançar a compra antiga'"*. Com **um só código** para
+    os três gatilhos, proibir a criação quebraria o gatilho 1 sem tocar no 2.
+    **Consequência que fica escrita para não ser reportada como defeito:** se `desde` for o
+    próprio dia de hoje, o intervalo é **vazio** e o worker não faz nada — está correto, o
+    dia ainda não foi materializado, e o `eod.ready(hoje)` o materializará já com o
+    movimento no livro. *Rejeitado:* manter `[desde, hoje]` e confiar em disciplina para
+    não criar o dia corrente — é a regra que a ADR-9 quer no schema do algoritmo, não na
+    cabeça de quem implementa; e um `eod.ready` atrasado encontraria a linha do dia já
+    criada pelo worker, com `calculado_em` mentindo sobre quem a criou.
   - **O campo `classes` do `EodPricesReady` (§5.1) é ignorado nesta fase, e a ausência é
     decidida.** Em fase 1 existe **só** `td`, e a ADR-9 adia explicitamente a política de
     classe atrasada ("Fase 2: definir política para classe atrasada — publicar por classe e
@@ -2981,10 +3611,26 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     posição ≠ 0, e dia sem pregão não gera linha — e nunca se mistura com "repete o preço".
     Falta de preço em dia útil com posição é **sinal** (métrica + alerta), não preenchimento.
     *Rejeitado:* forward-fill materializado, proibido nominalmente pela §9 dos padrões.
-    **E o sinal não é re-derivado aqui: ele vem MARCADO do produtor** — a §4.5 devolve
-    `dataRef: null` com `"motivo": "sem_preco_ate_a_data"`, e o F6 grava essa ausência como
-    tal. Esta fase **lê a marcação** em vez de descobrir sozinha, comparando valores ou
-    contando linhas, que não houve preço (§10.32).
+    **Como o sinal é obtido, e isto é um DESVIO da §10.32 — rotulado, na mesma convenção
+    dos outros deste arquivo.** A §10.32 manda a distinção **vir marcada** do produtor, e
+    a versão anterior desta decisão dizia que ela vem: *"a §4.5 devolve `dataRef: null` com
+    `motivo: sem_preco_ate_a_data`, e o F6 grava essa ausência como tal; esta fase lê a
+    marcação"*. **Ela não vem, e a decisão era inexecutável**, por dois fatos de contrato:
+    `sem_preco_ate_a_data` é campo da **resposta REST** do `/prices/asof`, e o
+    `PriceObserved` da §5.1 **não tem campo `motivo`** — ausência de preço no caminho de
+    push não gera evento nenhum —; e o caminho diário desta fase é o handler de
+    `eod.ready(D)`, que **não chama o `asof`**: ele lê `preco_atual` e `historico_precos`.
+    Não há marcação persistida para ler, e o F6 registra por que criá-la seria pior.
+    **Regra desta fase, então:** "não há preço ≤ D para o instrumento X" é derivado por
+    **consulta definida** — *não existe linha em `historico_precos` com `data_ref ≤ D` para
+    aquele `instrumento_id`* —, e o desvio é rotulado **aqui** para o executor não passar a
+    fase re-derivando e relatando que seguiu a marcação. Duas fronteiras que **continuam**
+    valendo, e é o que sobra da §10.32 nesta fase: (i) a distinção entre
+    `sem_preco_ate_a_data` e `instrumento_desconhecido` **vem marcada** do `asof` e não se
+    re-deriva (é do F6); (ii) "houve revisão de preço?" **vem marcado** na coluna `revisao`
+    e não se descobre comparando valores (gatilho 2, abaixo). O que se deriva é **só** a
+    ausência de linha, que é uma pergunta ao próprio banco e não uma inferência sobre o
+    dado alheio.
   - **`caixa:*` fica FORA desta regra, e é a V4 do F3 que decide.** `caixa:BRL` e
     `caixa:a_liquidar` têm preço **1,000000 por definição** — não é observação, não é
     forward-fill —, **nunca** recebem `PriceObserved` e **nunca** são pedidos ao Hub. Duas
@@ -3059,12 +3705,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   - snapshots_posicao versionado: marca vigente=false e INSERE a nova com calculado_em.
     Versiona SO SE o valor DIFERE do vigente.
   - worker recalcular(cliente?, instrumento, desde) da 7.4: UM SO CODIGO para os tres
-    gatilhos. Gatilho 1 = movimento com data_evento no passado (ligue o que o F4 deixou
-    so registrado). Gatilho 2 = PriceObserved com revisao > 0, escopo TODOS os clientes
-    posicionados x 1 instrumento (ligue o que o F6 deixou MARCADO no dado — nao
-    re-derive "houve revisao?" comparando valores, PADROES 10.32).
+    gatilhos, percorrendo [desde, HOJE-1] e inserindo QUANDO DIFERE DO VIGENTE OU QUANDO
+    NAO EXISTE LINHA (ver decisao 1). Gatilho 1 = movimento com data_evento no passado
+    (ligue o que o F4 deixou so registrado). Gatilho 2 = PriceObserved com revisao > 0,
+    escopo TODOS os clientes posicionados x 1 instrumento (ligue o que o F6 deixou
+    MARCADO no dado — nao re-derive "houve revisao?" comparando valores, PADROES 10.32).
   - job de reconciliacao livro x posicao_corrente que ALERTA e NAO CORRIGE, comparando AS
-    TRES COLUNAS (quantidade, preco_medio, custo_total). A comparacao e deterministica
+    TRES COLUNAS (quantidade, preco_medio, custo_total) — e ele usa A MESMA DOBRA DA V1 DO
+    F3 que o handler e o comando de reconstrucao, NUNCA uma terceira implementacao: duas
+    dobras divergem na primeira correcao aplicada em uma so, e a reconciliacao passaria a
+    alertar sobre a propria divergencia. A comparacao e deterministica
     porque I4 NAO tem filtro por relogio — e a decisao da liquidacao por job, no F5, que
     preserva isso.
   - alerta de "dia util sem eod.ready ate 12:00" (ARQUITETURA 12).
@@ -3076,11 +3726,25 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      (7.3, palavra por palavra). Preco individual NUNCA materializa o snapshot do dia,
      nem "so para o instrumento que mudou". A EXCECAO NOMEADA e o GATILHO 2 da 7.4, que
      VOCE IMPLEMENTA nesta fase: revisao > 0 dispara recalcular(TODOS os posicionados,
-     desde=dataRef), que REVERSIONA DIAS JA MATERIALIZADOS e nunca cria o dia corrente.
-     As duas regras convivem porque fazem coisas diferentes: eod.ready MATERIALIZA O DIA,
-     revisao > 0 REVERSIONA O PASSADO. Se voce ler "unico gatilho de valoracao" sem o
-     "diaria" e nao implementar o gatilho 2, o FLUXO 5 NAO EXISTE — e ele e metade do
-     criterio de pronto do item 4 da secao 9.
+     desde=dataRef). Se voce ler "unico gatilho de valoracao" sem o "diaria" e nao
+     implementar o gatilho 2, o FLUXO 5 NAO EXISTE — e ele e metade do criterio de pronto
+     do item 4 da secao 9.
+     O MECANISMO QUE FAZ AS DUAS REGRAS CONVIVEREM E RECORTE DE INTERVALO, E ELE E UM
+     DESVIO PARCIAL DA 7.4 — REGISTRE-O, igual ao ref_externa NOT NULL do F3:
+       o worker percorre [desde, HOJE-1] e INSERE QUANDO DIFERE DO VIGENTE **OU QUANDO
+       NAO EXISTE LINHA**.
+     A 7.4 escreve "para cada dia util D em [desde, hoje]" e "se difere do vigente (ou NAO
+     EXISTE LINHA)": o desvio e SO O `hoje`, que sai do intervalo porque materializar o
+     dia corrente e do eod.ready (ADR-9); a clausula "nao existe linha" fica LITERAL.
+     NAO ESCREVA "so reversiona dias ja materializados", como dizia a versao anterior
+     deste prompt: isso QUEBRA O GATILHO 1 no caso mais comum. Uma compra registrada
+     retroativamente para um periodo em que o cliente tinha posicao ZERO nao tem snapshot
+     para reversionar (7.1, convencao 2: so ha linha em dia com posicao != 0) — o worker
+     tem que CRIAR as linhas. E com UM SO CODIGO para os tres gatilhos, proibir a criacao
+     quebra o gatilho 1 sem tocar no 2.
+     E SE `desde` FOR HOJE, o intervalo e VAZIO e o worker nao faz nada: isso esta CORRETO
+     (o dia ainda nao foi materializado, e o eod.ready(hoje) o materializa com o movimento
+     ja no livro). Nao "conserte".
   1b. O campo `classes` do EodPricesReady (5.1) e IGNORADO nesta fase, e a ausencia e
      DECIDIDA: em fase 1 so existe `td`, e a ADR-9 adia a politica de classe atrasada
      ("Fase 2: publicar por classe e valorar parcial, ou timeout com ultimo <= D"). NAO
@@ -3091,10 +3755,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   3. Dia sem preco <= D para instrumento posicionado: NAO invente valor e NAO repita o
      preco anterior como observacao (forward-fill materializado e antipadrao nominal da
      secao 9 do PADROES). Falta de preco em dia util com posicao e SINAL: metrica +
-     alerta. E o sinal NAO E RE-DERIVADO AQUI: ele vem MARCADO do produtor — a 4.5
-     devolve dataRef: null com "motivo": "sem_preco_ate_a_data", e o F6 grava essa
-     ausencia como tal. LEIA A MARCACAO; nao descubra sozinho comparando valores ou
-     contando linhas (PADROES 10.32).
+     alerta. COMO O SINAL E OBTIDO — E ISTO E UM DESVIO DA PADROES 10.32, ROTULADO:
+     a versao anterior deste prompt mandava "LER A MARCACAO" do produtor, e ELA NAO
+     EXISTE PARA VOCE. Dois fatos de contrato: sem_preco_ate_a_data e campo da RESPOSTA
+     REST do /prices/asof, e o PriceObserved da 5.1 NAO TEM campo `motivo` (ausencia de
+     preco no push nao gera evento nenhum); e o seu caminho diario e o handler de
+     eod.ready(D), que NAO CHAMA o asof — ele le preco_atual e historico_precos. NAO HA
+     MARCACAO PERSISTIDA PARA LER, e o F6 registra por que criar uma seria pior (so o
+     caminho REST a alimentaria). Entao DERIVE, por CONSULTA DEFINIDA: "nao existe linha
+     em historico_precos com data_ref <= D para aquele instrumento_id". O que CONTINUA
+     vindo marcado e nao se re-deriva: (i) a distincao entre sem_preco_ate_a_data e
+     instrumento_desconhecido, que e do F6; (ii) "houve revisao?", que e a coluna
+     `revisao`. O que voce deriva e SO a ausencia de linha — pergunta ao proprio banco,
+     nao inferencia sobre dado alheio.
      EXCECAO, e ela e definicao e nao caso especial: caixa:BRL e caixa:a_liquidar tem
      preco 1,000000 POR DEFINICAO (V4 do F3), nunca recebem PriceObserved e nunca sao
      pedidos ao Hub. Elas GERAM linha de snapshot e ficam FORA deste alerta — senao a
@@ -3132,16 +3805,28 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   <br>**Pronto:** (**permissiva**) um `eod.ready(D)` **real do Hub** — o gatilho de verdade
   é parte da prova — produzindo linha de snapshot para cada (cliente, instrumento) com
   posição ≠ 0 em D, com `valor = quantidade × preco(último ≤ D)` conferido à mão contra
-  `preco_atual`; Fluxo 2 retroativo ponta a ponta (uma operação com `data_evento` no
-  passado versionando os snapshots do intervalo); Fluxo 5 **por injeção sintética** de
+  `preco_atual`; Fluxo 2 retroativo ponta a ponta, **nas DUAS formas, porque uma só não
+  distingue implementação nenhuma**: (i) uma operação com `data_evento` no passado
+  **versionando** os snapshots do intervalo, e (ii) um movimento retroativo para um período
+  **sem snapshot nenhum** (o cliente tinha posição zero lá) **CRIANDO** as linhas
+  faltantes — que é o caso típico do registro manual e o que um worker "que só
+  re-versiona" reprova. Mais: nenhuma linha do **dia corrente** nasce por qualquer um dos
+  dois, porque o intervalo é `[desde, hoje−1]`; Fluxo 5 **por injeção sintética** de
   `prices.td` com `revisao: 1`, dito como tal;
   **a passagem completa do drenador do motivo `tipo_nao_tratado_eod` devolvendo COMPLETUDE
-  e residual 0** (é a varredura que sabe o estoque; gauge zera no deploy e o broker conta
+  e residual 0, tendo examinado e processado N ≥ 1 mensagem desse motivo** — o teste
+  **planta** a mensagem antes de rodar, porque com `N = 0` a passagem devolveria COMPLETUDE
+  por vacuidade (é a varredura que sabe o estoque; gauge zera no deploy e o broker conta
   mensagens, não tipos). E — a prova que fecha o buraco que atravessava
   F5→F7→F8 — **o limbo D→D+1 aparecendo no DOCUMENTO, não só no livro**: um dia D com
   `a_liquidar` gerando **duas** linhas de snapshot (o título e `caixa:a_liquidar`), o dia
-  D+1 gerando `caixa:BRL` depois de o job de liquidação do F5 rodar, e o **patrimônio
-  constante** entre D e D+1 — soma dos instrumentos + caixa, §7.5. (**Estrita**)
+  D+1 gerando `caixa:BRL` depois de o job de liquidação do F5 rodar, e a **liquidação não
+  mudando o patrimônio**: `Σ qtd_delta(caixa:a_liquidar) + Σ qtd_delta(caixa:BRL)`
+  inalterado pelas duas pernas, que valem preço 1 por definição. *A versão anterior exigia
+  "patrimônio constante entre D e D+1", que só é verdade se o preço não se mover **e** a
+  posição for inteiramente liquidada — critério que uma implementação **correta** reprova.
+  Se o fixture zerar a posição do título de propósito, a constância aparece como
+  **consequência**, e a hipótese fica escrita no fixture.* (**Estrita**)
   (a) publicar **N** `PriceObserved` **com `revisao = 0`** e provar que
   `count(snapshots_posicao)` **não muda**, com o `eod.ready` seguinte como **controle
   positivo** — é a prova executável da ADR-9, e sem o controle positivo a asserção passaria
@@ -3171,9 +3856,18 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   de caixa e sem nenhum `PriceObserved` de caixa (é o falso positivo diário que a V4
   impede), **com controle positivo**: um instrumento **do Hub** posicionado e sem preço ≤ D
   no mesmo dia **dispara**;
-  (k) um item marcado com `motivo: "sem_preco_ate_a_data"` no histórico produz o **sinal**
-  e **nenhuma** linha de snapshot para aquele instrumento naquele dia — nunca uma linha com
-  o preço do dia anterior (forward-fill).
+  (k) um instrumento posicionado em D para o qual **não existe linha de preço com
+  `data_ref ≤ D`** produz o **sinal** (métrica + alerta) e **nenhuma** linha de snapshot
+  para aquele instrumento naquele dia — nunca uma linha com preço fabricado. **Com controle
+  positivo, e ele é o que separa as duas coisas que a versão anterior deste Pronto
+  confundia:** o mesmo instrumento com uma linha de preço em **D−3** e nenhuma em D **gera**
+  snapshot em D, valorado com o preço de D−3 — isso é `preco(último ≤ D)`, que é a regra da
+  §7.4, e **não** é forward-fill; forward-fill seria gravar uma **observação** de preço para
+  D, e isso continua proibido. *A formulação anterior — "um item marcado com
+  `motivo: sem_preco_ate_a_data` **no histórico**" — era infalseável: o F6 decide, com
+  razão, que essa ausência **não vira linha**, então o item marcado não existe no histórico
+  para ser encontrado, e nenhuma implementação satisfazia o critério sem inventar o
+  armazenamento que o F6 proibiu.*
   Mais: `docker stats` durante o recálculo, com o efeito nos vizinhos conferido.
 
 - [ ] **F8** — extratos: a única superfície HTTP de negócio, e ela é de leitura.
@@ -3539,8 +4233,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   conjuntos": contar conjuntos passa mesmo com o conjunto incompleto, que é como a colisão
   de chaves se esconde; um vencimento zerando a posição e creditando o caixa em D+1 útil;
   **a passagem completa do drenador do motivo `tipo_nao_tratado_corpactions` devolvendo
-  COMPLETUDE e residual 0** (a varredura, não um gauge — e aqui isso pesa mais que nas outras
-  fases: são os únicos eventos estacionados que **não** se recuperam por REST); e o extrato
+  COMPLETUDE e residual 0, tendo examinado e processado N ≥ 1 mensagem desse motivo** — o
+  teste **planta** a mensagem antes de rodar, e **aqui a cláusula do N ≥ 1 é a que mais
+  pesa em todo o roadmap**: com a `custodia.parked` vazia por engano (binding que nunca
+  funcionou, consumidor que deu ack-e-descarta, fila purgada), a passagem devolveria
+  COMPLETUDE e residual 0 **por vacuidade**, e fechar esta fase com o checkbox marcado é
+  perder corpaction **em definitivo** — são os únicos eventos estacionados que **não** se
+  recuperam por REST. Continua valendo o resto: é a varredura, não um gauge (que zera no
+  deploy) e não inspeção de routing key no broker (que conta mensagens, não tipos); e o extrato
   de movimentação do F8 mostrando `cupom` e `ir_retido`
   como linhas próprias, conferíveis contra o extrato da corretora.
   (**Estrita**) (a) reentrega do **mesmo** fato é no-op para **todos** os N — e o teste tem
