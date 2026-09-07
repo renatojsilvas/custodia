@@ -102,18 +102,53 @@ mensagem clara se faltarem — mas falha.
 ## No repo do `tesouro-direto` (métrica é *pull*, mora lá)
 
 Quem inicia a conexão precisa do endereço do outro — por isso log resolve no seu repo
-e métrica não. São quatro edições, e a terceira é a que todo mundo esquece:
+e métrica não. Duas edições são de arquivo:
 
 1. alvo do scrape em `infra/alloy/config.alloy`, com `job=<seu-servico>`;
-2. dashboard em `infra/grafana/dashboards/`;
-3. **o nome do dashboard na lista fixa do `apply-cloud.sh`** — copiar o JSON não basta;
-4. regras de alerta como `rules-<seu-repo>.yaml`, **nunca** `rules.yaml`: esse nome já
-   é das 21 regras do TD, e o PUT do publicador as sobrescreveria.
+2. dashboard em `infra/grafana/dashboards/<seu-servico>.json` e regras de alerta em
+   `infra/grafana/cloud/rules-<seu-repo>.yaml`, **nunca** `rules.yaml`: esse nome já é
+   das 21 regras do TD, e o PUT do publicador as sobrescreveria.
 
-Depois rode o `apply-cloud.sh` com `GC_GRAFANA_URL`, `GC_GRAFANA_TOKEN` e
-`TELEGRAM_BOT_TOKEN` **exportados na invocação** — o script não lê o `.env`, e a guarda
-`${VAR:?}` só testa vazio: um placeholder como `not-configured-local-dev` passa por ela
-e deixa o Telegram mudo, para todos os serviços, com o script reportando sucesso.
+E a terceira é a que todo mundo erra: **o `apply-cloud.sh` NÃO tem uma "lista fixa" onde
+se acrescenta o nome de um serviço vizinho.** (Este texto dizia que tinha, e estava
+errado; corrigido em 2026-09-07, ao abrir a `custodia`, lendo o script.) A lista fixa que
+existe — `for d in tesouro-direto host` — é só dos dashboards **do TD**, publicados na
+pasta *TesouroDireto*. Hub e Operações entram por **blocos `if -f` próprios**, e são
+**cinco pontos por serviço**:
+
+1. `FOLDER_UID_<SERVICO>=$(gc_folder_uid <Pasta>)` no topo — pasta própria;
+2. bloco `if [ -f infra/grafana/cloud/rules-<repo>.yaml ]` publicando as regras nela;
+3. bloco `if [ -f infra/grafana/dashboards/<servico>.json ]`, com a flag
+   `<SERVICO>_DASHBOARD_PUBLICADO`;
+4. bloco de **conferência da contagem** de regras publicadas na pasta, lida do YAML;
+5. `uids_dashboards_verificar+=(<servico>)`, condicionado à flag.
+
+Errar isso não faz barulho: quem acrescenta o serviço ao `for d in tesouro-direto host`
+publica o dashboard na pasta errada **com HTTP 200**, e quem esquece o bloco (2) nunca
+publica as regras. **O `scripts/verificar-f1.sh` não pega o (2)**: ele faz
+`grep -oE "rules-[a-z0-9-]+\.yaml"` no publicador, acha os arquivos dos **outros**
+serviços, confirma que existem e fica verde.
+
+## Publicar alerta na nuvem: as duas cópias, o valor do token, e a prova pela API
+
+Vale para **toda** fase de **qualquer** repo que crie ou mude alerta, não só para o F1.
+
+Depois que o serviço existe, há **duas** cópias do `rules-<repo>.yaml` — a do seu repo e a
+de `../tesouro-direto-api/infra/grafana/cloud/` — e **só a segunda é lida pelo
+`apply-cloud.sh`**. Editar a sua e não a de lá, ou editar as duas e não rodar o publicador,
+deixa a regra existindo no repo e **não existindo na nuvem, em silêncio**: foi assim que no
+`hub` os alertas ficaram semanas sem existir, com o publicador avisando "ausente — pulando"
+no meio de uma saída longa. Então, sempre:
+
+1. edite **as duas** cópias;
+2. rode o `apply-cloud.sh` com `GC_GRAFANA_URL`, `GC_GRAFANA_TOKEN` e `TELEGRAM_BOT_TOKEN`
+   **exportados na invocação** — o script não lê o `.env` — **e confira o VALOR do token**:
+   a guarda `${VAR:?}` só testa vazio, e um placeholder como `not-configured-local-dev`
+   passa por ela e deixa o Telegram mudo **para todos os serviços publicados**, com o
+   script reportando sucesso (aconteceu no fecho do F1 do `operacoes`);
+3. **prove pela API do Grafana Cloud que a regra está publicada, e na pasta certa** — não
+   que o YAML foi editado. Editar arquivo não é publicar, e é essa distinção que os
+   incidentes acima têm em comum.
 
 ## Critério de pronto do F1
 

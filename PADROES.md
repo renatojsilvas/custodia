@@ -917,3 +917,45 @@ decisão-por-conteúdo classificaria **ao contrário** da marcação, **nos dois
 ela consideraria de stream. Assim qualquer reintrodução reprova nos dois casos. Um teste com valor
 neutro — um código inventado que nenhuma lista conhece — reprova por coincidência em só um dos
 lados, e some no dia em que alguém apagar aquele lado.
+
+### 10.33. Credencial obrigatória entra em CINCO listas — e a do `env:` do step é a que se esquece, porque ela falha COM o secret cadastrado
+
+Quando uma credencial obrigatória entra num serviço, ela entra em **cinco listas que se
+atualizam juntas**:
+
+1. **os dois composes** (`docker-compose.yml` e `docker-compose.prod.yml`), com `:?` em
+   produção e sem default;
+2. o **`envs:`** do `appleboy/ssh-action` — a lista do que é *encaminhado* ao script remoto;
+3. o **`env:` do MESMO step** — o bloco que mapeia `${{ secrets.* }}` para o ambiente do
+   runner, isto é, de *onde vem o valor*;
+4. o **`printf`** que reescreve o `.env` na VPS **por completo**;
+5. as **dummies** do "Compose config gate" do job `test`.
+
+**Por quê a (3) é a cara:** as duas superfícies do `ssh-action` são distintas e é fácil
+achar que são a mesma. Acrescentar a variável só ao `envs:` **encaminha uma variável
+inexistente**: ela chega ao script como string vazia, e a guarda `-z` do deploy acusa
+**"secret vazio" com o secret cadastrado e correto no GitHub**. O operador vai procurar o
+defeito no cofre de segredos — o único lugar onde ele não está. Esquecer a (1) ou a (4)
+derruba o serviço no `up` seguinte, e esquecer a (5) reprova o `config -q` sem causa: são
+falhas altas e óbvias. A (3) é a única que mente sobre onde está o problema.
+
+**Nem toda credencial entra nas cinco.** O critério: *quem entra no compose com `:?` entra
+nas cinco; credencial usada só pelo script de deploy entra em DUAS* — o `envs:` **e** o
+`env:` do step, que andam sempre juntos e nunca se separam. Variável com `:?` que ninguém
+lê derruba o `up` e o `config -q` sem motivo.
+
+**Guarda:** ao acrescentar credencial, edite as cinco (ou as duas) **no mesmo commit**, e
+normalize o segredo **na origem** com `tr -d '\r\n'` (§10.4) em vez de em cada consumidor.
+
+**E o inventário envelhece mal:** este item nasceu ao abrir a `custodia` (2026-09-07), de
+dois textos **portados do molde** que já enumeravam menos que cinco — o `.env.example`
+dizendo "as **quatro** listas têm que espelhar uma a outra" e o comentário do `ci.yml`
+mandando incluir só no `printf` e no `envs:`. Nenhum dos dois estava errado quando foi
+escrito; os dois ficaram errados por cópia (§10.20). Inventário de lista, quando portado,
+se **reconta contra o arquivo**, nunca se copia.
+
+**Sexta superfície, que o CI não lê:** o `.env` que já existe na máquina de quem
+desenvolve. O gate do CI escreve o próprio insumo com dummies e fica verde exatamente
+enquanto o `.env` local de todo mundo quebra (`LEIA-ME-KIT`, "Gate de compose no CI passa
+com dummy"). Credencial nova é **mudança quebrante**: avise no PR, citando as linhas, e
+rode `docker compose config -q` contra o `.env` **real**.
