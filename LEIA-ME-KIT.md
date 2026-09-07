@@ -961,3 +961,96 @@ sobre trabalho não commitado tem que mandar **começar por `git status --short`
 novos direto. E ao final, conferir a reversão contra o snapshot, não só contra o `git diff` — se o
 arquivo voltou para o commit anterior, o `git diff` fica **limpo**, que é exatamente o sinal
 errado: limpo aqui significa "perdi tudo", não "não sobrou mutação".
+
+---
+
+## A cláusula que você ACRESCENTA não passa pela mesma revisão da que você corrige
+
+Depois de seis rodadas de correção no roadmap da `custodia` (2026-09-07), a taxa de defeitos
+graves não caiu — e a auditoria da sexta rodada explicou por quê: **todos os cinco defeitos
+graves daquela rodada eram de cláusula ACRESCENTADA, não de cláusula corrigida.** A
+disciplina existente cobria bem o outro caso ("quem mais dependia da frase que saiu?"), e
+ninguém perguntava o simétrico: *"que frases existentes a frase nova torna falsas, e que
+inventários ela obriga a crescer?"*.
+
+**Regra: antes de fechar uma adição, responda por escrito três coisas.**
+
+1. **Que afirmações de EXAUSTIVIDADE ela torna falsas.** Procure literalmente por "por
+   construção isso não acontece", "a fronteira é uma", "nenhum X fica sem dono", "são N".
+   Exemplo real: um teto novo no handler criou uma **segunda** fronteira num parágrafo que
+   dizia, no singular, "a fronteira dessa afirmação está escrita, porque ela tem uma".
+2. **Que INVENTÁRIOS ela obriga a crescer.** Lista canônica de desvios, inventário de laços,
+   lista fechada de motivos, listas de configuração, contagem de tabelas.
+3. **Que critério de PRONTO passa a estar incompleto.** Regra nova sem asserção é prosa; e
+   asserção escrita só para o caso novo deixa os vizinhos verdes com o defeito.
+
+**Gatilhos mecânicos, para não depender de lembrar:**
+- **laço novo** ⇒ rótulo de completude/limite **e** entrada no inventário de laços;
+- **caminho de recusa novo** ⇒ motivo nomeado **e** linha na lista canônica — *e diga também
+  quando ele NÃO entra numa lista, e por quê: um comando administrativo que falha por código
+  de saída não acrescenta valor à lista de motivos de mensagem estacionada, e escrever isso é
+  o que impede a fase seguinte de "completar" a lista com um valor que ninguém emite*;
+- **estado novo** ⇒ reler toda frase "isso não acontece por construção";
+- **regra de publicação ou de gravação nova** ⇒ as **folhas vizinhas da mesma árvore**. O caso
+  que gerou esta linha: a regra "passagem interrompida não publica a métrica" foi escrita para
+  a folha nova e deixou quatro folhas sem regra — a formulação certa era pela árvore
+  ("publicam exatamente as folhas que examinaram as `N`"), não por rótulo.
+
+---
+
+## Inventário é relativo a um ESCOPO — recontar na origem não autoriza reusar o número
+
+A disciplina "inventário se reconta, nunca se copia" funcionou em 8 de 8 na origem e falhou
+**no reuso**. O caso: "três linhas de `caixa:a_liquidar`" foi recontado corretamente no
+contexto da dobra, que é por `(cliente, instrumento)`. O mesmo "três" foi então transportado
+para o extrato, que é **por cliente, sem recorte de instrumento** — e ali o grupo empatado é
+de **quatro**, porque inclui a linha que está no instrumento do título. O número certo virou
+número errado sem que ninguém tivesse copiado nada errado.
+
+**Refinamento:** todo reuso de inventário **declara sob que recorte o número foi contado**, ou
+reconta. E quando o número depende do caso (quatro com IOF, três sem, dois com base zero), o
+fixture do teste fixa **o maior** e diz isso no nome — um `pageSize` escolhido para cortar um
+grupo de três não corta o de quatro.
+
+---
+
+## A frase elíptica da especificação chega crua ao prompt, e vira dinheiro
+
+A fonte escrevia "base do imposto = preço médio do livro". É **elipse**: o preço médio é o
+**insumo** da base, e a base é o **ganho**. Um executor que lê só o bloco do prompt — que é o
+único texto que ele lê — implementa `imposto = preço_médio × alíquota` e cobra 22,5% do custo
+inteiro, numa tabela sem UPDATE.
+
+O arquivo expandia obsessivamente toda outra elipse da fonte (`[desde, hoje]`, o singular de
+um evento, a data herdada de um estorno); esta passou intacta por seis revisões porque
+**parecia** uma citação fiel. Duas lições que generalizam:
+
+- **citação fiel da fonte não é especificação.** Onde a fonte comprime, o roadmap expande —
+  e a expansão vai **no prompt**, não só na prosa que o executor não lê.
+- **procure a evidência no código que você mesmo mandou portar.** A resposta estava, com
+  arquivo e linha, no simulador que o próprio prompt mandava portar e conferir: os dois
+  tributos declarados sobre `Rendimento`, e o rendimento calculado como
+  `valorBruto − valorInvestido`. Portar um motor e conferir contra ele com a base errada é
+  conferir uma coisa contra outra.
+
+**E o corolário que fecha:** quando a grandeza que a regra usa (`prazo`, aqui) **não está
+definida em lugar nenhum**, o critério de Pronto que testa a fronteira dela passa por
+**vacuidade** — o executor define a grandeza enquanto escreve o teste, e o teste certifica a
+definição que ele acabou de escolher. Grandeza indefinida é **pendência bloqueante**, não
+detalhe de implementação.
+
+---
+
+## Pendência que fica só no relatório do executor deixa de existir
+
+O relatório é lido uma vez, pela pessoa que despachou. A fase é aberta meses depois, por
+outra sessão, que lê **o arquivo**. Toda decisão que você não pôde tomar tem que estar
+escrita **na fase que vai esbarrar nela**, com o nome, o estado, quem decide, as opções e o
+custo de cada uma — e, quando ela bloqueia, **no cabeçalho da fase**, antes do bloco de
+prompt, onde quem vai copiar e colar não consegue não ver.
+
+E há um estado pior que "errado": **"errado e verde"**. Um critério de Pronto que afirma uma
+igualdade que depende de uma decisão pendente fecha a fase com o número errado e o checkbox
+marcado. Enquanto a pendência estiver aberta, o critério é **substituído** por uma asserção
+que não dependa dela (consistência interna da resposta, por exemplo), e o texto diz **por que
+mudou** e **o que volta** quando a pendência fechar.

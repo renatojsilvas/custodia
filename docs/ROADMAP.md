@@ -135,7 +135,7 @@ terceiro.
 |---|---|
 | F1 | nenhuma (VPS, CI, Grafana Cloud — já existem) |
 | F2 | broker `plataforma-rabbitmq` alcançável (serviço do `hub-precos`) |
-| F3 | Postgres com schema (a instância já existe) |
+| F3 | Postgres com schema (a instância já existe) — **e a decisão da PENDÊNCIA BLOQUEANTE do `caixa:BRL`, que é um campo opcional novo na §5.1 do `../plataforma-docs`, OUTRO repo** (ver a pendência dentro da V2) |
 | F4 | o `operacoes` publicando `trades.registered` — **já publica** |
 | F5 | nenhuma |
 | F6 | o Hub publicando `prices.*` e respondendo `GET /prices/asof` |
@@ -159,7 +159,7 @@ no `operacoes` (`LEIA-ME-KIT`, "Especificar só a metade permissiva").
 | I2 | dedupe por `UNIQUE (cliente_id, ref_externa)`, com `ref_externa` **NOT NULL** e derivada por MOVIMENTO | F3 / F4 |
 | I3 | `TradeRegistered` ↔ movimento, nas duas direções | F4 |
 | I4 | `posicao_corrente` é dobra pura do livro nas **três** colunas: Σ `qtd_delta` = `quantidade`, e `preco_medio`/`custo_total` reproduzidos pela mesma dobra, **percorrida em `data_evento`, desempate `registrado_em`, desempate final `id`** (a média ponderada é sensível à ordem, então a ordem é parte da definição, e é por isso que o F4 só aplica delta quando `data_evento ≥ MAX(data_evento)` da chave) — **sem filtro por relógio**, que é o caso **`D = ∞`** do **parâmetro de corte** da dobra (o snapshot do F7 é a MESMA dobra com `D = o dia`, e a posição na data do F9 também). A dobra é a da **V1 do F3**, escrita **por tipo, para os dez**, com a **regra de fronteira** (`preco_medio` só definido para `quantidade > 0`): regra que cobre dois tipos deixa oito colunas sem definição com a suíte verde, e regra que cobre dez tipos e nenhum valor de fronteira divide por zero | F3 (a regra) · F4 (a aplicação) |
-| I5 | `eod.ready` é o **único** gatilho da valoração **DIÁRIA** (ADR-9, §7.3) — o qualificador é a metade do invariante: a **exceção nomeada** é o gatilho 2 da §7.4 (`PriceObserved` com `revisao > 0`). O mecanismo que faz as duas coisas conviverem é **recorte de intervalo**: o worker percorre `[desde, U]` — com **`U` = o último dia JÁ MATERIALIZADO** (`MAX(data_ref)` de `eod_processado`), **nunca uma data de relógio**, porque o `D` do `eod.ready(D)` é derivado do dado e não de `hoje` — e **insere quando difere do vigente OU quando não existe linha**. **`U` nulo tem DUAS regras, uma por consumidor da tabela, e trocá-las é o defeito:** para o **worker** `U` é limite SUPERIOR, então `U` nulo ⇒ intervalo **vazio** e o worker não faz nada (quem repara é o `eod.ready` seguinte); para o **handler** de `eod.ready` o `U_anterior` nulo é limite INFERIOR, e o intervalo começa em `MIN(data_evento)` do livro, **com teto declarado**. Dia `> U` fica fora do intervalo e é materializado pelo `eod.ready` que vier a fechá-lo, **já com o movimento no livro**: a dicotomia `≤ U` / `> U` é exaustiva e **nenhum dia ANUNCIADO fica sem dono** — o dia que o Hub nunca anunciar não é coberto por ela, e quem o detecta é o alerta das 12:00 sobre `eod_processado.processado_em`. É **desvio parcial da §7.4**, que escreve `[desde, hoje]`, e está rotulado no F7 com os dois fatos medidos; a própria tabela `eod_processado` é outro desvio rotulado (ADR-5 e §9 do `PADROES`) | F7 |
+| I5 | `eod.ready` é o **único** gatilho da valoração **DIÁRIA** (ADR-9, §7.3) — o qualificador é a metade do invariante: a **exceção nomeada** é o gatilho 2 da §7.4 (`PriceObserved` com `revisao > 0`). O mecanismo que faz as duas coisas conviverem é **recorte de intervalo**: o worker percorre `[desde, U]` — com **`U` = o último dia JÁ MATERIALIZADO** (`MAX(data_ref)` de `eod_processado`), **nunca uma data de relógio**, porque o `D` do `eod.ready(D)` é derivado do dado e não de `hoje` — e **insere quando difere do vigente OU quando não existe linha**. **`U` nulo tem DUAS regras, uma por consumidor da tabela, e trocá-las é o defeito:** para o **worker** `U` é limite SUPERIOR, então `U` nulo ⇒ intervalo **vazio** e o worker não faz nada (quem repara é o `eod.ready` seguinte); para o **handler** de `eod.ready` o `U_anterior` nulo é limite INFERIOR, e o intervalo começa em `MIN(data_evento)` do livro, **com teto declarado**. Dia `> U` fica fora do intervalo e é materializado pelo `eod.ready` que vier a fechá-lo, **já com o movimento no livro**: a dicotomia `≤ U` / `> U` é exaustiva e **nenhum dia ANUNCIADO fica sem dono** — o dia que o Hub nunca anunciar não é coberto por ela, e quem o detecta é o alerta das 12:00 sobre `eod_processado.processado_em`. **E a entrega dos gatilhos 1 e 2 é DURÁVEL POR VARREDURA, não por fila em memória:** a *varredura de defasagem de snapshot* do F7 refaz o que um crash entre o ack do evento e o recálculo teria perdido para sempre. Ela **não é um quarto gatilho** e não fura o "único" acima, porque chama o **mesmo** `recalcular` com o mesmo recorte `[desde, U]` — é o meio pelo qual os gatilhos 1 e 2 chegam ao destino, não um gatilho novo. É **desvio parcial da §7.4**, que escreve `[desde, hoje]`, e está rotulado no F7 com os dois fatos medidos; a própria tabela `eod_processado` é outro desvio rotulado (ADR-5 e §9 do `PADROES`) | F7 |
 | I6 | só existe linha de snapshot em dia útil com posição ≠ 0 | F7 |
 | I7 | versionar preserva a versão anterior legível (`calculado_em`) | F7 |
 | I8 | `recalcular` é determinístico e idempotente (rodar duas vezes não cria terceira versão) | F7 |
@@ -169,7 +169,7 @@ no `operacoes` (`LEIA-ME-KIT`, "Especificar só a metade permissiva").
 | I12 | banco privado: exatamente **uma** connection string, para o próprio banco (ADR-12) | F1 / F3 |
 | I13 | **a chave de dedupe só se consome quando o movimento gravado está CORRETO E COMPLETO** | F3 (regra) · F4, F5, F6, F9 (aplicação) |
 | I14 | fila e bindings existem **ANTES** da primeira publicação | F2 |
-| I15 | toda condição de parada de laço declara **completude** ou **limite**, e as duas produzem resultados diferentes (§10.31); onde os dois rótulos não bastarem, o rótulo que falta se nomeia em vez de virar sucesso por omissão — no drenador do F4 são **seis**, e os três que faltavam (`VAZIO_DO_MOTIVO`, `PARCIAL` e `INTERROMPIDA`) apareceram por escrever o **procedimento de decisão** pergunta a pergunta — inclusive a pergunta *"por que a passagem não examinou as `N`?"*, que é a que faltava por último —, não por declarar a lista exaustiva | F2 (verificação do deploy), F4 (consumo e drenador), F5 (job de liquidação), F6 (os dois laços de coleta), F7 (batch do `eod.ready` e worker), F8 (cursor com clamp), F9 (fan-out por cliente) — **toda fase com laço, e a lista é a prova disso** |
+| I15 | toda condição de parada de laço declara **completude** ou **limite**, e as duas produzem resultados diferentes (§10.31); onde os dois rótulos não bastarem, o rótulo que falta se nomeia em vez de virar sucesso por omissão — no drenador do F4 são **seis**, e os três que faltavam (`VAZIO_DO_MOTIVO`, `PARCIAL` e `INTERROMPIDA`) apareceram por escrever o **procedimento de decisão** pergunta a pergunta — inclusive a pergunta *"por que a passagem não examinou as `N`?"*, que é a que faltava por último —, não por declarar a lista exaustiva | F2 (verificação do deploy), F4 (consumo e drenador), F5 (job de liquidação), F6 (os dois laços de coleta), F7 (batch do `eod.ready`, worker, **comando `materializar --desde --ate`** e **varredura de defasagem de snapshot**), F8 (cursor com clamp), F9 (fan-out por cliente) — **toda fase com laço, e a lista é a prova disso** |
 | I16 | não existe verbo de escrita sob `/v1` (ADR-10), provado por teste e não por prosa | F8 |
 | I17 | `caixa:BRL` e `caixa:a_liquidar` são ids **locais** desta casa, com preço **1,000000 por definição** — nunca recebem `PriceObserved`, nunca são pedidos ao Hub, nunca entram no alerta de preço ausente | F3 (regra) · F6, F7 (aplicação) |
 | I18 | a Custódia não publica **nenhum evento de contrato da §5.1** e não tem outbox nem relay; o único tráfego AMQP que **a aplicação** emite é infraestrutura interna dela (`custodia.retry.in`, `custodia.parking`, e o que dead-letra para a `custodia.prices.dlq`), que não é evento de domínio. **Ressalva nomeada, para o invariante não ser lido como falso:** o *passo de deploy* do F2 publica `prices.smoke` no exchange `prices`, que é do Hub — é prova de fumaça de topologia, executada por script, e não a aplicação | F1 (texto) · F2 (topologia) · F4 (uso) |
@@ -561,8 +561,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   nome de teste e estrutura carregam o que o comentario carregaria. Isto vale contra o
   default do seu treino; nao comente "so nesta parte dificil".
 
-  Leia antes de despachar: PADROES.md secao 10 inteira (33 itens, cada um de um
-  incidente real) e LEIA-ME-KIT.md, secoes "O que o F1 tem que alcancar", "Armadilhas
+  Leia antes de despachar: PADROES.md secao 10 inteira (35 itens, cada um de um
+  incidente real — CONFIRA a contagem no arquivo antes de citar, ela cresce a cada fase) e LEIA-ME-KIT.md, secoes "O que o F1 tem que alcancar", "Armadilhas
   que custaram tempo no hub" e "Erros de orquestracao".
 
   ENTRA TAMBEM, e nao e cosmetico — SEIS ocorrencias, em SEIS arquivos (.env.example nos
@@ -740,8 +740,23 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   (e) `dotnet ef migrations list` mostrando só a `InitialCreate` vazia e `\dt` no
   database `custodia` devolvendo **zero** tabelas de negócio;
   (f) `grep -rn 'onboarding\|§7.2\|HubCatalogoClient\|HubConfigGuard' docker-compose.yml
-  docker-compose.prod.yml .env.example` **sem resultado** — é a prova de que as seis
-  ocorrências herdadas morreram nos cinco arquivos, e não só nos dois que alguém lembrou;
+  docker-compose.prod.yml .env.example` com **cada ocorrência sobrevivente justificada
+  nominalmente**, uma a uma. **O critério NÃO é "sem resultado", e a diferença não é
+  cosmética: "sem resultado" reprova a entrega CORRETA.** O prompt manda *reescrever* esses
+  três textos com o papel real do Hub, e a redação certa é a **negação explícita** que o F6
+  escreve com esse nome — "a resolução nome→id do **onboarding** (§7.2) acontece em
+  Operações, na borda (ADR-10); não existe `HubCatalogoClient` nesta casa" —, e escrever a
+  negação faz o grep casar. É exatamente a disciplina que este mesmo Pronto aplica duas
+  alíneas acima a `Operações` e a `outbox|relay`, com a frase "um critério absoluto
+  reprovaria a entrega **correta**"; a versão anterior desta alínea não a aplicava aqui.
+  Critério: **não sobra nenhuma ocorrência que PROMETA** onboarding, `HubCatalogoClient` ou
+  `HubConfigGuard` nesta casa — sobrevive só o que os nega ou os atribui nominalmente a
+  outro serviço, e a entrega diz qual é qual. **E o escopo desta alínea são TRÊS arquivos, não
+  seis:** ela cobre os itens 1, 2, 3 e 4 do inventário (`.env.example` e os dois composes);
+  os itens 5 e 6 — `rules-custodia.yaml`, `dashboards/custodia.json` e
+  `infra/grafana/README.md` — são cobertos pela alínea (b), e a versão anterior desta frase
+  dizia "as seis ocorrências morreram nos cinco arquivos" contra um inventário que declara
+  **seis arquivos** e um grep que lê **três**;
   (g) `grep -n 'quatro listas' .env.example .github/workflows/ci.yml` sem resultado, e as
   **cinco** enumeradas nos dois textos, com o `env:` do step nomeado;
   (h) o **comando literal de subida escrito no `README.md`** rodado exatamente como está,
@@ -1200,6 +1215,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
 - [ ] **F3** — o schema do livro: as constraints que tornam o dado irreparável impossível
   de gravar. **Dependência externa nova: Postgres com schema (a instância já existe).**
+  **PENDÊNCIA BLOQUEANTE ABERTA: `caixa:BRL` nunca é debitado — leia a pendência dentro da V2
+  ANTES de despachar; ela depende de um campo novo na §5.1 do `../plataforma-docs`.**
 
   As **cinco** tabelas da §7.1 — o livro e as quatro projeções, e o "cinco" é sobre a §7.1,
   não sobre o schema inteiro do serviço — como migrations EF, snake_case, índices nomeados, no molde
@@ -1246,6 +1263,10 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   ---
 
   **O VOCABULÁRIO DO LIVRO — fechado aqui, repetido literalmente no F4, F5, F7 e F9.**
+  *Com uma exceção declarada, e ela é o motivo de a fase estar bloqueada: a **PENDÊNCIA
+  BLOQUEANTE do `caixa:BRL`** (dentro da V2) é a única peça deste vocabulário que ainda não
+  fechou, e "fechado aqui" só passa a ser verdade quando ela fechar. Não leia as cinco V como
+  completas enquanto o cabeçalho da fase trouxer o aviso.*
 
   Cinco decisões que se sustentam umas às outras. Corrigir uma sem as outras **recria** as
   demais, e por isso elas estão num bloco só, com um nome só para cada linha. **Fase que
@@ -1345,7 +1366,13 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   O(1) só é a mesma função quando o movimento que chega é o **último** da chave nessa ordem,
   isto é, `data_evento ≥ MAX(data_evento)` daquela `(cliente_id, instrumento_id)`. Chegando
   movimento com `data_evento` anterior, o handler **re-dobra a chave inteira**, exatamente
-  como já faz para `ajuste`. Sem essa cláusula, `compra 10 @ 100` (D1), `venda 4` (D2) e
+  como já faz para `ajuste`. **Na PRIMEIRA linha da chave o `MAX` é NULO, e a comparação tem
+  de ser escrita para esse caso:** em SQL, `data_evento >= NULL` é `NULL` — que o `WHERE`
+  trata como falso, mas que uma implementação em C# com `DateOnly?` resolve como
+  `NullReferenceException` ou como `false`, e `false` manda a primeira linha de toda chave
+  nova para a re-dobra (correto por acidente, e O(1) virando O(n) sem ninguém notar).
+  **Regra: `MAX` nulo ⇒ aplica o delta incremental** — não há história anterior, então a
+  linha que chega **é** a última da ordem por definição. Sem essa cláusula, `compra 10 @ 100` (D1), `venda 4` (D2) e
   depois a retroativa `compra 10 @ 200` (D0) deixam `posicao_corrente` com `custo 2600` /
   `pm 162,50` enquanto a dobra por data vale `custo 2400` / `pm 150`: **I4 fica falso** e a
   reconciliação do F7 passa a alertar para sempre sobre um movimento retroativo legítimo —
@@ -1398,8 +1425,10 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   - **`quantidade` resultante < 0:** `preco_medio` fica **INALTERADO** — nunca recalculado,
     portanto **nunca negativo** —, e `custo_total` acumula pela regra do tipo. Sem esta
     linha, `venda sem compra` de 10 seguida de `compra 4 @ 100` daria `custo_total = 400`,
-    `quantidade = −6` e `preco_medio = −66,67`, e o F5 tributaria com "base = preço médio
-    **do livro**" (§7.3) sobre preço médio negativo. Enquanto a quantidade for negativa as
+    `quantidade = −6` e `preco_medio = −66,67`, e o F5 tributaria sobre preço médio negativo.
+    *("Base = preço médio **do livro**", §7.3, é **elipse**: o preço médio é o **insumo** da
+    base, e a base é o **ganho** (`valorFinanceiro − pm × quantidade`). A fórmula está fechada
+    na decisão da base do F5 — não a deduza desta frase.)* Enquanto a quantidade for negativa as
     três colunas são **provisórias**: é o estado que a camada 3 do F4 já sinaliza (métrica +
     log + alerta) como "falta lançar a compra antiga", e lançá-la refaz as três pela mesma
     dobra. **"Provisórias" vale para `posicao_corrente` e NÃO vale para o livro** — a
@@ -1559,8 +1588,11 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   pré-requisito bloqueante no F3 do `operacoes`.
 
   **As linhas DERIVADAS — uma linha por movimento, com instrumento, sinal e valor
-  fechados.** Um resgate produz seis linhas, e sem esta tabela `ir_retido` e `iof` não têm
-  instrumento nem sinal, e `a_liquidar` não tem valor definido. Para um resgate de `q`
+  fechados.** Um resgate produz **até seis** linhas, e sem esta tabela `ir_retido` e `iof` não
+  têm instrumento nem sinal, e `a_liquidar` não tem valor definido. *"Até": são seis com IOF e
+  base positiva; **cinco** sem IOF (prazo ≥ 30 dias) e **quatro** quando a base do IR é zero
+  ou negativa — as duas condições são do F5, e quem contar linhas num teste declara qual dos
+  três casos o fixture monta.* Para um resgate de `q`
   unidades do instrumento `X` por `Y` bruto, com IR `t` e IOF `f` (`f` pode não existir):
 
   | Linha | `ref_externa` (V3) | `tipo` | `instrumento_id` | `qtd_delta` | `valor_financeiro` | `data_evento` |
@@ -1634,6 +1666,76 @@ para ela.
   novo por construção. O invariante independente de preço é o **item 2** acima; a
   constância é consequência do fixture que zera a posição, e tem de estar escrita **no
   fixture**.
+
+  ### PENDÊNCIA BLOQUEANTE DO F3 — `caixa:BRL` nunca é DEBITADO, e o vocabulário do livro não fecha sem decidir isto
+
+  **Estado:** aberta. **Bloqueia:** o F3 (e, por dependência, tudo que lê caixa: F5, F7, F8).
+  **Quem decide:** o dono, e a correção é na §5.1 do `../plataforma-docs` — **outro repo**.
+  **O F3 NÃO fecha o vocabulário do livro sem isto.**
+
+  **O fato, e ele é conferível por varredura deste arquivo:** nenhuma linha deste roadmap
+  debita `caixa:BRL`. A única linha que o escreve é a `liquidação, perna 2`, sempre
+  `+(Y−t−f)`. Não existe tipo de saque, não existe `a_pagar`, e o `aplicacao → compra` grava
+  **uma** linha, no instrumento do título, sem contrapartida. Venda credita caixa para
+  sempre; compra consome caixa que nunca sai.
+
+  **A conta, com números, no fixture da §8.4 (`Y = q·P`):**
+
+  ```
+  D0  compra 10 @ 100          X: q 10, pm 100                 patrimônio = 10×100      = 1000
+  D1  resgate 10, Y=1000, t=100, f=0
+                               X: q 0;  caixa:a_liquidar 900    patrimônio = 900   (cai t ✓)
+  D2  liquidação               a_liquidar 0; caixa:BRL 900      patrimônio = 900  (inalterado ✓)
+  D3  reaplica 9 @ 100         X: q 9, pm 100; caixa:BRL 900
+                               patrimônio = 9×100 + 900         = 1800
+  ```
+
+  O cliente tem **900**. O extrato de posição diz **1800** — 100% de erro, no dia seguinte à
+  reaplicação, que é o ciclo de vida normal do produto, e infla de novo a cada
+  resgate+reaplicação. **A própria álgebra escrita acima denuncia:**
+  `patrimônio(D) = (Q−q)·P₍D₎ + C + (Y − t − f)` trata `C` (caixa preexistente) como parcela
+  **aditiva**; aplicar `q'` unidades soma `q'·P` e não subtrai nada de `C`.
+
+  **Por que a decisão NÃO é desta casa, e é isto que a torna pendência em vez de escolha.** O
+  modelo atual é **coerente** se `aplicacao` significa *"dinheiro entrou de fora e virou
+  título"*, e é **errado** se a aplicação consumiu o produto de uma liquidação anterior — aí
+  o dinheiro já estava no livro e passa a ser contado duas vezes. **As duas leituras são
+  legítimas**, e a Custódia **não tem como distinguir uma da outra**: o `TradeRegistered` da
+  §5.1 não diz se a aplicação trouxe dinheiro novo ou reinvestiu saldo em custódia.
+  **Operações sabe, e não publica.** Escolher entre as duas leituras aqui é **re-derivar rio
+  abaixo o que o produtor já sabe**, que é a §10.32 literal — o mesmo erro que este arquivo
+  recusa no `campoPosicao` (F6) e na distinção `sem_preco_ate_a_data` ×
+  `instrumento_desconhecido`.
+
+  **A correção, quando o dono decidir:** campo **OPCIONAL** no `TradeRegistered` da §5.1
+  dizendo se a aplicação consumiu saldo em custódia. É a **mesma forma** do `estornaTradeId`,
+  que o F3 do `../operacoes` acrescentou à §5.1 **antes** do código que monta o payload, e que
+  o roadmap de lá registra como **"pré-requisito, não consequência"**. Campo novo opcional é
+  o que a própria §5.1 autoriza sem incrementar `v`.
+
+  **As duas saídas alternativas — se o dono decidir não mexer na §5.1 —, com o custo de cada
+  uma escrito, porque nenhuma é de graça:**
+
+  - **(a) perna simétrica:** `compra` e `aporte` debitam `caixa:BRL`. Fecha a conta da
+    reaplicação e **mostra caixa NEGATIVO em toda aplicação com dinheiro novo** — porque não
+    existe evento de depósito na §5.1, e o primeiro aporte de um cliente vira `caixa:BRL =
+    −1000` no primeiro dia. Trocaria um número inflado por um número negativo, no mesmo
+    documento que o cliente lê (P2).
+  - **(b) livro-caixa PARCIAL declarado:** `caixa:BRL` é, por definição, **só o produto de
+    liquidações ainda não reinvestido**, e nunca o saldo do cliente. Não exige nada de
+    ninguém e **superestima o patrimônio em toda reaplicação**, exatamente pela conta acima —
+    a diferença é que passa a ser **limite declarado** em vez de erro silencioso, e toda
+    afirmação de "soma dos instrumentos + caixa = patrimônio" cai junto.
+
+  **O que JÁ foi feito neste arquivo, e não espera a decisão:** o F8 Pronto (g) **deixou de
+  afirmar** "soma dos instrumentos + caixa = patrimônio", porque essa asserção fecharia
+  **verde com o número errado** — que é o pior dos três estados possíveis. O que ele afirma
+  agora está escrito lá, com o motivo.
+
+  **Por que isto não pode ser adiado para a fase que esbarrar:** `movimentos` é append-only e
+  **não tem UPDATE**. A saída (a) muda o conjunto de linhas que **todo trade** grava; adotá-la
+  depois de o F4 estar em produção deixa um período inteiro de livro sem a perna de caixa, e
+  não há como apendá-la sem inventar `ref_externa` de uma linha que deveria ter nascido junto.
 
   Duas armadilhas nomeadas, porque as duas já apareceram em rascunho deste arquivo:
 
@@ -1754,10 +1856,32 @@ para ela.
      limbo D→D+1 no livro (I10) e o F7 o apagaria do documento, deixando o Pronto do F8
      ("extrato de posição batendo com a soma dos snapshots vigentes, **incluindo as linhas
      de caixa**") inalcançável, e o "soma dos instrumentos + caixa = patrimônio diário" da
-     §7.5 sem parcela de caixa.
+     §7.5 sem parcela de caixa. *Esta consequência afirma só que **sem preço por definição
+     não existe linha de caixa no snapshot**, e isso vale sob qualquer desfecho da
+     **PENDÊNCIA BLOQUEANTE do `caixa:BRL`** (V2, acima). A **igualdade** da §7.5 citada aqui
+     é justamente o que aquela pendência deixa em aberto — não a leia como asserção fechada,
+     e é por isso que o F8 Pronto (g) não a afirma mais.*
 
-  Coerente com isso: em `posicao_corrente`, uma linha de `caixa:*` tem
-  `preco_medio = 1,000000` e `custo_total = quantidade`.
+  Coerente com isso: em `posicao_corrente`, uma linha de `caixa:*` com **`quantidade > 0`**
+  tem `preco_medio = 1,000000` e `custo_total = quantidade`.
+
+  **A REGRA DE FRONTEIRA DA V1 PRECEDE ESTA, INCLUSIVE PARA `caixa:*` — e a precedência
+  está escrita porque sem ela as duas regras dão respostas diferentes para o estado MAIS
+  COMUM da tabela.** `caixa:a_liquidar` volta a **zero depois de toda liquidação** (é o
+  invariante (1) da aritmética do resgate, logo abaixo, e o Pronto (a) do F5): esse é o
+  estado permanente da linha, não uma borda. Pela fronteira da V1, `quantidade` resultante
+  `= 0` ⇒ `preco_medio = 0` e `custo_total = 0`, **para QUALQUER tipo**; pela frase acima,
+  lida sem qualificador, seria `preco_medio = 1,000000`. **Decisão: a fronteira vence, e a
+  V4 vale só para `quantidade > 0`.** Não é cosmético — **três consumidores têm de
+  concordar**: o handler incremental do F4/F5 (O(1)), o comando de reconstrução e a
+  **reconciliação do F7**, que é o único detector automático de divergência do sistema. Se
+  um pegar a tabela por tipo e o outro a fronteira, a reconciliação alerta **em toda
+  operação normal**, que é o falso positivo permanente que este arquivo condena ao rejeitar
+  `data_ref` para o alerta das 12:00. *A assimetria que produzia a contradição fica
+  registrada: a regra do **cruzamento** exclui `caixa:*` nominalmente, e as regras `= 0` e
+  `< 0` não excluíam — excluir uma de três é o que fazia parecer que as outras duas não se
+  aplicavam.* Consequência no F5: o Pronto (e) afirma `preco_medio = 0` para
+  `caixa:a_liquidar` depois da liquidação, e é esse o valor, não `1,000000`.
 
   **CHECK enumerando os ids de caixa permitidos** (`caixa:BRL`, `caixa:a_liquidar`), pela
   §10.21: restringir é reversível (`DROP CONSTRAINT`, uma linha, sem rewrite), e não
@@ -1806,15 +1930,39 @@ para ela.
     Sem esta linha o executor do F6 teria de inventar, com o schema já fechado.
   - **`data_evento` no futuro é dado sem conserto, e a guarda é TRIGGER, não CHECK.** O F5
     prova o ponto ao rejeitar a liquidação antecipada ("põe no livro um fato que ainda não
-    aconteceu"), e a §10.21 manda pôr no schema o que não tem conserto. **`CHECK (data_evento
-    <= current_date)` não é aceito pelo Postgres** — `current_date` não é `IMMUTABLE` —,
-    então a guarda vai numa trigger `BEFORE INSERT` ao lado da de imutabilidade. Ela é
+    aconteceu"), e a §10.21 manda pôr no schema o que não tem conserto. **CHECK com data de
+    hoje não é aceito pelo Postgres** — nem `current_date` nem
+    `(now() AT TIME ZONE 'America/Sao_Paulo')::date` são `IMMUTABLE`, e o CHECK exige
+    imutabilidade —, então a guarda vai numa trigger `BEFORE INSERT` ao lado da de
+    imutabilidade, e **a expressão que ela compara é a do fuso**, decidida na alínea seguinte,
+    nunca `current_date`. Ela é
     segunda linha de defesa: a §6.1 camada 2 já rejeita `data_evento > hoje` na borda, em
     Operações; a diferença é que aqui a violação seria **eterna**. Nenhum escritor deste
     roadmap grava data futura de propósito — o job do F5 só insere a liquidação **quando ela
     vence** —, então a guarda não bloqueia caminho nenhum previsto. *Rejeitado:* confiar só
     na borda; é a mesma classe de "afirmação de cobertura que não existe" da §10.22, e a
     borda é de **outro repo**.
+  - **O FUSO HORÁRIO DE NEGÓCIO É `America/Sao_Paulo` (UTC−3), e a decisão é desta fase
+    porque é aqui que a primeira `date` vira dado.** A `ARQUITETURA` §11 já manda ("relógio
+    dos jobs em UTC−3; D+1 de liquidação conta DIAS ÚTEIS") e este roadmap não carregava a
+    regra — de propósito não: por omissão. Sem ela, **três relógios diferentes decidem dado
+    e nenhum concorda**: `current_date` no Postgres é o dia no fuso do servidor (**UTC** num
+    container padrão), "hoje" no job é o `DateOnly` do processo .NET, e "12:00" do alerta é
+    avaliado pelo Grafana Cloud. **Regra, e ela é herdada por F5 e F7 sem decisão nova lá:**
+    toda coluna `date` deste schema é uma data no fuso `America/Sao_Paulo`; a trigger de data
+    futura compara contra `(now() AT TIME ZONE 'America/Sao_Paulo')::date`, **nunca** contra
+    `current_date`; "hoje", "dia útil" e "12:00" das fases seguintes são nesse fuso; e a
+    regra do alerta das 12:00 do F7 **carrega o offset explicitamente**, porque o avaliador
+    roda em UTC. *O caso concreto que a ausência produzia é diário, não teórico:* entre 00:00
+    e 03:00 BRT o dia BRT já virou e o UTC não, então o job de **ciclo curto** do F5 — que
+    roda 24 h por dia por decisão daquela fase — tentaria inserir `data_evento = hoje_BRT` e
+    a trigger o **rejeitaria como data futura**, todo dia, por três horas, com um desfecho
+    que não tem nome em lugar nenhum (o job só tem `COMPLETUDE` e `LIMITE`). *Rejeitado:*
+    fixar `TZ=America/Sao_Paulo` no container e continuar usando `current_date` — resolve por
+    configuração de ambiente o que é regra de **dado**, some no primeiro compose que esquecer
+    a variável (e as cinco listas não a carregam), e não alcança o avaliador do Grafana, que
+    é de outro repo. *Rejeitado:* trocar `date` por `timestamptz` — a §7.1 escreve `date` e a
+    granularidade do negócio é o dia; o que faltava era **dizer o fuso**, não trocar o tipo.
   - **`preco_medio` e `custo_total` de `posicao_corrente` têm dono, e é o F4 — mas a REGRA
     de dobra é desta fase, e está na V1.** As três
     colunas nascem aqui e são preenchidas **na mesma transação** pelo handler do F4 (I4).
@@ -1864,7 +2012,8 @@ para ela.
   **Âncoras:** `ARQUITETURA` §7.1 (DDL e convenções: caixa é instrumento, só há snapshot em
   dia com posição ≠ 0, tributo é movimento próprio), §7.2, ADR-4, ADR-12; `PADROES` §3,
   §9, §10.21, §10.22, §10.23 (FK composta faz o EF gerar índice PascalCase que ninguém
-  nomeou), §10.24, §10.25, §10.18; `LEIA-ME-KIT` "Aceitar 'isso é da próxima fase' sem
+  nomeou), §10.24, §10.25, §10.18, **§10.34** (coluna `date` sem fuso declarado — é dela que
+  sai a decisão do fuso desta fase); `LEIA-ME-KIT` "Aceitar 'isso é da próxima fase' sem
   perguntar se dá para consertar depois"; e o **F2 do `../operacoes/docs/ROADMAP.md`
   inteiro**, que é o molde vivo desta fase.
 
@@ -1983,8 +2132,9 @@ para ela.
         quantidade resultante < 0 -> preco_medio INALTERADO, nunca recalculado, portanto
             NUNCA NEGATIVO; custo_total acumula pela regra do tipo. Sem isso, venda sem
             compra de 10 seguida de compra 4 @ 100 da custo 400, quantidade -6 e
-            preco_medio -66,67 — e o F5 tributa com "base = preco medio do livro" (7.3)
-            sobre ele. Com quantidade negativa as tres colunas sao PROVISORIAS em
+            preco_medio -66,67 — e o F5 tributa sobre ele. ("Base = preco medio DO LIVRO"
+            (7.3) e ELIPSE: o preco medio e o INSUMO da base, e a base e o GANHO
+            (valorFinanceiro - pm x quantidade). A formula esta fechada no F5.) Com quantidade negativa as tres colunas sao PROVISORIAS em
             posicao_corrente E NAO NO LIVRO: a projecao se refaz por dobra, mas o
             ir_retido/iof que o F5 gravar a partir de um pm provisorio esta em tabela
             append-only e SO SAI POR ESTORNO (o F5 tem decisao propria sobre isso).
@@ -2118,6 +2268,29 @@ para ela.
       verdade porque o exemplo ZERA a posicao. Escreva (3) no FIXTURE, nunca no
       invariante.
 
+      PENDENCIA BLOQUEANTE — caixa:BRL NUNCA E DEBITADO. NENHUMA linha deste roadmap
+      debita caixa:BRL: a unica que o escreve e a liquidacao perna 2, sempre +(Y-t-f).
+      Nao ha saque, nao ha a_pagar, e aplicacao -> compra grava UMA linha, no instrumento
+      do titulo, sem contrapartida. A CONTA: D0 compra 10@100 (patrimonio 1000); D1
+      resgate 10 com Y=1000 e t=100 (patrimonio 900); D2 liquidacao (900 em caixa:BRL);
+      D3 reaplica 9@100 -> o extrato diz 9x100 + 900 = 1800 e o cliente tem 900.
+      SE VOCE ABRIU ESTA FASE E ESTA PENDENCIA AINDA ESTA ABERTA, PARE E PERGUNTE: o F3
+      NAO FECHA O VOCABULARIO DO LIVRO SEM ISTO, e movimentos e append-only (nao ha como
+      apendar depois a perna que deveria ter nascido junto).
+      POR QUE VOCE NAO PODE DECIDIR: o modelo e COERENTE se `aplicacao` significa
+      "dinheiro entrou de fora e virou titulo" e ERRADO se a aplicacao consumiu o produto
+      de uma liquidacao anterior — as duas leituras sao legitimas, e o TradeRegistered da
+      5.1 NAO DIZ QUAL E. Operacoes sabe e nao publica. Escolher aqui e re-derivar rio
+      abaixo o que o produtor ja sabe (PADROES 10.32). A correcao e um campo OPCIONAL na
+      5.1 do ../plataforma-docs, OUTRO REPO — mesma forma do estornaTradeId, que o F3 do
+      operacoes acrescentou a 5.1 ANTES do codigo, como pre-requisito e nao consequencia.
+      AS DUAS SAIDAS ALTERNATIVAS, com o custo: (a) perna simetrica (compra e aporte
+      debitam caixa:BRL) mostra CAIXA NEGATIVO em toda aplicacao com dinheiro novo,
+      porque nao existe evento de deposito na 5.1; (b) livro-caixa PARCIAL declarado
+      (caixa:BRL e so o produto de liquidacoes nao reinvestido) SUPERESTIMA o patrimonio
+      em toda reaplicacao, mas como LIMITE DECLARADO em vez de erro silencioso — e derruba
+      toda afirmacao de "soma dos instrumentos + caixa = patrimonio".
+
       DUAS ARMADILHAS, e as duas ja apareceram em rascunho:
       - `resgate` do EVENTO nao e `resgate` do LIVRO. No enum, `resgate` e VENCIMENTO
         (a 7.3: "vencimento -> livro: (tipo=resgate, qtd_delta = -qtd, valor = qtd x PU
@@ -2191,10 +2364,24 @@ para ela.
       FORA do alerta de "preco ausente" do F7, senao ele dispara todo dia para sempre;
       (3) snapshots_posicao.preco e NOT NULL, entao sem isto NAO NASCERIA linha de
       snapshot de caixa nenhuma — o F5 escrituraria o limbo D->D+1 no livro e o F7 o
-      apagaria do documento, e o extrato de posicao do F8 ("soma dos instrumentos +
-      caixa = patrimonio diario", 7.5) ficaria sem a parcela de caixa.
-      Em posicao_corrente, linha de caixa tem preco_medio = 1,000000 e
+      apagaria do documento, e o extrato de posicao do F8 ficaria sem a parcela de caixa.
+      NAO LEIA a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5) como
+      assercao fechada: e exatamente ela que a PENDENCIA BLOQUEANTE do caixa:BRL, acima,
+      deixa em aberto. O que este item (3) afirma e so que SEM PRECO POR DEFINICAO NAO
+      EXISTE LINHA DE CAIXA NO SNAPSHOT, e isso vale sob qualquer desfecho da pendencia.
+      Em posicao_corrente, linha de caixa COM quantidade > 0 tem preco_medio = 1,000000 e
       custo_total = quantidade.
+      A REGRA DE FRONTEIRA DA V1 PRECEDE ESTA, INCLUSIVE PARA caixa:* — NAO ESCREVA a
+      frase acima sem o qualificador. caixa:a_liquidar volta a ZERO depois de toda
+      liquidacao (invariante (1) da aritmetica do resgate), entao esse e o estado
+      PERMANENTE da linha e nao uma borda: quantidade = 0 => preco_medio = 0 e
+      custo_total = 0, PARA QUALQUER TIPO, caixa incluido. A V4 vale so para
+      quantidade > 0. Sem esta precedencia, o handler incremental do F4/F5, o comando de
+      reconstrucao e a RECONCILIACAO DO F7 podem escolher regras diferentes, e a
+      reconciliacao — o unico detector automatico de divergencia deste sistema — passa a
+      alertar EM TODA OPERACAO NORMAL. (A regra do CRUZAMENTO exclui caixa:*
+      nominalmente; as regras "= 0" e "< 0" NAO excluem, e era essa assimetria que fazia
+      parecer que elas nao se aplicavam.)
       CHECK ENUMERANDO os ids de caixa permitidos (caixa:BRL, caixa:a_liquidar), pela
       PADROES 10.21: como a identidade e gravada CRUA (sem ToLowerInvariant — item 4 de
       DECISOES JA TOMADAS, mais abaixo; o vocabulario vai de V1 a V5 e nao existe "V6"), um
@@ -2261,12 +2448,27 @@ para ela.
      INSTRUMENTO por causa desta decisao, e ela precisa estar fechada antes do schema.
 
   5d. GUARDA CONTRA data_evento NO FUTURO, por TRIGGER, nao por CHECK: o Postgres NAO
-     ACEITA `CHECK (data_evento <= current_date)` (current_date nao e IMMUTABLE). Ponha-a
-     numa trigger BEFORE INSERT, ao lado da de imutabilidade. Movimento com data no
+     ACEITA `CHECK (data_evento <= ...)` com funcao nao-IMMUTABLE. Ponha-a numa trigger
+     BEFORE INSERT, ao lado da de imutabilidade. Movimento com data no
      futuro poe no livro um fato que ainda nao aconteceu, e o livro e append-only
      (PADROES 10.21). E segunda linha de defesa — a 6.1 camada 2 ja rejeita na borda, em
      Operacoes, que e OUTRO REPO — e nao bloqueia caminho nenhum deste roadmap: o job do
      F5 insere a liquidacao QUANDO ELA VENCE, nunca antes.
+
+  5e. O FUSO HORARIO DE NEGOCIO E `America/Sao_Paulo` (UTC-3), e VOCE O FIXA AQUI porque e
+     aqui que a primeira `date` vira dado (ARQUITETURA 11: "relogio dos jobs em UTC-3;
+     D+1 de liquidacao conta DIAS UTEIS"). A trigger do item 5d compara contra
+     `(now() AT TIME ZONE 'America/Sao_Paulo')::date`, NUNCA contra `current_date`:
+     current_date e o dia no fuso do SERVIDOR, que num container padrao e UTC. TODA coluna
+     `date` deste schema e uma data nesse fuso, e F5 e F7 HERDAM a regra ("hoje", "dia
+     util" e "12:00" sao nesse fuso; a regra do alerta das 12:00 do F7 carrega o offset,
+     porque o avaliador do Grafana roda em UTC). SEM ISSO, entre 00:00 e 03:00 BRT o dia
+     BRT ja virou e o UTC nao, e o job de CICLO CURTO do F5 — que roda 24 h por dia —
+     tentaria inserir data_evento = hoje_BRT e a trigger o REJEITARIA como data futura,
+     todo dia, por tres horas, com um desfecho que nao tem nome em lugar nenhum.
+     NAO "resolva" isso com TZ=America/Sao_Paulo no container: isso poe em configuracao de
+     ambiente o que e regra de DADO, some no primeiro compose que esquecer a variavel, e
+     nao alcanca o avaliador do Grafana, que e de outro repo.
 
   6. /health/ready endurecido: alem de CanConnectAsync, existencia FISICA das tabelas E
      DAS TRIGGERS, derivada de db.Model (GetEntityTypes, GetDeclaredTriggers) — NUNCA
@@ -2349,9 +2551,15 @@ para ela.
   (o) `INSERT` de `tipo = 'aporte'` **aceito**, com `instrumento_id` **do título** e
   `qtd_delta > 0` (é a prova de que o desvio por correção da V1 chegou ao banco e de que o
   `aporte` não virou linha de caixa, que era o erro da versão anterior deste arquivo);
-  (p) `INSERT` com `data_evento = current_date + 1` **recusado** pela trigger, e
-  `data_evento = current_date` **aceito** — controle negativo e positivo do dado sem
-  conserto, a §10.21 aplicada ao futuro e não só ao passado.
+  (p) `INSERT` com `data_evento = (now() AT TIME ZONE 'America/Sao_Paulo')::date + 1`
+  **recusado** pela trigger, e a **mesma expressão sem o `+ 1`** **aceita** — controle
+  negativo e positivo do dado sem conserto, a §10.21 aplicada ao futuro e não só ao passado.
+  **E o fuso faz parte da asserção, não é enfeite:** um teste escrito com `current_date`
+  passaria com a trigger comparando em UTC, que é o defeito que a decisão do fuso fecha. O
+  teste que **separa** as duas implementações é o de fronteira: com a sessão do Postgres em
+  `SET TIME ZONE 'UTC'` e o relógio dentro da janela 00:00–03:00 BRT (injetada, não
+  esperada), o `INSERT` com a data **BRT de hoje** tem de ser **aceito** — com
+  `current_date` ele seria recusado como futuro;
 
 - [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
   de ordem. **Dependência externa nova: o `operacoes` publicando — e ele já publica.**
@@ -2552,6 +2760,24 @@ para ela.
       **sem ter sido examinada**" — era autocontraditória (voltar a aparecer implica ter
       sido consumida e republicada, isto é, examinada) e, sem identidade preservada no
       republish, inimplementável: o ramo sobrava como "`N` acima do teto" e mais nada.*
+      **ESTA FOLHA É INALCANÇÁVEL SOB A MECÂNICA PRESCRITA, e isso é propriedade escrita, não
+      descuido — sem esta frase o Pronto (iv) manda provar o impossível e o executor de boa-fé
+      só fecha mutando a implementação.** A `custodia.parked` é FIFO e não tem outro
+      consumidor: as `N` mensagens originais ocupam as `N` primeiras posições e tudo que a
+      passagem republica entra **atrás** delas; consumindo **no máximo `N`**, a passagem nunca
+      alcança a posição `N+1`. *Contraexemplos tentados, e nenhum abre:* mensagem estacionada
+      **durante** a passagem também entra atrás; `messages_ready` só pode ler **a menos**, não
+      a mais; e passagem concorrente carimba **outro** id, que não é o da passagem corrente.
+      **Então por que a folha existe:** ela é a **guarda de defesa em profundidade** contra a
+      implementação que **não** respeita o teto — "consuma até a fila esvaziar" é a leitura
+      mais natural de "drenar", e sob ela a passagem republica e reconsome o que ela mesma
+      republicou, **para sempre**, sem nenhuma parada classificada. Tirar a folha é tirar o
+      **nome** desse laço infinito. **Consequência mecânica, e ela é obrigatória para o ramo
+      ser exercitável de boa-fé:** o `x-custodia-passagem-id` **não é gerado inline** — vem de
+      uma **costura injetável** (provider do id da passagem, ou argumento opcional
+      `--passagem-id` do comando administrativo), de modo que o teste possa carimbar a
+      mensagem **antes** e fixar o id da passagem. É a mesma costura que o Pronto (v) exige
+      para purgar a fila entre a leitura de `N` e o consumo, e ela é do desenho, não do teste.
     - **INTERROMPIDA** = a passagem terminou **sem** examinar as `N` e **sem** que nenhuma
       mensagem da passagem corrente tenha reaparecido → **falha, nunca sucesso e nunca
       COMPLETUDE**. É a folha do "outra coisa" da subpergunta (2b), e ela tem ocupantes
@@ -2561,11 +2787,23 @@ para ela.
       broker. *Sem este rótulo, "a fila acabou antes das `N`" não tem para onde ir, e o
       executor mapeia o ramo inteiro para `LIMITE por teto` — que é falso, porque o teto não
       estourou. E "fila vazia" não pode socorrer aqui: ela está barrada como completude na
-      linha seguinte, de propósito.* **Passagem INTERROMPIDA NÃO publica
-      `custodia_parked_mensagens`:** a métrica é o resultado de uma varredura **completa**, e
-      varredura interrompida mede menos do que existe — publicá-la sobrescreveria o número
-      certo da passagem anterior por um menor, que é a forma de mentir que este bloco inteiro
-      combate.
+      linha seguinte, de propósito.* Ela **não publica** `custodia_parked_mensagens`, pela
+      regra geral da alínea abaixo — e não por ser um caso especial.
+    - **QUEM PUBLICA `custodia_parked_mensagens{motivo=}`, enunciado PELA ÁRVORE e não por
+      rótulo — e é a árvore que torna a regra conferível.** A métrica é o **resultado de uma
+      varredura completa**: só pode publicá-la a passagem que **examinou as `N`**. São,
+      portanto, exatamente **três** folhas — **COMPLETUDE**, **PARCIAL** e
+      **VAZIO_DO_MOTIVO** (as três descendentes de "as `N` foram examinadas? **sim**"), e as
+      **outras três** — **LIMITE por teto**, **LIMITE por volta** e **INTERROMPIDA** — **não
+      publicam**. *Note que PARCIAL e VAZIO_DO_MOTIVO publicam apesar de serem **falha** e
+      **inconclusivo**: o que autoriza a publicação é ter examinado as `N`, não o veredito da
+      passagem — e essa é justamente a razão de a regra ser enunciada pela árvore. Escrevê-la
+      só para a folha nova (era o que este bloco fazia) deixa quatro folhas sem regra, e uma
+      implementação que publique em `LIMITE por volta` — onde o número medido é
+      estruturalmente menor que o real — fecha verde.* O que se perde publicando de uma
+      varredura incompleta é sempre o mesmo: o número **certo** da passagem anterior é
+      sobrescrito por um **menor**, e o Pronto das fases seguintes (`residual = 0`) passa a
+      fechar por medição truncada.
     - "Fila vazia" **não serve** como completude: drenar seletivamente obriga a reconsumir
       e republicar o que aquela fase não trata, e essas mensagens voltam para a mesma fila.
     **O que os seis desfechos cobrem, e o que eles NÃO cobrem.** Toda parada da passagem é
@@ -2629,9 +2867,11 @@ para ela.
   - **`preco_medio` e `custo_total` são desta fase, com a regra de baixa escrita.**
     `posicao_corrente` tem **três** colunas de valor, e o rascunho anterior atribuía só a
     primeira: I4 falava só de `qtd_delta`, o Pronto conferia só quantidade, e ninguém
-    dizia quem mantém as outras duas. Não é detalhe adiável — o F5 tributa com "base =
-    preço médio **do livro**" (§7.3) e o F7 grava `preco_medio` e `custo` em cada snapshot
-    (§7.4). **A regra de dobra NÃO se escreve aqui: ela está fechada na segunda metade da
+    dizia quem mantém as outras duas. Não é detalhe adiável — o F5 calcula o imposto **a
+    partir** do `preco_medio` (a §7.3 escreve "base = preço médio do livro", que é **elipse**:
+    a base é o **ganho**, `valorFinanceiro − pm × quantidade`; a fórmula está fechada na
+    decisão da base do F5, e não se deduz desta frase) e o F7 grava `preco_medio` e `custo`
+    em cada snapshot (§7.4). **A regra de dobra NÃO se escreve aqui: ela está fechada na segunda metade da
     V1 do F3, POR TIPO, PARA OS DEZ — copie-a, não a reescreva.** O que esta fase faz é
     aplicá-la na mesma transação que a quantidade: os **nove** tipos que não são `ajuste`
     aplicam-se **incrementalmente**, em O(1), **e só quando o movimento que chega é o último
@@ -2779,7 +3019,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
       - os NOVE tipos que nao sao `ajuste` aplicam-se INCREMENTALMENTE, em O(1), MAS SO
         QUANDO O MOVIMENTO QUE CHEGA E O ULTIMO DA CHAVE NA ORDEM DA DOBRA:
         data_evento >= MAX(data_evento) daquela (cliente_id, instrumento_id). Se a
-        data_evento for ANTERIOR, RE-DOBRE A CHAVE INTEIRA, igual ao ajuste. A media
+        data_evento for ANTERIOR, RE-DOBRE A CHAVE INTEIRA, igual ao ajuste.
+        NA PRIMEIRA LINHA DA CHAVE O MAX E NULO: trate esse caso EXPLICITAMENTE — MAX nulo
+        => APLICA O DELTA INCREMENTAL, porque nao ha historia anterior e a linha que chega
+        E a ultima da ordem por definicao. Em SQL `data_evento >= NULL` e NULL (o WHERE
+        trata como falso); em C# com DateOnly? isso vira NullReferenceException ou `false`,
+        e `false` manda a primeira linha de TODA chave nova para a re-dobra — correto por
+        acidente, com O(1) virando O(n) sem ninguem notar. A media
         ponderada E SENSIVEL A ORDEM: compra 10@100 (D1), venda 4 (D2) e a retroativa
         compra 10@200 (D0) dao, por delta, custo 2600 e pm 162,50, quando a dobra por data
         vale custo 2400 e pm 150 — I4 fica FALSO e a reconciliacao do F7 alerta para
@@ -2799,7 +3045,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     preco_medio x quantidade resultante. E O CORTE: aqui voce aplica a dobra com
     D = INFINITO (posicao_corrente); o corte por data e do F7.
     TESTES OBRIGATORIOS, e sao CINCO — esta lista e a da prosa desta fase sao A MESMA
-    LISTA: (1) COMPRA-COMPRA-VENDA-COMPRA, nao so compra-venda;
+    LISTA: (1) COMPRA-COMPRA-VENDA-COMPRA, nao so compra-venda — e a PRIMEIRA compra desse
+    cenario e tambem o caso do MAX(data_evento) NULO, que a assercao nomeia: ela tem que
+    aplicar delta incremental, nao re-dobrar;
     (2) APORTE, provando que ele dobra igual a compra (o teste de preco medio anterior
     nao o incluia, e o Pronto (d2) so conferia instrumento e quantidade); (3) COMPRA ->
     VENDA A PRECO DIFERENTE DO CUSTO -> ESTORNO DA VENDA, exigindo que AS TRES COLUNAS
@@ -2815,9 +3063,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     tambem e), e a varredura de sinal aprova o terceiro tambem: e por isso que ele e teste
     nomeado; (5) MOVIMENTO RETROATIVO, provando que ele RE-DOBRA a chave e nao aplica
     delta — e o unico que separa a clausula do MAX(data_evento) da ausencia dela.
-    Sem isso o F5 vai tributar com "base = preco medio do livro" (7.3) contra uma coluna
-    vazia ou errada e inventar a regra dentro do calculo de imposto, e o F7 vai gravar
-    preco_medio errado em cada snapshot — documento que o cliente ve (P2).
+    Sem isso o F5 vai calcular imposto contra uma coluna vazia ou errada e inventar a regra
+    dentro do calculo, e o F7 vai gravar preco_medio errado em cada snapshot — documento que
+    o cliente ve (P2). ("Base = preco medio do livro", 7.3, e ELIPSE: o preco medio e o
+    INSUMO da base, e a base e o GANHO — a formula esta fechada no F5, nao a deduza daqui.)
   - Validacao de magnitude E ESCALA dos numeric no Dominio (PADROES 10.25).
   - Comando administrativo dentro do container para reconstruir posicao_corrente a
     partir do livro, aplicando A MESMA DOBRA DA V1 DO F3 (por tipo, para os dez,
@@ -3008,6 +3257,24 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
                           ter sido consumida e republicada, isto e, examinada) e, sem
                           identidade preservada no republish, INIMPLEMENTAVEL: sobrava so "N
                           acima do teto".
+                          ESTA FOLHA E INALCANCAVEL SE VOCE IMPLEMENTAR O TETO CERTO, E ISSO
+                          E DE PROPOSITO. A custodia.parked e FIFO e nao tem outro consumidor:
+                          as N originais ocupam as N primeiras posicoes, tudo que voce
+                          republica entra ATRAS delas, e consumindo NO MAXIMO N voce nunca
+                          alcanca a posicao N+1. (Mensagem estacionada DURANTE a passagem
+                          tambem entra atras; messages_ready so pode ler A MENOS; passagem
+                          concorrente carimba OUTRO id.) A FOLHA EXISTE COMO GUARDA DE
+                          DEFESA EM PROFUNDIDADE contra a implementacao que NAO respeita o
+                          teto — "consuma ate a fila esvaziar" e a leitura mais natural de
+                          "drenar", e sob ela voce republica e reconsome o que voce mesmo
+                          republicou PARA SEMPRE, sem parada classificada nenhuma. Tirar a
+                          folha e tirar o NOME desse laco infinito.
+                          POR ISSO O x-custodia-passagem-id VEM DE UMA COSTURA INJETAVEL
+                          (provider do id da passagem, ou argumento opcional --passagem-id do
+                          comando), NAO gerado inline: e o que permite o teste carimbar a
+                          mensagem ANTES e fixar o id da passagem, sem mutar a implementacao.
+                          Mesma costura que o Pronto (v) usa para purgar a fila entre a
+                          leitura de N e o consumo. A COSTURA E DO DESENHO, NAO DO TESTE.
        INTERROMPIDA     = a passagem terminou SEM examinar as N e SEM que nenhuma mensagem
                           da passagem corrente tenha reaparecido -> FALHA, NUNCA SUCESSO E
                           NUNCA COMPLETUDE. E a folha do "OUTRA COISA" da pergunta (2b), e
@@ -3017,10 +3284,18 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
                           o broker. SEM ESTE ROTULO voce mapeia esse ramo inteiro para
                           LIMITE POR TETO, que e FALSO (o teto nao estourou), e "fila
                           vazia" nao socorre: ela esta barrada como completude logo abaixo.
-                          PASSAGEM INTERROMPIDA NAO PUBLICA custodia_parked_mensagens — a
-                          metrica e resultado de uma varredura COMPLETA, e uma varredura
-                          interrompida mede MENOS do que existe: publica-la sobrescreveria
-                          o numero certo da passagem anterior por um menor.
+                          Ela NAO PUBLICA custodia_parked_mensagens, pela regra geral logo
+                          abaixo — e nao por ser caso especial.
+     QUEM PUBLICA custodia_parked_mensagens{motivo=} — A REGRA E PELA ARVORE, NAO POR
+     ROTULO: a metrica e RESULTADO DE UMA VARREDURA COMPLETA, entao publicam EXATAMENTE as
+     TRES folhas em que as N FORAM EXAMINADAS — COMPLETUDE, PARCIAL e VAZIO_DO_MOTIVO — e
+     NAO publicam as outras tres: LIMITE POR TETO (nao examinou nenhuma), LIMITE POR VOLTA e
+     INTERROMPIDA (examinaram MENOS que as N). PARCIAL e VAZIO_DO_MOTIVO publicam APESAR de
+     serem falha e inconclusivo: o que autoriza a publicacao e TER EXAMINADO AS N, nao o
+     veredito. NAO ESCREVA A REGRA SO PARA A INTERROMPIDA: assim quatro folhas ficam sem
+     regra e uma implementacao que publique em LIMITE POR VOLTA fecha verde com um numero
+     estruturalmente MENOR que o real, sobrescrevendo o numero certo da passagem anterior — e
+     e desse numero que sai o "residual = 0" do Pronto das fases seguintes.
      "Fila vazia" NAO SERVE como completude: drenar seletivamente obriga a reconsumir e
      republicar o que esta fase nao trata, e essas mensagens voltam para a mesma fila.
      LIMITE DECLARADO DO INSTRUMENTO, e ele NAO e um desfecho novo: residual_motivo e
@@ -3200,15 +3475,27 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   **fila com mensagens só de outros motivos** (`N > 0`, `n_motivo = 0`), que é o estado
   normal da **segunda** execução e o que uma guarda ancorada em `N = 0` deixa passar como
   sucesso; (iii) **LIMITE por teto**, devolvendo falha e não sucesso parcial; (iv)
-  **LIMITE por volta**, com uma mensagem que **dá a volta** dentro da passagem corrente
-  (reconhecida pelo `x-custodia-passagem-id`), provando que o ramo é detectável e não só
-  decorativo; (v) **INTERROMPIDA → falha**, com a `custodia.parked` **purgada** depois de a
+  **LIMITE por volta**, provado **pela costura injetável do `x-custodia-passagem-id`** — o
+  fixture fixa o id da passagem (provider injetado ou `--passagem-id`) e planta na fila uma
+  mensagem **já carimbada com esse id**, e a passagem tem de devolver `LIMITE por volta` ao
+  consumi-la. *A prova é assim porque, com o teto do laço = `N` e a `custodia.parked` FIFO
+  sem outro consumidor, **nenhuma mensagem republicada pela passagem corrente pode reaparecer
+  dentro dela** — a folha é inalcançável por desenho, e é guarda contra a implementação que
+  ignora o teto (ver a mecânica). Um Pronto que mandasse "fazer uma mensagem dar a volta de
+  verdade" só fecharia com o executor **mutando a implementação**, que é o padrão que este
+  arquivo combate; sem a costura, o ramo não é exercitável de boa-fé nenhuma;* (v)
+  **INTERROMPIDA → falha**, com a `custodia.parked` **purgada** depois de a
   passagem ler `N` e antes de ela examinar as `N` — a fila esvazia em `k < N`, o teto não
   estoura e nada dá a volta. *Este é o teste que separa o rótulo novo dos dois `LIMITE`: sem
   ele, uma implementação que devolvesse `LIMITE por teto` para esse estado passaria, e é
-  exatamente o que a versão anterior deste Pronto premiava.* **E a métrica na mesma
-  asserção:** a passagem INTERROMPIDA **não** publica `custodia_parked_mensagens`, provado
-  lendo o valor anterior e exigindo que ele **não** tenha sido sobrescrito;
+  exatamente o que a versão anterior deste Pronto premiava.* **A purga entre a leitura de `N`
+  e o consumo precisa de costura nomeada, e é a mesma família da anterior:** um ponto de
+  suspensão injetável entre os dois passos (não `Thread.Sleep`, que torna o teste dependente
+  de tempo). **E a métrica entra nas TRÊS alíneas (iii), (iv) e (v), não só nesta:** nenhuma
+  das três publica `custodia_parked_mensagens`, provado lendo o valor anterior e exigindo que
+  ele **não** tenha sido sobrescrito — a regra é pela árvore (publicam só as folhas que
+  examinaram as `N`), e afirmá-la numa folha só deixa as outras duas verdes com a métrica
+  truncada;
   (d2) **um `aporte` gravando o `instrumento_id` do evento e a `quantidade` do evento, E
   dobrando `preco_medio`/`custo_total` como uma compra** — conferir só instrumento e
   quantidade era o buraco da versão anterior deste Pronto: o `aporte` passava com a coluna
@@ -3239,10 +3526,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
 
 - [ ] **F5** — consequências contábeis do resgate: IR, IOF e a liquidação D+1.
   **Dependência externa nova: nenhuma.**
+  **PENDÊNCIA BLOQUEANTE ABERTA: a definição de `prazo` — leia a pendência nas decisões desta
+  fase ANTES de despachar; ela amarra modelagem por lotes contra custo médio, e sem ela dois
+  critérios de Pronto desta fase passam por vacuidade.**
 
   No mesmo handler de `TradeRegistered`, quando `operacao = resgate` (que no livro é
-  `tipo = venda`, V2 do F3): `ir_retido` e `iof` (base = preço médio **do livro**, alíquota
-  regressiva pelo prazo, IOF se < 30 dias), mais `a_liquidar` em D; e, em **D+1 útil**, a
+  `tipo = venda`, V2 do F3): `ir_retido` e `iof` (**base = o GANHO da alienação**,
+  `valorFinanceiro − preco_medio × quantidade`, com piso em zero — ver a decisão da base,
+  abaixo; alíquota regressiva pelo `prazo`, cuja definição é **PENDÊNCIA BLOQUEANTE desta
+  fase**; IOF nos primeiros 30 dias), mais `a_liquidar` em D; e, em **D+1 útil**, a
   `liquidacao` de **duas pernas** (`caixa:a_liquidar` −Z, `caixa:BRL` +Z, com
   `Z = Y − IR − IOF`, o **saldo** do fato em `caixa:a_liquidar`), gravada por um
   **job de liquidação** desta fase. Caixa como instrumento (`caixa:BRL`,
@@ -3271,8 +3563,82 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
 
   **Decisões desta fase:**
 
+  - **A BASE DO IR É O GANHO DA ALIENAÇÃO, NÃO O PREÇO MÉDIO — e a frase da §7.3 é ELIPSE.**
+    A §7.3 escreve "base = preço médio do livro"; lida literalmente, ela manda cobrar ~22,5%
+    **do custo inteiro** em vez do lucro. O preço médio é o **insumo** da base. **Fórmula, e
+    ela é a decisão:** `base = valorFinanceiro_da_venda − preco_medio × quantidade`,
+    **com piso em zero**. **A evidência é do simulador que esta própria fase manda portar**
+    (`../tesouro-direto-api`), e ela é literal: `src/TesouroDireto.Application/Tributos/
+    TributosPadrao.cs` linhas **46** e **70** declaram os dois tributos como
+    `BaseCalculo.**Rendimento**` — não preço —; `src/TesouroDireto.Domain/Simulador/
+    SimuladorService.cs` linha **139** calcula `rendimentoBruto = valorBruto −
+    input.ValorInvestido`; e `TributosPadrao.cs:52-57` traz o IR como
+    `TipoCalculo.FaixaPorDias` com as faixas `(0,180) (181,360) (361,720) (721,∞)`, e o IOF
+    como `TabelaDiaria` de **29 dias** (`:8-12`). *Esta fase manda "portar e conferir contra o
+    simulador"; portar o motor com a base errada é conferir uma coisa contra outra.*
+    **Base negativa — venda com prejuízo — tem regra, e ela não estava escrita:** piso em
+    zero, `IR = 0` e `IOF = 0`, e as linhas `ir:` e `iof` **NÃO EXISTEM** (não se grava zero),
+    exatamente como já vale para o IOF ausente. *Ausência decidida:* prejuízo **não** gera
+    crédito, compensação nem linha de qualquer espécie nesta fase — compensação de perdas é
+    regime que exige histórico fiscal próprio, e nada neste roadmap o modela; registrar a
+    ausência aqui é o que impede alguém de improvisá-la dentro do cálculo de imposto.
+    **Compra RETROATIVA que muda a base (ou o `prazo`) de uma venda já tributada:** mesma
+    família do `preco_medio` provisório da decisão seguinte — **grava, sinaliza, e o conserto
+    é estorno do resgate e relançamento; nunca UPDATE**, que a trigger barraria de qualquer
+    modo. O sinal é o mesmo *"resgate tributado sobre preço médio provisório"*, com o motivo
+    do sinal dizendo qual dos dois casos ocorreu.
+
+  ### PENDÊNCIA BLOQUEANTE DO F5 — a definição de `prazo`
+
+  **Estado:** aberta. **Bloqueia:** o F5 (e o F9, que reusa o motor). **Quem decide:** o dono
+  — amarra **modelagem por lotes contra custo médio**, e o custo médio é o que a V1 do F3 já
+  fechou. **Não despache o F5 sem isto.**
+
+  A alíquota do IR depende de **dias corridos desde a AQUISIÇÃO**. Uma posição construída por
+  N compras em datas diferentes **não tem uma data de aquisição**, e a V1 do F3 escolheu
+  guardar **custo médio** (`preco_medio`, `custo_total`) e **não lotes** — a informação que
+  `prazo` exige foi agregada fora. Grep no arquivo inteiro antes desta rodada: `prazo`
+  aparecia **onze** vezes e **nenhuma** o definia.
+
+  **A conta que mostra o tamanho:** FIFO, data média ponderada, lote mais antigo ou lote mais
+  novo mudam a alíquota entre **22,5% e 15%** — **50% de diferença no imposto**, gravado numa
+  tabela **sem UPDATE**.
+
+  **As opções, com o custo de cada uma:**
+
+  - **(a) FIFO por LOTES materializados** — é o que a corretora faz, e é o único que bate com
+    o extrato dela, que é o nosso único conferente externo. **Custo:** exige uma estrutura de
+    lotes que a V1 não tem. **E ela faria o inventário "há DUAS tabelas fora da §7.1" (F3 e
+    F7) virar TRÊS** — se for esta a escolha, os três lugares que declaram "duas" mudam
+    juntos, e a tabela nasce nesta fase (é projeção reconstruível do livro, então **não** cai
+    na §10.21: o custo é retrabalho de fase, não dado perdido).
+  - **(b) FIFO DERIVADO do livro, sem materializar lotes** — a mesma regra de (a), computada
+    na dobra: o livro **tem** as datas e as quantidades, e o custo é O(movimentos daquela
+    chave), que este arquivo já paga em **todo `ajuste`**. **Custo:** o cálculo do imposto
+    passa a percorrer o livro, e a dobra da V1 ganha uma saída a mais (a fila de lotes), o que
+    exige dizer se essa saída faz parte da dobra ou é função ao lado. Nenhum inventário
+    cresce. *É a que eu recomendaria, e a recomendação fica registrada como recomendação.*
+  - **(c) data média ponderada por quantidade** — cabe no custo médio que já existe e não
+    custa nada. **Custo:** não corresponde a **nenhuma** regra fiscal real; diverge do extrato
+    da corretora por construção, e o Pronto "conferido contra o simulador" passa a ser
+    impossível de honrar.
+  - **(d) `data_evento` da PRIMEIRA compra da chave, derivada do livro** — barato e
+    determinístico. **Custo:** **superestima o prazo** e portanto recolhe imposto **a menos**,
+    que é a direção errada de errar; e uma compra retroativa anterior muda o `prazo` de vendas
+    já tributadas.
+
+  **Por que bloqueia, e não é zelo:** sem `prazo` definido, **dois critérios de Pronto desta
+  fase passam por VACUIDADE**. O (c) exige "o dia exato da virada de faixa, o dia 30 do IOF" —
+  não se testa a fronteira de uma grandeza indefinida: o executor **define** `prazo` enquanto
+  escreve o teste, e o teste certifica o que ele acabou de decidir. E o (i), "alíquotas
+  conferidas contra o simulador", é **inexecutável**: o `SimulacaoInput` do simulador modela
+  **uma aplicação** (um `DataCompra`, um `ValorInvestido`) e não sabe responder sobre uma
+  posição de custo médio com N compras — a conferência só existe depois de `prazo` ter uma
+  definição que se possa traduzir em `DataCompra`.
+
   - **Tributar a partir de um `preco_medio` PROVISÓRIO: grava, sinaliza, e o conserto é
-    estorno — nunca UPDATE.** A base do IR é o `preco_medio` **do livro** (§7.3), e a V1 do
+    estorno — nunca UPDATE.** O `preco_medio` **do livro** é o insumo da base (decisão
+    acima), e a V1 do
     F3 declara as três colunas **provisórias** enquanto a `quantidade` for negativa. Essa
     palavra tranquiliza para `posicao_corrente`, que se refaz por dobra, e **não vale para o
     livro**: `ir_retido` e `iof` gravados a partir de um `preco_medio` provisório ficam numa
@@ -3304,7 +3670,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     instante do resgate. Isto é um DESVIO POR CORREÇÃO do texto literal da §7.3 —
     registre-o e grave-o na memória ao fechar a fase**, na mesma convenção dos outros
     desvios rotulados deste arquivo. **Esta enumeração é a LISTA CANÔNICA de desvios do
-    roadmap — desvio que não estiver aqui não está rotulado —, e são NOVE, contando o
+    roadmap — desvio que não estiver aqui não está rotulado —, e são DEZ, contando o
     desta fase:**
     (1) a `liquidacao` em D+1 útil por job, aqui, contra a §7.3;
     (2) o `aporte` no enum, na V1 do F3, contra a §7.1;
@@ -3316,8 +3682,12 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     (6) a tabela **`eod_processado`**, no F7, contra a **ADR-5** e a **§9 do `PADROES`**
     (watermark em coluna de controle, no lugar do derivado) — **o único desta lista que viola
     um antipadrão NOMINAL da §9, e por isso o que carrega a cláusula inteira: aprovado pelo
-    `advisor` com QUATRO condições escritas na fase** (`U` atrasa e nunca adianta, com a
-    linha só no commit que fecha a última unidade do batch; a regra do par
+    `advisor` com QUATRO condições escritas na fase** (`U` atrasa e nunca adianta, com **a
+    unidade de completude sendo o DIA**: a linha `eod_processado(d)` entra na **mesma
+    transação que fecha o dia `d` inteiro**, percorrido em ordem crescente — *a formulação
+    anterior desta condição, "só no commit que fecha a última unidade do batch", foi
+    revogada pelo `advisor`: ela tratava o batch como unidade de completude e contradizia a
+    própria condição (iii) em operação normal*; a regra do par
     `snapshots_posicao` ↔ `eod_processado` na direção inversa; a DDL com
     `PRIMARY KEY (data_ref)`; e o escopo estreito — o desvio autoriza **este** watermark e só
     ele, e o backfill de preço do F6 continua derivado) —, **e a gravar na memória ao fechar a
@@ -3325,21 +3695,54 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     (7) a **derivação da ausência de preço**, no F7, contra a §10.32;
     (8) o cursor com `X-Total-Count` ausente, no F8, contra a §2 do `PADROES`;
     (9) a posição na data derivada do **livro** e não de `posicao_corrente`, no F9, contra a
-    §7.3.
+    §7.3;
+    (10) o **TETO do intervalo do handler de `eod.ready`** (default 90 dias úteis,
+    `IConfiguration`), no F7, contra a §7.3: acima do teto o handler **recusa materializar um
+    `D` que o Hub anunciou** — não processa, devolve **LIMITE** (§10.31), alerta, e a mensagem
+    vai para a `custodia.parked` com o motivo `intervalo_acima_do_teto`; a materialização
+    daquele `D` passa a depender do comando administrativo `materializar --desde --ate`
+    (isento do teto) seguido do drenador daquele motivo, que reentrega o evento. **Por que é
+    desvio e não interpretação:** a §7.3 prescreve o mecanismo (o ramo `EodPricesReady(D)`
+    **dentro** do handler), e aqui o resultado **não** é alcançado por outro meio — há uma
+    janela, entre o parking e a ação do operador, em que o `D` anunciado não está
+    materializado, e pelo FATO 2 nenhum `eod.ready` futuro o reanuncia. É a mesma forma do
+    desvio (1). **A garantia que sobra, e é ela que torna o desvio aceitável:** a mensagem
+    nunca é descartada, o `D` nunca é perdido, e o ciclo parking → comando → drenador →
+    reentrega fecha com peças que aquela fase já tem — o Pronto (f2) prova o **ciclo inteiro**,
+    não só a recusa. **A gravar na memória ao fechar a fase**, na mesma convenção dos desvios
+    (6) e (8). *Rejeitado dobrar isto dentro do desvio (5):* (5) diz "materializa **MAIS** que
+    `D`" e o teto diz "materializa **MENOS** que `D`" — juntar duas divergências opostas numa
+    linha faz a lista deixar de ser enumerável, e uma fase futura que revisitasse o intervalo
+    herdaria ou perderia o teto em silêncio.
     *A lista não é "tudo que diverge da `ARQUITETURA`": é a dos desvios que este roadmap
     **decidiu e rotulou**. Fase que criar outro acrescenta **duas** coisas, e uma sem a outra
     é defeito: o rótulo dentro da própria fase (senão o executor lê a `ARQUITETURA` e encontra
     a contradição sem explicação) e a linha aqui (senão a lista deixa de ser canônica e vira
     lista com default informal, o mesmo defeito que a lista de motivos do F4 já nomeia).
-    Contraexemplo tentado contra o "nove": varri as ocorrências de "DESVIO/desvio" no arquivo
-    e todas as marcações de desvio adotado caem numa destas nove — as demais ocorrências são
-    alternativas **rejeitadas** ou citações destas mesmas nove. Esse método só acha o que já
-    está rotulado, então dois candidatos foram procurados **por fora** dele e os dois foram
-    decididos, para a lista não crescer por descuido nem encolher por omissão: a **ordem do
+    Contraexemplo tentado contra o "dez": varri as ocorrências de "DESVIO/desvio" no arquivo
+    e todas as marcações de desvio adotado caem numa destas dez — as demais ocorrências são
+    alternativas **rejeitadas** ou citações destas mesmas dez. Esse método só acha o que já
+    está rotulado, então os candidatos são procurados **por fora** dele e adjudicados por
+    escrito, para a lista não crescer por descuido nem encolher por omissão. **São CINCO
+    adjudicações até aqui — duas que entraram, três que não:** a **ordem do
     extrato de movimentação** do F8 **não** é item novo — ele ordena e pagina pela tripla
     `(data_evento, registrado_em, id)`, que respeita literalmente as duas chaves da §7.5 e só
-    acrescenta o desempate que ela deixa em aberto; e o **alerta das 12:00 medido em
-    `processado_em`** também **não** é item novo, é **interpretação**.*
+    acrescenta o desempate que ela deixa em aberto; o **alerta das 12:00 medido em
+    `processado_em`** também **não** é item novo, é **interpretação**; o **TETO do intervalo
+    do handler** (F7) **É** desvio e virou o item (10) acima; e a **extensão do job de
+    reconciliação** (o alerta `MAX(snapshots_posicao.data) > U`, F7) **NÃO** é desvio —
+    **nenhuma fonte prescreve o conteúdo do job de reconciliação**, que é decisão deste
+    roadmap (Decisão B) e não da `ARQUITETURA`; acrescentar-lhe uma comparação é escolher o
+    meio de satisfazer um resultado que ninguém prescreveu, e por isso não entra; e a
+    **varredura de defasagem de snapshot** (F7) **NÃO** é desvio — a §7.4 prescreve os três
+    gatilhos e o worker único, e não prescreve **por que meio** um gatilho chega ao worker;
+    a varredura não é um quarto gatilho (chama o mesmo `recalcular`, com o mesmo recorte
+    `[desde, U]`, e sobre `revisao > 0`), é a entrega **durável** dos gatilhos 1 e 2. *Se ela
+    materializasse dia que o `eod.ready` não fechou, seria desvio da ADR-9 e não caberia numa
+    linha de lista — não materializa, e é por isso que o recorte dela está escrito.* *A quarta
+    adjudicação está escrita aqui porque a decisão de não entrar é tão adjudicação quanto a de
+    entrar: candidato examinado e recusado em silêncio é indistinguível de candidato não
+    examinado.*
     **O critério que separa uma coisa da outra, e ele vale para as próximas fases:** quando a
     fonte prescreve o **MECANISMO** — colunas, chaves de ordenação, forma do contrato —,
     trocá-lo é **desvio** e entra nesta lista; quando ela prescreve o **RESULTADO** — um
@@ -3347,7 +3750,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     alerta da §12 é do segundo tipo: `processado_em` é o único campo que responde *"chegou
     evento hoje?"*, e a leitura literal (`data_ref`) deixaria o alerta disparando todo dia
     útil, para sempre — satisfazer o resultado prescrito não é divergir dele. **A lista
-    continua com NOVE**, recontados contra este arquivo. A §7.3 põe "`+ a_liquidar → liquidacao` (D+1 útil)" **dentro do handler**; esta
+    passou a DEZ**, recontados contra este arquivo — o item novo é o teto do F7, adjudicado
+    acima. A §7.3 põe "`+ a_liquidar → liquidacao` (D+1 útil)" **dentro do handler**; esta
     fase move a segunda metade para um `IHostedService`. O apoio é a **§8.4**, que põe a
     liquidação em outro momento com todas as letras ("Note over C: dia D+1 útil") — a §7.3 é
     a linha do tempo comprimida, o Fluxo 3 é ela esticada. **Sem o rótulo**, o executor que
@@ -3385,10 +3789,21 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     mesmo** em vez de deixar o livro incompleto em silêncio. *Não confunda com o worker da
     §7.4:* aquele é do F7 e recalcula snapshots; este só apenda duas linhas por
     liquidação vencida.
-    **O filtro "que não foram revertidas" não é detalhe.** Se o estorno de um resgate
-    chegar em D, antes de a liquidação existir, o job **não pode** liquidar um `a_liquidar`
-    já revertido — senão credita dinheiro em `caixa:BRL` de uma operação que não existe
-    mais, numa tabela onde não há DELETE. (Este é, aliás, mais um custo da gravação
+    **O filtro "que não foram revertidas" não é detalhe, e ele olha DUAS linhas, não uma.**
+    Se o estorno de um resgate chegar em D, antes de a liquidação existir, o job **não pode**
+    liquidar um `a_liquidar` já revertido — senão credita dinheiro em `caixa:BRL` de uma
+    operação que não existe mais, numa tabela onde não há DELETE. **E a condição é: nem a
+    linha `aliq:<fato>` nem o MOVIMENTO PRINCIPAL do fato podem estar revertidos.** A segunda
+    metade não é redundância: na janela F4→F5 o estorno de um resgate produziu `ajuste`
+    **só sobre o principal**, porque `aliq:` ainda não existia (é a exceção declarada a I13
+    do F4). Assim que o backfill desta fase criar o `aliq:` daquele resgate, ele nasce
+    **vencido** (data passada) e **não revertido** — e um filtro que olhasse só a própria
+    linha mandaria o job creditar `caixa:BRL` de um resgate que **não existe mais**, que é
+    exatamente o dano que este parágrafo existe para impedir, entrando pela porta do reparo.
+    *Corolário que precisa estar escrito: enquanto a linha `aliq:<fato>` não existe, o fato
+    **não tem ponto de serialização** — o `SELECT … FOR UPDATE` abaixo trava uma linha que
+    ainda não nasceu. É por isso que a metade (i) do backfill roda com o job **parado**, e
+    não só com o filtro certo.* (Este é, aliás, mais um custo da gravação
     antecipada: lá a linha de liquidação já estaria no livro e precisaria de uma reversão
     própria de um fato que nunca aconteceu.)
     **E o filtro sozinho NÃO basta, porque o job e o consumidor são CONCORRENTES.** O job é
@@ -3424,6 +3839,18 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
        desde=data_liquidacao)`** — o gatilho 1 do worker do F7, sem caminho novo. Antes de o
        F7 existir não há snapshot e não há o que recalcular; a partir dele o job passa a
        enfileirar, e isso é dependência **declarada**, não descoberta.
+       **O ENFILEIRAMENTO É CAMINHO RÁPIDO, NUNCA A GARANTIA — e isto tem de estar escrito
+       aqui, porque "enfileira" lido sozinho vira `Channel<T>` em memória.** Um restart entre
+       o commit das duas pernas e o recálculo **perde a chamada para sempre**: as pernas já
+       estão no livro, o `eod.ready` seguinte percorre `[U_anterior + 1, D]` e **não volta**
+       aos dias já materializados, e o caso 1 acima diz o que sobra — snapshots com
+       `caixa:a_liquidar` **para sempre**. Isso violaria o **P2 da `ARQUITETURA`** ("crash em
+       qualquer ponto se resolve na próxima execução"). **A garantia é a *varredura de
+       defasagem de snapshot* do F7**, que é **derivada do dado** (compara `registrado_em` do
+       movimento com `calculado_em` do snapshot vigente daquele dia) e refaz o que a fila
+       perdeu, sem estado de controle nenhum. O job não precisa saber disso para funcionar; o
+       Pronto (c2) é que precisa, e ele exercita **crash entre o commit do job e o
+       recálculo**.
     2. **Calendário exaurido é falha alta, nunca modo degradado.** Feriado e fim de semana
        funcionam por construção (nada vence naquele dia). O que mata é a data **fora do
        horizonte do seed**: aí o job tem de **falhar alto e alertar**, jamais cair em "+1 dia
@@ -3473,6 +3900,26 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   terceira, que é do job: `a_liquidar` vencida sem `liq:<fato>:brl`. O backfill é `INSERT`
   (append), nunca `UPDATE`, e é idempotente pela `ref_externa` própria de cada derivado.
 
+  **TRÊS CONDIÇÕES DE EXECUÇÃO DO BACKFILL, e nenhuma é opcional — porque sem elas o reparo
+  credita dinheiro de operações que não existem mais.** O cenário é real e nasce do desenho:
+  um estorno chegado **na janela F4→F5** gravou `ajuste` sobre o movimento **principal** e
+  nada mais, porque `ir:`, `iof:` e `aliq:` não existiam.
+
+  1. **A metade (i) PULA resgates cujo movimento principal esteja revertido.** Sem isso ela
+     cria `ir:`, `iof:` e `aliq:` para um resgate que **não existe mais** — e o `aliq:` nasce
+     já vencido e não revertido.
+  2. **A ORDEM é (i) e DEPOIS (ii), e fica escrita.** A metade (ii) só pode rodar depois da
+     (i), porque o `ref_estorno` de cada `est:` precisa da linha alvo já gravada. A janela
+     entre as duas é aberta **pelo desenho**, não por acidente: é nela que existem `aliq:`
+     recém-criados ainda sem o `est:aliq:` correspondente.
+  3. **O backfill roda com o JOB DE LIQUIDAÇÃO PARADO**, e o filtro do job olha o **fato
+     principal** (regra acima). São as duas metades da mesma proteção e nenhuma substitui a
+     outra: o job é `IHostedService` de **ciclo curto** (decisão (c)) e **sobe no mesmo
+     deploy** do backfill, então sem o parar ele varre a janela do item 2 enquanto ela existe;
+     e sem o filtro robusto ele voltaria a errar na primeira reentrega depois de religado.
+     *O Pronto (h) sozinho não pega nada disso: ele confere idempotência e "três consultas de
+     guarda devolvendo 0" **ao final**, e passa verde depois de o dano estar gravado.*
+
   **NÃO ENTRA:** cupom e vencimento (F9 — mesmo motor de tributação, gatilho diferente);
   snapshot e o worker de recálculo da §7.4 (F7 — o job de liquidação desta fase **não é**
   aquele worker: ele só apenda duas linhas por liquidação vencida, e não recalcula nada).
@@ -3486,7 +3933,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   **Âncoras:** `ARQUITETURA` §7.1 (convenções: caixa é instrumento, tributos são movimentos
   próprios), §7.3 (ramo `se resgate`), §8.4 Fluxo 3, §6.1 camada 3, §11 (IR/IOF validados
   no simulador; frações e arredondamento; D+1 conta **dias úteis**), §13 item 4;
-  `PADROES` §10.25, §10.21.
+  `PADROES` §10.25, §10.21, **§10.34** (fuso, herdado do F3 — é ele que decide "hoje" e "dia
+  útil" do job de ciclo curto), **§10.35** (fila em memória não é durabilidade — é ela que
+  decide o que "enfileira `recalcular`" significa); `LEIA-ME-KIT` "A frase elíptica da
+  especificação chega crua ao prompt, e vira dinheiro" (é sobre a base do IR desta fase).
 
   **Prompt:**
   ```
@@ -3516,9 +3966,38 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     liq:<tradeId>:aliq   liquidacao   caixa:a_liquidar  -(Y-t-f)  Y-t-f  (D+1 util, JOB)
     liq:<tradeId>:brl    liquidacao   caixa:BRL         +(Y-t-f)  Y-t-f  (D+1 util, JOB)
   (colunas: ref_externa · tipo · instrumento_id · qtd_delta · valor_financeiro · data)
-  qtd_delta CARREGA O SINAL; valor_financeiro e MAGNITUDE BRUTA nao negativa. Base do IR =
-  preco medio DO LIVRO, tabela regressiva 22,5 -> 15% pelo prazo; IOF so se o prazo for
-  < 30 dias (sem IOF, a linha iof: NAO EXISTE — nao grave zero).
+  qtd_delta CARREGA O SINAL; valor_financeiro e MAGNITUDE BRUTA nao negativa.
+
+  A BASE DO IR E O GANHO DA ALIENACAO, NAO O PRECO MEDIO:
+      base = valorFinanceiro_da_venda - preco_medio x quantidade,  com PISO EM ZERO.
+  "Base = preco medio DO LIVRO" (7.3) e ELIPSE — o preco medio e o INSUMO da base. Lida
+  literalmente, ela manda cobrar ~22,5% DO CUSTO INTEIRO em vez do lucro, numa tabela sem
+  UPDATE. A EVIDENCIA ESTA NO SIMULADOR QUE ESTE PROMPT MANDA PORTAR (../tesouro-direto-api),
+  e e literal: src/TesouroDireto.Application/Tributos/TributosPadrao.cs linhas 46 e 70
+  declaram os DOIS tributos como BaseCalculo.Rendimento (nao preco);
+  src/TesouroDireto.Domain/Simulador/SimuladorService.cs linha 139 faz
+  rendimentoBruto = valorBruto - input.ValorInvestido; TributosPadrao.cs:52-57 traz o IR
+  como TipoCalculo.FaixaPorDias com as faixas (0,180) (181,360) (361,720) (721,inf), e o
+  IOF como TabelaDiaria de 29 DIAS (:8-12). Portar o motor com a base errada e conferir
+  uma coisa contra outra.
+  BASE NEGATIVA (venda com PREJUIZO): piso em zero, IR = 0 e IOF = 0, e as linhas ir: e
+  iof: NAO EXISTEM — nao grave zero, exatamente como ja vale para o IOF ausente. E
+  PREJUIZO NAO GERA CREDITO NEM COMPENSACAO nesta fase: e ausencia DECIDIDA, porque
+  compensacao de perdas exige historico fiscal proprio que nada neste roadmap modela. NAO
+  a improvise dentro do calculo.
+  COMPRA RETROATIVA que muda a base (ou o prazo) de uma venda ja tributada: mesma familia
+  do preco_medio provisorio da decisao 0 — GRAVA, SINALIZA, e o conserto e ESTORNO do
+  resgate e relancamento. NUNCA UPDATE (a trigger barra).
+
+  PARE AQUI SE A PENDENCIA DO `prazo` AINDA ESTIVER ABERTA. A aliquota depende de DIAS
+  CORRIDOS DESDE A AQUISICAO, e uma posicao construida por N compras em datas diferentes
+  NAO TEM UMA data de aquisicao — a V1 do F3 guardou CUSTO MEDIO, nao lotes. FIFO, data
+  media, lote mais antigo ou mais novo mudam a aliquota entre 22,5% e 15%: 50% DE
+  DIFERENCA NO IMPOSTO, gravado numa tabela sem UPDATE. A decisao e do DONO (amarra
+  modelagem por lotes contra custo medio) e esta escrita na prosa desta fase como
+  PENDENCIA BLOQUEANTE, com as quatro opcoes e o custo de cada uma. NAO ESCOLHA VOCE
+  ENQUANTO ESCREVE O TESTE: e assim que o Pronto (c) — "o dia exato da virada de faixa" —
+  passa por vacuidade, certificando o que voce acabou de decidir.
   a_liquidar E BRUTO e os TRIBUTOS DEBITAM caixa:a_liquidar: IR e IOF sao retidos NA
   FONTE, entao o direito a receber nasce cheio e e reduzido pelas proprias linhas de
   tributo. O saldo a receber e uma SOMA DE LINHAS DO LIVRO (+Y -t -f) — nao um numero
@@ -3549,7 +4028,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
 
   DECISOES JA TOMADAS:
   0. TRIBUTAR A PARTIR DE UM preco_medio PROVISORIO: GRAVA, SINALIZA, E O CONSERTO E
-     ESTORNO — NUNCA UPDATE. A base do IR e o preco_medio DO LIVRO (7.3), e a V1 do F3
+     ESTORNO — NUNCA UPDATE. O preco_medio DO LIVRO e o INSUMO da base (a base e o GANHO,
+     ver acima), e a V1 do F3
      declara as tres colunas PROVISORIAS enquanto a quantidade for negativa. Isso
      tranquiliza para posicao_corrente, que se refaz por dobra, e NAO VALE PARA O LIVRO:
      ir_retido e iof gravados a partir de um pm provisorio ficam em tabela append-only e
@@ -3597,9 +4077,18 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      -> FALHA, nunca sucesso parcial. A MESMA CONSULTA e a guarda permanente
      ("a_liquidar vencida sem liq:<fato>:brl" -> metrica + alerta), entao um job que
      atrasa APONTA PARA SI MESMO. Este job NAO e o worker da 7.4 (esse e do F7).
-     O FILTRO "que nao foram revertidas" NAO E DETALHE: se o estorno chegar em D, antes
-     de a liquidacao existir, liquidar um a_liquidar ja revertido creditaria dinheiro em
-     caixa:BRL de uma operacao que nao existe mais, numa tabela sem DELETE.
+     O FILTRO "que nao foram revertidas" NAO E DETALHE, E ELE OLHA DUAS LINHAS: nem a
+     linha aliq:<fato> nem o MOVIMENTO PRINCIPAL do fato podem estar revertidos. Se o
+     estorno chegar em D, antes de a liquidacao existir, liquidar um a_liquidar ja
+     revertido creditaria dinheiro em caixa:BRL de uma operacao que nao existe mais, numa
+     tabela sem DELETE. A SEGUNDA METADE NAO E REDUNDANCIA: na janela F4->F5 o estorno
+     produziu `ajuste` SO SOBRE O PRINCIPAL (aliq: nao existia — excecao declarada a I13
+     do F4), entao o aliq: criado pelo backfill desta fase nasce VENCIDO e NAO REVERTIDO, e
+     um filtro que olhasse so a propria linha mandaria voce creditar caixa:BRL de um
+     resgate que nao existe mais. E ENQUANTO A LINHA aliq:<fato> NAO EXISTE, O FATO NAO TEM
+     PONTO DE SERIALIZACAO: o SELECT ... FOR UPDATE abaixo trava uma linha que ainda nao
+     nasceu — e por isso a metade (i) do backfill roda com o JOB PARADO, e nao so com o
+     filtro certo.
      E O FILTRO SOZINHO NAO BASTA, PORQUE O JOB E O CONSUMIDOR SAO CONCORRENTES: o job e
      um IHostedService com thread propria e o handler de estorno roda no BackgroundService
      do consumidor — dois processos no mesmo container, e a decisao (c) (ciclo CURTO)
@@ -3629,6 +4118,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
          instrumento, desde=data_liquidacao) — o gatilho 1 do worker do F7, sem caminho
          novo. Antes do F7 nao ha snapshot e nao ha o que recalcular; a partir dele, o
          job enfileira. Isso e dependencia DECLARADA, nao descoberta.
+         O ENFILEIRAMENTO E CAMINHO RAPIDO, NUNCA A GARANTIA. NAO leia "enfileira" como
+         "Channel<T> em memoria e pronto": um restart entre o commit das duas pernas e o
+         recalculo PERDE A CHAMADA PARA SEMPRE — as pernas ja estao no livro, o eod.ready
+         seguinte percorre [U_anterior + 1, D] e NAO VOLTA aos dias ja materializados, e o
+         resultado e o caso (a) acima: snapshots com caixa:a_liquidar PARA SEMPRE. Isso
+         violaria o P2 da ARQUITETURA ("crash em qualquer ponto se resolve na proxima
+         execucao"). A GARANTIA E A VARREDURA DE DEFASAGEM DE SNAPSHOT DO F7, DERIVADA DO
+         DADO (registrado_em do movimento contra calculado_em do snapshot vigente daquele
+         dia), que refaz o que a fila perdeu sem estado de controle nenhum.
      (b) CALENDARIO EXAURIDO E FALHA ALTA, nunca modo degradado. Feriado e fim de semana
          funcionam por construcao (nada vence). O que mata e a data FORA DO HORIZONTE DO
          SEED: FALHE ALTO e alerte, JAMAIS caia em "+1 dia corrido" — esse erro so
@@ -3657,7 +4155,25 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   BACKFILL da janela F4->F5, e ele tem DUAS metades: (i) resgates ja gravados sem
   tributo/a_liquidar recebem as linhas faltantes; (ii) estornos ja gravados sem o
   conjunto `est:` recebem a reversao. Tudo por INSERT (append), NUNCA por UPDATE,
-  idempotente pela ref_externa de cada derivado. E as consultas que os encontram
+  idempotente pela ref_externa de cada derivado.
+  TRES CONDICOES DE EXECUCAO, E NENHUMA E OPCIONAL — sem elas o REPARO credita dinheiro de
+  operacoes que nao existem mais. O cenario nasce do desenho: um estorno chegado NA JANELA
+  F4->F5 gravou `ajuste` sobre o movimento PRINCIPAL e nada mais, porque ir:, iof: e aliq:
+  nao existiam.
+    (1) A METADE (i) PULA resgates cujo MOVIMENTO PRINCIPAL esteja revertido. Sem isso ela
+        cria ir:, iof: e aliq: para um resgate que NAO EXISTE MAIS, e o aliq: nasce JA
+        VENCIDO (data passada) e NAO REVERTIDO — e o job de liquidacao, que e de ciclo
+        curto e sobe no MESMO DEPLOY, credita caixa:BRL.
+    (2) A ORDEM E (i) E DEPOIS (ii), e ela fica escrita: o ref_estorno de cada `est:`
+        precisa da linha alvo ja gravada. A janela entre as duas metades e aberta PELO
+        DESENHO — e nela que existem aliq: recem-criados ainda sem est:aliq:.
+    (3) RODE O BACKFILL COM O JOB DE LIQUIDACAO PARADO, e o filtro do job olha o FATO
+        PRINCIPAL (nem a linha aliq: nem o movimento principal revertidos). Sao as duas
+        metades da mesma protecao: sem parar o job ele varre a janela do item (2) enquanto
+        ela existe; sem o filtro robusto ele volta a errar na primeira reentrega depois de
+        religado.
+  O PRONTO (h) SOZINHO NAO PEGA NADA DISSO: ele confere idempotencia e "tres consultas de
+  guarda devolvendo 0" AO FINAL, e passa verde depois de o dano estar gravado. E as consultas que os encontram
   ("resgate sem linha ir:<tradeId>" e "ajuste sobre resgate sem conjunto est:") viram
   GUARDA PERMANENTE com metrica e alerta — nao script de uma vez: o que elas detectam
   pode reaparecer por bug do handler depois.
@@ -3670,8 +4186,12 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   ```
 
   <br>**Pronto:** (**permissiva**) um resgate produzindo o conjunto **completo** de
-  movimentos — venda, `ir_retido`, `iof` quando cabe, `a_liquidar` em D e, depois de o job
-  rodar, **as duas pernas** da `liquidacao` em D+1 útil —, cada um com `ref_externa`
+  movimentos — venda, `ir_retido` **quando cabe**, `iof` **quando cabe**, `a_liquidar` em D
+  e, depois de o job rodar, **as duas pernas** da `liquidacao` em D+1 útil —, *e "quando
+  cabe" tem duas condições, não uma: `iof:` só existe com prazo < 30 dias, e **`ir:` e `iof:`
+  não existem quando a base é zero ou negativa** (venda com prejuízo, decisão da base). O
+  fixture da permissiva fixa o caso de **base positiva e prazo < 30 dias**, que é o conjunto
+  máximo; os outros dois são asserções próprias, com contagem menor,* cada um com `ref_externa`
   própria e **nenhuma colisão**; `posicao_corrente` mostrando `caixa:a_liquidar` em D e
   `caixa:BRL` em D+1, **com I4 valendo literalmente nos dois dias** (é essa combinação que
   a decisão da liquidação por job torna verdadeira, e que a versão antecipada tornava
@@ -3694,12 +4214,26 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   segunda;
   (c) D+1 cai em dia útil, provado contra **sexta-feira, sábado e véspera de feriado**, não
   contra uma terça; **e a data fora do horizonte do calendário FALHA ALTO**, com alerta —
-  nunca "+1 dia corrido", que é o erro que só aparece meses depois, já gravado;
+  nunca "+1 dia corrido", que é o erro que só aparece meses depois, já gravado. **E as
+  fronteiras fiscais — o dia exato da virada de faixa e o dia 30 do IOF — só são
+  exercitáveis DEPOIS de a PENDÊNCIA BLOQUEANTE do `prazo` estar decidida:** enquanto ela
+  estiver aberta, este critério passa por vacuidade, porque o executor define `prazo`
+  enquanto escreve o teste e o teste certifica a definição que ele acabou de escolher. O
+  fixture da fronteira nomeia, no próprio nome do teste, **qual** definição de `prazo` está
+  em vigor;
   (c2) **o catch-up é retroativo e se declara como tal:** um `a_liquidar` vencido há três
   dias, liquidado agora, grava `data_evento` **na data de liquidação** (passado) e
   **enfileira `recalcular(cliente, instrumento, desde=data_liquidacao)`** — provado por
   asserção sobre a fila de recálculo, não por inspeção visual. Antes do F7 a asserção é
-  sobre a chamada; depois dele, sobre o snapshot reversionado;
+  sobre a chamada; depois dele, sobre o snapshot reversionado. **E a metade que importa é a
+  do CRASH, porque é ela que separa "enfileirou" de "chegou":** derrubado o processo
+  **entre o commit das duas pernas e o recálculo** (por injeção), a chamada enfileirada é
+  perdida — e, **na próxima execução**, a *varredura de defasagem de snapshot* do F7
+  reversiona os dias afetados **sem que ninguém reenfileire nada**. *A metade negativa
+  isolada não serve: "o snapshot ficou errado depois do crash" é verdade tanto na
+  implementação certa quanto na errada, e o que se está provando é a **recuperação**.
+  Enquanto o F7 não existir, este critério fica registrado como **pendência de prova** desta
+  alínea, e é o F7 que o executa — não se apaga o critério, declara-se onde ele roda.*
   (d) não existe movimento de tributo ou de liquidação **sem** o resgate que o originou
   (varredura do livro);
   (d2) **um resgate sobre posição com `preco_medio` provisório (`quantidade` negativa) grava
@@ -3712,7 +4246,12 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   liquidação, e sem IOF: depois do estorno, **AS TRÊS COLUNAS de `posicao_corrente` voltam
   ao estado anterior** para **cada** instrumento tocado (o título, `caixa:BRL` e
   `caixa:a_liquidar`), e **não sobra nenhuma linha derivada sem contrapartida**, provado
-  por varredura e não pelo caminho feliz. **O cenário obrigatório é `compra → venda a preço
+  por varredura e não pelo caminho feliz. **O valor afirmado para as linhas de caixa com
+  `quantidade = 0` é `preco_medio = 0` e `custo_total = 0`, NÃO `1,000000`** — é a regra de
+  fronteira da V1, que **precede** a V4 (escrito lá, e escrito aqui porque é aqui que a
+  asserção é redigida). Sem fixar qual dos dois valores o teste afirma, o handler incremental
+  desta fase e a reconciliação do F7 podem escolher regras diferentes, e a reconciliação
+  passa a alertar em toda operação normal; **O cenário obrigatório é `compra → venda a preço
   DIFERENTE do custo → estorno`**, com números: `compra 10 @ 100`, `venda 4 por 600`,
   estorno → `quantidade 10, custo_total 1000, preco_medio 100`. *A versão anterior deste
   Pronto dizia "Σ por instrumento volta ao estado anterior", e **Σ é só `qtd_delta`**: ele
@@ -3730,8 +4269,28 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (g) a parada do job por **limite** devolve falha, não sucesso com conjunto parcial;
   (h) o backfill rodado duas vezes com resultado idêntico, **nas duas metades** (resgate
   sem derivados e estorno sem reversão), e as três consultas de guarda devolvendo 0
-  pendências;
-  (i) as alíquotas conferidas contra o simulador da TD API nos casos de fronteira.
+  pendências. **E as TRÊS condições de execução, cada uma com sua asserção, porque este
+  critério sozinho passa verde depois de o dano estar gravado:** (h1) um resgate da janela
+  F4→F5 **com o principal revertido** não recebe `ir:`, `iof:` nem `aliq:` da metade (i) —
+  **com controle positivo**: um resgate igual, **não** revertido, recebe as três; (h2) a
+  ordem (i)→(ii) afirmada por asserção sobre o resultado, não por leitura do código — depois
+  da passagem completa, **todo** `aliq:` criado pela metade (i) sobre fato revertido não
+  existe, e todo `est:aliq:` da metade (ii) aponta para uma linha que a (i) gravou; (h3) o
+  job de liquidação **religado depois do backfill** não credita `caixa:BRL` de nenhum fato
+  cujo movimento principal esteja revertido — é a prova do filtro robusto, e ela é
+  independente de (h1), porque (h1) prova que a linha não nasceu e (h3) prova que, se
+  nascesse, o job não a liquidaria;
+  (i) as alíquotas conferidas contra o simulador da TD API nos casos de fronteira —
+  **e a conferência é sobre a BASE também, não só sobre a alíquota**: o caso conferido tem
+  `valorFinanceiro`, `preco_medio` e `quantidade` tais que `base = valorFinanceiro − pm ×
+  quantidade` seja **diferente** de `pm × quantidade`, senão as duas fórmulas dão o mesmo
+  número e o teste não distingue a implementação certa da que cobra imposto sobre o custo.
+  *Limite declarado, e ele decorre da PENDÊNCIA do `prazo`:* o `SimulacaoInput` do simulador
+  modela **uma aplicação** (um `DataCompra`, um `ValorInvestido`) e **não sabe responder**
+  sobre uma posição de custo médio com N compras — a conferência só é executável com um
+  fixture de **compra única**, e é assim que ela tem de estar escrita. Estender a conferência
+  a posições de N compras depende de a pendência do `prazo` ter sido decidida, e o critério
+  diz isso em vez de fingir cobertura.
 
 - [ ] **F6** — `prices.*` e o bootstrap REST do Hub: a primeira projeção inteiramente
   descartável. **Dependência externa nova: o Hub publicando `prices.*` e respondendo
@@ -4138,11 +4697,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   F4 deixou só registrado) e **2** (`PriceObserved` com `revisao > 0`, ligando o que o F6
   deixou marcado); e o job de reconciliação livro ↔ `posicao_corrente` que **ALERTA e não
   corrige** (a outra metade da decisão B), comparando **as três colunas** pela **dobra da V1
-  com corte `D = ∞`** — e que alerta também quando `MAX(snapshots_posicao.data) > U`.
-  Comando administrativo `materializar --desde --ate` dentro do container (sem endpoint,
-  ADR-10): é o caminho de bootstrap **fora** do handler de evento. Drenagem do
-  `custodia.parked` do motivo `tipo_nao_tratado_eod`, pelo drenador do F4. Alerta de "dia útil sem `eod.ready` até 12:00" (§12), lido de
-  `eod_processado.processado_em`.
+  com corte `D = ∞`** — e que alerta também nas **duas** direções de `U` contra a projeção
+  (`MAX(snapshots_posicao.data) > U` e o simétrico `< U` com `U` além do último `D`
+  conhecido). A **varredura de defasagem de snapshot**, que é o que torna os gatilhos 1 e 2
+  duráveis sob crash. Comando administrativo `materializar --desde --ate` dentro do container
+  (sem endpoint, ADR-10): é o caminho de bootstrap **fora** do handler de evento, **com guarda
+  no `--ate`**. Drenagem do `custodia.parked` de **DOIS** motivos — `tipo_nao_tratado_eod`
+  (o backlog acumulado desde o F2) e **`intervalo_acima_do_teto`** (o motivo que esta fase
+  cria, e cuja passagem é metade do Pronto (f2)) —, pelo drenador do F4. Alerta de "dia útil
+  sem `eod.ready` até 12:00" (§12), lido de `eod_processado.processado_em`.
 
   **Por que a DDL desta fase nasce aqui e não no F3, que se declarou "a última fase barata
   para acertar o schema".** O argumento do F3 é a §10.21, e ele vale para **tabela
@@ -4167,7 +4730,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   definição. Sem isso, `snapshots_posicao.preco` sendo NOT NULL, não nasceria linha de
   caixa nenhuma: o F5 escrituraria o limbo D→D+1 no livro e esta fase o apagaria do
   documento, e o "soma dos instrumentos + caixa = patrimônio diário" da §7.5 ficaria sem a
-  parcela de caixa — derrubando o Pronto do F8.
+  parcela de caixa — derrubando o Pronto do F8. *O que esta fase precisa é só isto: **a
+  linha de caixa existe no snapshot**. A **igualdade** "soma dos instrumentos + caixa =
+  patrimônio" é o que a PENDÊNCIA BLOQUEANTE do `caixa:BRL` (F3, V2) deixa em aberto, e o F8
+  Pronto (g) já deixou de afirmá-la — não a reintroduza aqui como critério.*
 
   **ESTA É A FASE QUE MUDA O PERFIL DE RECURSO — MEDIR DE NOVO.** O teto de **192m** foi
   medido na VPS em 2026-09-07 para um perfil de API pequena **sem worker** (o próprio
@@ -4213,8 +4779,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
        TD publica o fechamento do dia anterior por volta das
        06:00 BRT, `D` é tipicamente **`hoje−1`**, e mais antigo em segunda-feira, em feriado,
        ou quando um instrumento está atrasado.
-       **DOIS qualificadores, e os dois existem porque a formulação natural deste fato é mais
-       forte do que o SQL. O primeiro é sobre o que `MIN` de máximos NÃO garante:** *"a data
+       **TRÊS qualificadores, e os três existem porque a formulação natural deste fato é
+       mais forte do que o SQL. O primeiro é sobre o que `MIN` de máximos NÃO garante:** *"a data
        mais recente em que todos os instrumentos ativos que têm algum preço têm preço"* sai
        errada. `MIN` de máximos garante que **nenhum** instrumento tem o último preço
        **antes** de `D`; não garante que cada um tenha preço **em** `D`. *Contraexemplo: A com
@@ -4232,6 +4798,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
        emissão (`IngerirPrecosTdCommandHandler.cs:339-345`). Consequência direta para esta
        fase: **`eod.ready(D)` PODE chegar com instrumento ativo sem preço algum**, que é
        exatamente o caso do Pronto (k) — sinal, e nunca preço fabricado.
+       **O terceiro qualificador é sobre o CONJUNTO de que o `MIN` é tomado, e ele existe
+       porque "DOIS" era, ele mesmo, uma afirmação de completude errada.** O `WHERE`/`JOIN`
+       daquele SQL (linhas 42 e 44) restringe o conjunto por `instrumento_fontes.fonte =
+       @fonte` **e** por `ativo_ate >= @hoje` — um parâmetro de **relógio**. Isso **não** torna
+       `D` uma data de relógio (a asserção principal sobrevive inteira), mas o conjunto sobre
+       o qual o mínimo é tomado **depende de `hoje` e da fonte**; e um instrumento ativo **sem
+       linha em `instrumento_fontes` para aquela fonte** some do `MIN` **e** do
+       `SqlDataEodAtivosSemPreco`, isto é, nem entra na conta nem gera o warning. Para esta
+       fase a consequência é a mesma do segundo qualificador — o Pronto (k) —, e o que muda é
+       não afirmar que a lista de ressalvas está fechada em dois.
     2. **`eod.ready(D)` é emitido UMA VEZ POR DATA, para sempre.** Em
        `../hub-precos/src/Hub.Application/Ingestao/IngerirPrecosTdCommandHandler.cs`
        linha **337**, ele só emite se `fechado > eod.UltimoEmitido`; e a migration
@@ -4259,8 +4835,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     escrever um palpite sobre o relógio de outro serviço. *Sem o rótulo, o executor que ler
     a §7.4 — como o próprio prompt manda — encontra a contradição sem explicação e tende a
     seguir a `ARQUITETURA`.*
-    **`U` é `MAX(data_ref)` da tabela `eod_processado`**, uma linha por `D` cujo batch
-    fechou em COMPLETUDE, gravada pelo próprio handler ao fim do batch.
+    **`U` é `MAX(data_ref)` da tabela `eod_processado`**, **uma linha por DIA
+    materializado** — não uma por `D` anunciado —, gravada na **mesma transação que fecha
+    aquele dia inteiro**, pelo handler ou pelo comando administrativo, que aqui fazem a mesma
+    coisa. *Um `eod.ready(D)` que materializa `[D−4, D]` deixa **cinco** linhas, e a de `D`
+    exatamente uma. A formulação anterior — "uma linha por `D` cujo batch fechou em
+    COMPLETUDE, gravada ao fim do batch" — descrevia outra tabela: ela contradizia o resumo
+    desta fase ("uma linha por data materializada"), contradizia o comando administrativo, e
+    fazia o alerta da condição (iii) disparar em toda operação normal.*
 
     **A tabela tem DUAS colunas com papéis separados, e confundi-las torna o alerta da §12
     inimplementável:** `data_ref date` — a data **do dado**, o `D` do evento, e a única de
@@ -4399,28 +4981,89 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     `posicao_corrente` (Decisão B do F4) e do drenador do parking, e **sem endpoint**
     (ADR-10). **O comando NÃO está sujeito ao teto** — ele é explícito, tem operador olhando
     e é exatamente o caminho para intervalo grande — **e grava `eod_processado` para cada dia
-    que materializa**, pela mesma regra do handler (a linha entra no commit que fecha o dia,
-    nunca antes). Rodado o comando, `U` avança, e a passagem do
-    drenador do motivo `intervalo_acima_do_teto` reentrega o `eod.ready(D)` estacionado, que
-    agora cabe no teto. O ciclo fecha com peças que já existem, e a mensagem nunca é
-    descartada — pelo FATO 2, descartá-la perderia aquele `D` para sempre.
+    que materializa**, pela mesma regra do handler (a linha entra na transação que fecha
+    aquele dia inteiro, nunca antes; percurso em ordem crescente). Rodado o comando, `U`
+    avança, e a passagem do drenador do motivo `intervalo_acima_do_teto` reentrega o
+    `eod.ready(D)` estacionado, que agora cabe no teto. O ciclo fecha com peças que já
+    existem, e a mensagem nunca é descartada — pelo FATO 2, descartá-la perderia aquele `D`
+    para sempre.
+
+    **O `--ate` TEM GUARDA, e ela é obrigatória porque este comando é o ÚNICO escritor capaz
+    de ADIANTAR `U`.** Sem validação, `materializar --desde 2026-01-01 --ate 2026-12-31` — uso
+    plausível, já que o comando existe justamente para intervalo grande — grava
+    `eod_processado` até dezembro, e a partir daí: (1) o handler passa a calcular
+    `[U_anterior + 1, D]` com `U_anterior > D`, isto é, **intervalo vazio ou invertido**, o
+    batch "fecha" por vacuidade e nenhum `eod.ready` materializa mais nada, para sempre; (2) o
+    worker percorre `[desde, U]` até uma data **futura**, materializando dias que nenhum
+    `eod.ready` fechou — que é literalmente o que o recorte existe para impedir (ADR-9). **É a
+    corrupção que a propriedade "`U` atrasa, nunca adianta" declara impossível, produzida pelo
+    comando que a mesma decisão introduz.**
+    **Regra: o comando RECUSA `--ate` maior que o último `D` ANUNCIADO** — o maior entre
+    `MAX(data_ref)` de `eod_processado` e o `D` da mensagem estacionada com
+    `intervalo_acima_do_teto`, quando houver —, com **falha alta**, mensagem dizendo qual é o
+    limite e por quê, e **nada gravado**. E o detector fica escrito junto, porque validação de
+    argumento não cobre `UPDATE` manual nem versão antiga do binário: é a **alínea (iv)** da
+    reconciliação, acima (`MAX(snapshots_posicao.data) < U` com `U` além do último `D`
+    conhecido).
+    **A parada do comando é CLASSIFICADA, como a de todo laço deste arquivo (§10.31), e ele
+    está em I15:** **COMPLETUDE** = o intervalo inteiro pedido foi materializado, dia a dia,
+    em ordem crescente; **LIMITE** = interrupção do operador, falha no meio, ou recusa do
+    `--ate` — e **limite devolve falha com código de saída não-zero**, nunca "materializei o
+    que deu". *Isto NÃO acrescenta valor à lista de `x-custodia-motivo`: aquela lista é de
+    mensagem estacionada no broker, e este comando não estaciona mensagem nenhuma — o desfecho
+    dele é código de saída e log, e dizer isso por escrito é o que impede a fase seguinte de
+    "completar" a lista com um motivo que ninguém emite.* **A interrupção no meio é segura por
+    construção**, e é a mesma propriedade do handler: como cada dia commita inteiro e em ordem
+    crescente, `U` fica no último dia **inteiro** — atrasado, nunca adiantado — e a próxima
+    execução recomeça de onde parou. *Contraexemplo tentado contra o "por construção", e ele
+    não abre:* os pontos de interrupção possíveis são **dois** — entre o commit do dia `d` e o
+    do dia `d+1`, que deixa `U = d`; e **dentro** do dia `d`, que não commita nada daquele dia
+    e deixa `U = d−1`. Não há um terceiro, porque **não existe commit parcial de dia** — é
+    exatamente essa a regra, e é ela que o Pronto (f) exercita.
     *Rejeitado:* deixar o handler percorrer intervalo ilimitado confiando que o
     `consumer_timeout` seja generoso — é dimensionar sem medir, num host de **um** núcleo, e
     o modo de falha é o pior que existe: laço quente que nunca converge e que não se
-    distingue de lentidão. *Rejeitado:* trocar o teto por commit-por-dia "para a reentrega
-    progredir" — ela **não** progride, pela propriedade abaixo: `eod_processado(D)` só entra
-    no último commit, então a mensagem que volta recomeça em `U_anterior + 1` com
-    `U_anterior` intacto. Commit por dia é legítimo e o perfil de recurso o favorece, mas ele
-    não substitui o teto.
+    distingue de lentidão. *Rejeitado:* **dispensar o teto** porque o commit por dia faz a
+    reentrega progredir. **A premissa agora é verdadeira** — o commit por dia é a unidade de
+    completude desta fase, decidida na propriedade abaixo —, mas ela **não conclui**, e o
+    argumento anterior deste *Rejeitado* ("a reentrega não progride, porque
+    `eod_processado(D)` só entra no último commit") caiu junto com aquela regra, além de ser
+    **circular**: rejeitava a alternativa citando a regra que a alternativa propunha mudar.
+    **Progredir não é caber**, por três razões independentes: (i) o ack só sai na completude
+    do intervalo, e `custodia.prices` é a **mesma fila** que carrega `TradeRegistered` (§7.3,
+    `ARQUITETURA.md:558`) — um batch de anos avançando um dia por reentrega mantém a fila
+    inteira parada atrás dele, e o registro de operações para junto; (ii) num host de **1
+    núcleo** e sob o teto de memória desta fase, isso é um laço quente de reentregas
+    competindo com os vizinhos (§10.14) por horas, **indistinguível de lentidão** para quem
+    olha de fora; (iii) §10.31: um laço cuja única parada é a exaustão do intervalo **não tem
+    parada por LIMITE nenhuma** — o teto é o que dá nome à condição, e o nome
+    (`intervalo_acima_do_teto`, com alerta e parking) é o que transforma "travado em silêncio"
+    em "estacionado e visível". **O commit por dia é adotado; ele apenas não substitui o
+    teto.**
 
     **A propriedade da qual tudo isto é consequência, e ela vale escrita sozinha: `U` pode
     ATRASAR, nunca ADIANTAR.** `U` atrás da realidade é **auto-curável** — o re-percurso
     custa zero INSERT pela regra "só versiona se difere do vigente". `U` **à frente** é a
     única corrupção que esta tabela permite: ele tira do alcance do worker dias que ninguém
-    materializou, e pelo FATO 2 nenhum `eod.ready` os reanuncia. **Consequência operacional,
-    e ela decide o que "na mesma transação do fim do batch" deixava em aberto:** o batch
-    **pode** ser N transações — commit por dia é legítimo —, mas a linha `eod_processado(D)`
-    entra **só no commit que fecha a ÚLTIMA unidade do batch**, jamais num intermediário.
+    materializou, e pelo FATO 2 nenhum `eod.ready` os reanuncia.
+    **A UNIDADE DE COMPLETUDE É O DIA, NÃO O BATCH — e é isto que decide o que "na mesma
+    transação do fim do batch" deixava em aberto.** O handler percorre `[início, D]` em
+    **ORDEM CRESCENTE** e, para cada dia `d`, a linha `eod_processado(d)` entra na **MESMA
+    transação** que fecha `d` **inteiro** (todos os clientes × todos os instrumentos daquele
+    dia): nunca antes dela, nunca num commit que fechou `d` pela metade. O batch é, então,
+    **N transações — uma por dia** — e não uma só.
+    **A ordem crescente é parte da regra, não detalhe de implementação:** como
+    `U = MAX(data_ref)`, materializar fora de ordem faria `U` saltar por cima de dias não
+    materializados, que é exatamente a corrupção proibida. Interrupção no meio do intervalo
+    deixa `U` no último dia **inteiro** — atrasado, nunca adiantado —, e a reentrega recomeça
+    em `U + 1`.
+    **Ack e watermark são coisas separadas, e agora sem contradição:** o ack da mensagem
+    continua saindo só na **COMPLETUDE do intervalo inteiro** (§10.31); `eod_processado` é
+    sobre o **dia**. *A formulação anterior — "a linha entra só no commit que fecha a ÚLTIMA
+    unidade do batch, jamais num intermediário" — foi **revogada**: ela tratava o batch como
+    unidade de completude, contradizia a condição (iii) abaixo em operação normal (todo dia já
+    commitado ficava `> U` enquanto o batch corria) e contradizia o próprio comando
+    administrativo, que sempre gravou por dia.*
 
     **A DIREÇÃO INVERSA, que este arquivo não cobria: `snapshots_posicao` truncada com
     `eod_processado` INTACTA.** Tudo acima é sobre perder a tabela de controle; o caso
@@ -4437,11 +5080,29 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     **(ii)** o Pronto desta fase prova a reconstrução **com os dois truncados** e registra,
     como metade negativa, que truncar **só a projeção** NÃO se auto-cura;
     **(iii)** o job de reconciliação que esta fase já tem **alerta quando
-    `MAX(snapshots_posicao.data) > U`** — estado que o recorte `[desde, U]` proíbe por
-    construção e que só aparece se alguém escreveu snapshot por fora ou mexeu nas duas tabelas
-    em ordens diferentes. *(iii) pega a direção "`U` atrasado em relação à projeção"; a
+    `MAX(snapshots_posicao.data) > U`** — e, com a **unidade de completude sendo o dia**
+    (propriedade acima), isto é um **invariante literal a qualquer instante, inclusive com um
+    batch em curso**: snapshot de `d` e `eod_processado(d)` são gravados na **mesma
+    transação**, então nenhum leitor jamais vê a projeção sem o watermark dela. É por isso que
+    o alerta pode ser **incondicional** — ele não precisa saber se há handler rodando, e **não
+    deve** precisar: exigir esse conhecimento seria criar um segundo estado de controle, que é
+    o antipadrão que esta fase já paga uma vez. O que ele pega é só o que deve pegar: snapshot
+    escrito **por fora** do handler e do comando administrativo, ou as duas tabelas mexidas em
+    ordens diferentes. *Contraexemplo tentado, e é ele que derrubava a formulação anterior:*
+    **batch em curso** — com a unidade sendo o batch, todo dia já commitado ficava `> U`
+    enquanto o intervalo corria, e o alerta disparava em operação normal; com a unidade sendo
+    o dia, o estado não existe nem por um instante, porque as duas linhas são a **mesma
+    transação**. *Segundo contraexemplo tentado:* falha no meio do intervalo — deixa `U` no
+    último dia inteiro e `MAX(snapshots.data) = U`, não `> U`. *(iii) pega a direção "`U` atrasado em relação à projeção"; a
     direção deste parágrafo — projeção vazia com `U` intacto — é **prevenida** por (i) e
     **conferida** por (ii), e é por isso que as três andam juntas em vez de uma bastar.*
+    **(iv)** a alínea **simétrica**, e ela é nova porque o comando administrativo abriu o
+    caminho que ela vigia: o job **alerta também quando `MAX(snapshots_posicao.data) < U` com
+    `U` maior que o último `D` conhecido** (o `MAX(data_ref)` anunciado por um `eod.ready`, ou
+    o `D` da mensagem estacionada). Esse é o estado "`U` adiantado", que a regra (iii) **não
+    vê** — ela vigia `>`, e aqui o sintoma é `<` —, e é o que um `materializar --ate` no futuro
+    produziria. *Sem esta alínea, a única corrupção que a tabela permite é a única que nenhum
+    detector cobre.*
 
     **Escopo do desvio, estreito de propósito:** o que está autorizado aqui é **este**
     watermark — `eod_processado`, para o recorte da valoração diária — e só ele. A ADR-5
@@ -4481,30 +5142,43 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
       **já com o movimento**, e o snapshot nasce certo de primeira. Aqui, e só aqui,
       "intervalo vazio, worker não faz nada" **está correto** — e agora com prova, não com
       uma frase pedindo para não consertar.
-    **Nenhum dia fica sem dono — e a fronteira dessa afirmação está escrita, porque ela tem
-    uma.** A dicotomia cobre os dias **até o `D` que o Hub anunciar**; ela não promete que o
-    Hub anuncie. *Contraexemplo tentado, e ele sobrevive:* se um instrumento ativo parar de
-    receber preço para sempre, o `fechado` do Hub trava (FATO 1) e **nenhum** `eod.ready` novo
-    chega — os dias depois de `U` ficam sem materializar, e não há nada nesta casa que os
-    crie, por desenho (ADR-9: materializar dia é do `eod.ready`). **O detector desse estado é
-    o alerta das 12:00 sobre `processado_em`**, e é essa a razão de ele existir; sem ele, a
-    frase "nenhum dia fica sem dono" seria cobertura afirmada sobre um caso real e não
-    coberto. O que a dicotomia garante é o que ela diz: **nenhum dia ANUNCIADO fica sem
-    dono**, que era exatamente o que o `[desde, hoje−1]` não garantia.
+    **Nenhum dia fica sem dono — e as fronteiras dessa afirmação estão escritas, porque
+    agora são DUAS.** *A versão anterior deste parágrafo dizia "ela tem uma", no singular, e o
+    teto — decidido na mesma fase — abriu a segunda sem que a frase acompanhasse.*
+    **Fronteira 1: dia que o Hub nunca anuncia.** A dicotomia cobre os dias **até o `D` que o
+    Hub anunciar**; ela não promete que o Hub anuncie. *Contraexemplo tentado, e ele
+    sobrevive:* se um instrumento ativo parar de receber preço para sempre, o `fechado` do Hub
+    trava (FATO 1) e **nenhum** `eod.ready` novo chega — os dias depois de `U` ficam sem
+    materializar, e não há nada nesta casa que os crie, por desenho (ADR-9: materializar dia é
+    do `eod.ready`). **O detector é o alerta das 12:00 sobre `processado_em`**, e é essa a
+    razão de ele existir.
+    **Fronteira 2: dia ANUNCIADO cujo intervalo estourou o TETO.** Aqui o `eod.ready(D)` foi
+    emitido, o `D` **é** anunciado, e mesmo assim ele fica sem materializar até um operador
+    rodar `materializar --desde --ate` e o drenador reentregar a mensagem — a dicotomia `≤ U`
+    / `> U` deixa de ser automática **nesse ramo**, e passa a depender de intervenção humana.
+    É o desvio (10) da lista canônica, e é ele que torna a afirmação condicional. **O detector
+    é o MESMO alerta das 12:00**, e por um motivo que vale escrever: com a mensagem
+    estacionada, `processado_em` **não avança**, então o alerta dispara pelo caminho normal —
+    não foi preciso inventar sinal novo para a fronteira nova. *Sem estas duas fronteiras
+    escritas, "nenhum dia fica sem dono" seria cobertura afirmada sobre dois casos reais e não
+    cobertos.* O que a dicotomia garante é, então: **nenhum dia ANUNCIADO E DENTRO DO TETO
+    fica sem dono**, que era exatamente o que o `[desde, hoje−1]` não garantia.
   - **O `eod.ready(D)` materializa `[U_anterior + 1, D]`, não só `D` — e isto é a segunda
     metade do fato 2. É um DESVIO da §7.3, rotulado aqui e na lista canônica do F5.** A §7.3
     escreve o ramo no **singular** (`EodPricesReady(D): para cada (cliente, instrumento) com
     posição ≠ 0: snapshot(D) = …`); esta fase põe o handler percorrendo um **intervalo**.
     *Sem o rótulo, o executor que ler a §7.3 — como o próprio prompt manda — encontra a
     contradição sem explicação e tende a seguir a `ARQUITETURA`, que é a mesma regra que
-    vale para os outros oito desvios deste arquivo.*
+    vale para os outros nove desvios deste arquivo.*
     **Por que o desvio:** como o Hub só emite quando `fechado > ultimoEmitido`, `D` **pula**
     datas (ingestor fora do ar, instrumento atrasado): os dias pulados são dias úteis com
     posição ≠ 0 e **nenhum** evento futuro os anuncia. O handler percorre o intervalo com
     **a mesma função** do worker (§7.4, "um só código"), grava `eod_processado(D)` e o ack
     sai só na COMPLETUDE do conjunto. **Com `U_anterior` nulo** — tabela vazia, perdida ou
     truncada — o intervalo começa em `MIN(data_evento)` do livro, pela definição escrita na
-    decisão do `U` acima; **não** é "só `D`". *A formulação anterior ("`U_anterior` nulo → o
+    decisão do `U` acima, **e com o TETO declarado ali** — sem o teto, "começa em
+    `MIN(data_evento)`" é o intervalo ilimitado que a mesma decisão nomeia como corrupção;
+    **não** é "só `D`". *A formulação anterior ("`U_anterior` nulo → o
     intervalo é só `D`, senão o primeiro `eod.ready` materializaria desde o começo dos
     tempos") tinha um buraco: ela também se aplicava à **perda** da tabela, e aí os dias
     entre o `U` perdido e `D` ficavam sem linha para sempre. `MIN(data_evento)` do livro não
@@ -4535,13 +5209,18 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     `[início, D]` passaram do teto, e então o handler nem começa — parking com
     `intervalo_acima_do_teto` e alerta, nunca retentativa.** *Um laço cujo limite superior é
     `MIN(data_evento)` de um livro de anos não tem parada por limite nenhuma, e foi assim que
-    "perdê-la degrada" ficou falso até o teto entrar.* **A linha
-    `eod_processado(D)` entra no commit que fecha a ÚLTIMA unidade do batch, e só na
-    completude:** gravada com o intervalo pela metade, ela faria `U` avançar sobre dias que
-    ninguém materializou — e o worker, que confia em `U`, nunca mais voltaria a eles. É a
-    propriedade "`U` atrasa, nunca adianta" na forma em que o código a vê; **o batch pode ser
-    N transações** (commit por dia é legítimo), o que não pode é a linha num commit
-    intermediário.
+    "perdê-la degrada" ficou falso até o teto entrar.* **ACK e WATERMARK são coisas separadas,
+    e é aqui que a distinção morde:** o **ack** sai só na COMPLETUDE do **intervalo inteiro**;
+    a linha **`eod_processado(d)` é por DIA**, e entra na **mesma transação que fecha o dia
+    `d` inteiro** (todos os clientes × todos os instrumentos daquele dia), com o percurso em
+    **ordem crescente**. O batch é, portanto, **N transações — uma por dia**. Gravar
+    `eod_processado(d)` com **o dia** pela metade é que faria `U` avançar sobre o que ninguém
+    materializou; gravá-lo com **o intervalo** pela metade é correto e desejável, porque deixa
+    `U` no último dia inteiro e a reentrega recomeça em `U + 1`. *A formulação anterior — "a
+    linha entra no commit que fecha a ÚLTIMA unidade do batch, jamais num intermediário" — foi
+    **revogada**: ela confundia a unidade de completude (o dia) com a unidade de ack (o
+    intervalo), contradizia a condição (iii) da reconciliação em operação normal e contradizia
+    o comando administrativo, que sempre gravou por dia.*
     *Rejeitado:* ack no início
     com processamento em background — perde o dia inteiro em silêncio se o processo cair, e
     nada distingue isso de um dia sem posição.
@@ -4600,6 +5279,77 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     *Rejeitado:* recalcular sincronamente dentro do handler — segura o ack, e num host de um
     núcleo o teto de CPU não contém nada, só corta rajada (§10.13); o consumo inteiro para
     atrás de um recálculo grande.
+  - **A DURABILIDADE DO FAN-OUT NÃO É DA FILA: É DE UMA VARREDURA DERIVADA. Sem esta decisão,
+    "com teto e enfileiramento" significa `Channel<T>` em memória, e um restart perde a
+    correção de preço PARA SEMPRE.** A conta é curta e não tem conserto depois: o
+    `PriceObserved` já foi **acked** (a decisão acima só tira o fan-out do handler; nada
+    segura o ack), o handler de `eod.ready` seguinte percorre `[U_anterior + 1, D]` e **não
+    volta** aos dias já materializados, pelo FATO 2 o Hub **não reanuncia** aquela data, e a
+    reconciliação compara livro × `posicao_corrente` — **não** snapshot × preço. A revisão
+    nunca chega ao documento que o cliente vê (P2), em silêncio, e o Fluxo 5 é metade do
+    critério de pronto do item 4 da §9. **É violação direta do P2 da `ARQUITETURA`** ("não
+    existem flags de bootstrap nem estado de controle separado dos dados; **crash em qualquer
+    ponto se resolve na próxima execução**") — e este arquivo é implacável com gauge em
+    memória no drenador e deixaria passar a mesma coisa no caminho de **correção de dado**.
+    **Decisão: `varredura de defasagem de snapshot`, DERIVADA, na disciplina do P5.** Ela
+    percorre os `(cliente, instrumento, data)` que **têm snapshot vigente** com `data ≤ U`, e
+    marca como **defasado** todo aquele em que a projeção é **mais velha que a entrada** que
+    deveria tê-la produzido — isto é, quando existe (a) linha de `historico_precos` daquele
+    instrumento **com `revisao > 0`**, `data_ref ≤ data` e **`observado_em` posterior ao
+    `calculado_em`** do snapshot vigente (cobre o gatilho 2), ou (b) movimento daquela
+    chave com `data_evento ≤ data` e **`registrado_em` posterior ao `calculado_em`** (cobre o
+    gatilho 1, inclusive a liquidação retroativa do job do F5). Nenhum estado de controle
+    novo: as três grandezas comparadas já existem e já são gravadas por quem sabe.
+    **O `revisao > 0` da alínea (a) NÃO é filtro de eficiência — é o que mantém a ADR-9
+    intacta, e sem ele esta decisão derruba o Pronto (a) desta própria fase.** A varredura
+    entrega o **gatilho 2**, e o gatilho 2 é definido sobre `revisao > 0`; uma varredura que
+    olhasse **toda** observação faria um `prices.td` **comum** chegando depois do snapshot
+    re-versionar o dia — isto é, preço individual disparando re-valoração diária, que é
+    exatamente o que a ADR-9 proíbe e o que o Pronto (a) reprova por asserção. *Este é o
+    contraexemplo que a primeira redação desta decisão não sobrevivia, e ele fica escrito.*
+    **O ESCOPO DO `recalcular` QUE ELA ENFILEIRA É O CLIENTE, NÃO A CHAVE DEFASADA — e sem
+    isso ela não conserta o caso que mais motivou a decisão.** Achado um `(cliente,
+    instrumento, data)` defasado, a varredura enfileira `recalcular(cliente, i, desde=data)`
+    **para cada instrumento `i` daquele cliente** com movimento ou posição no intervalo, e não
+    só para o instrumento defasado. *O contraexemplo que obriga a isto é o do F5:* a
+    liquidação retroativa torna defasado o snapshot de **`caixa:a_liquidar`**, que existe; mas
+    a linha que **falta criar** é a de **`caixa:BRL`**, que naquele dia **não tem snapshot** e
+    portanto **não é percorrida**. Recalcular só a chave defasada deixaria o dinheiro fora do
+    documento — exatamente o dano que a varredura existe para reparar. O custo é
+    O(instrumentos do cliente), que a §11 descreve como minúsculo. *A assinatura do §7.4
+    continua a mesma (`recalcular(cliente?, instrumento, desde)`): o que muda é quantas
+    chamadas a varredura faz, não a função.*
+    **Limite declarado, e ele é o preço de a varredura ser derivada de snapshots existentes:**
+    um dia em que o cliente **não tem nenhum** snapshot (posição zero em tudo naquele dia, por
+    I6) não é percorrido por chave nenhuma. *Rejeitado, e é a saída óbvia:* usar `movimentos`
+    como conjunto dirigente e disparar quando **não existe** snapshot para a data —
+    dispararia **para sempre** em todo dia de posição zero, que é o estado normal de qualquer
+    venda que zera, e viraria o alerta diário permanente que este arquivo condena. Esse caso
+    fica coberto pelos dois caminhos que já existem: a chamada enfileirada (caminho normal) e
+    o `eod.ready` que vier a fechar o dia, quando ele for `> U`. **O que a varredura garante é
+    a CORREÇÃO DO QUE JÁ FOI MATERIALIZADO**, e é assim que ela está escrita — não "a
+    varredura cobre tudo". **A fila em memória continua existindo e continua sendo o caminho normal —
+    ela é LATÊNCIA, não garantia**; a varredura é a garantia, e é ela que faz "crash em
+    qualquer ponto se resolve na próxima execução" ser verdade aqui.
+    **É mais um laço, e a parada é classificada (§10.31, e ele está em I15):** **COMPLETUDE**
+    = varri todos os `(cliente, instrumento, data)` com snapshot vigente e `data ≤ U`;
+    **LIMITE** = teto de chaves por ciclo → **falha**, nunca sucesso parcial — e o ciclo
+    seguinte recomeça, porque a condição é derivada do dado e não se consome.
+    **A varredura NÃO é um quarto gatilho e não fura a ADR-9:** ela chama o **mesmo**
+    `recalcular`, com o mesmo recorte `[desde, U]`, e portanto **não materializa dia que o
+    `eod.ready` não fechou** — é o meio pelo qual os gatilhos 1 e 2 chegam ao destino.
+    *Rejeitado:* **fila durável** (tabela de pendências de recálculo, ou republicação no
+    broker). Funciona, e foi a outra saída considerada; perde por dois motivos: seria a
+    **segunda** tabela de controle desta casa, dentro da fase que já paga um desvio nominal da
+    §9 por causa da primeira (`eod_processado`), e "a Custódia já tem tabelas de controle"
+    viraria precedente — exatamente o que o *escopo estreito do desvio* existe para impedir; e
+    ela registraria **intenção de recalcular**, que é estado a mais para divergir, enquanto a
+    varredura pergunta ao dado se o recálculo **aconteceu**. *Rejeitado:* pendurar a
+    verificação no job de reconciliação existente — aquele job **alerta e nunca corrige**, por
+    decisão B, e misturar um corretor dentro dele apagaria a regra que o define.
+    *Rejeitado:* rodar a varredura no mesmo ciclo do `eod.ready` — ela precisa rodar **também
+    quando nenhum evento chega**, que é a metade dos casos que ela existe para pegar (crash
+    depois do ack, com o Hub em silêncio no dia seguinte).
 
   **AVISO SOBRE A PROVA DO FLUXO 5 — leia antes de despachar.** A `ARQUITETURA` §13 item 5
   registra que o importador da TD API **descarta correção retroativa** (só INSERE, nunca
@@ -4614,9 +5364,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   e o gatilho 3 (F9 — ele cai no gatilho 1 por construção e não ganha código novo).
 
   **Configuração: nenhuma** das cinco listas muda — `eod_processado` é **tabela local**,
-  criada por migration desta fase, não configuração; e o **teto do intervalo do handler**
-  entra em `appsettings` com default no código (90 dias úteis), que é ajuste de aplicação e
-  **não segredo** — as cinco listas são de credencial e endpoint, e nenhum dos dois muda aqui. **Muda o perfil de recurso** (acima).
+  criada por migration desta fase, não configuração; e os **três ajustes numéricos desta
+  fase** entram em `appsettings` com default no código: o **teto do intervalo do handler**
+  (90 dias úteis), o **teto de chaves por ciclo da varredura de defasagem** e a **cadência**
+  dela. Os três são ajuste de aplicação e **não segredo** — as cinco listas são de credencial
+  e endpoint, e nenhum dos dois muda aqui; **o que não é configurável, nos três, é a
+  existência deles**. **Muda o perfil de recurso** (acima), e a varredura entra na medição:
+  ela é O(chaves com snapshot vigente ≤ `U`) por ciclo, que é a maior varredura periódica
+  deste roadmap.
 
   **O alerta desta fase ("dia útil sem `eod.ready` até 12:00", mais o de preço ausente) só
   existe quando chega à nuvem** — procedimento no `LEIA-ME-KIT.md`, seção "No repo do
@@ -4630,8 +5385,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   snake_case, upsert idempotente por chave natural, índices nomeados), §9 (forward-fill
   materializado é antipadrão; estado de controle duplicando dados é antipadrão — é o que esta
   fase desvia, rotulado),
-  §10.8, §10.12, §10.13, §10.14, §10.31, §10.32, §10.33; `LEIA-ME-KIT` "Dimensionar recurso sem
-  medir, e chamar o número de folgado".
+  §10.8, §10.12, §10.13, §10.14, §10.31, §10.32, §10.33, **§10.34** (o fuso do alerta das
+  12:00), **§10.35** (fila em memória não é durabilidade — é ela que sustenta a varredura de
+  defasagem); `LEIA-ME-KIT` "Dimensionar recurso sem medir, e chamar o número de folgado" e
+  "A cláusula que você ACRESCENTA não passa pela mesma revisão da que você corrige".
 
   **Prompt:**
   ```
@@ -4642,7 +5399,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
 
   ENTRA:
   - handler de eod.ready(D): UM BATCH, todos os clientes com posicao != 0, sobre o
-    intervalo [U_anterior + 1, D] (decisao 1c) e gravando eod_processado(D) ao fim.
+    intervalo [U_anterior + 1, D] (decisao 1c), percorrido em ORDEM CRESCENTE e gravando
+    eod_processado(d) PARA CADA DIA `d`, na MESMA TRANSACAO que fecha aquele dia inteiro
+    (todos os clientes x todos os instrumentos daquele dia). A UNIDADE DE COMPLETUDE E O
+    DIA, NAO O BATCH: o batch e N TRANSACOES, uma por dia. O ACK e que sai so na
+    COMPLETUDE DO INTERVALO INTEIRO — ack e watermark sao coisas separadas.
     snapshot(D) = A DOBRA DA V1 DO F3 COM CORTE EM data_evento <= D, nas TRES colunas
     (quantidade, preco_medio, custo_total), x preco(ultimo <= D). NAO COPIE as tres
     colunas de posicao_corrente: elas sao a MESMA dobra com corte D = INFINITO, ou seja,
@@ -4654,8 +5415,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     AS LINHAS caixa:BRL E caixa:a_liquidar ENTRAM NO SNAPSHOT, com preco = 1,000000 POR
     DEFINICAO (V4 do F3) — snapshots_posicao.preco e NOT NULL, entao sem isso NAO
     NASCERIA linha de caixa nenhuma: o F5 escritura o limbo D->D+1 no livro e esta fase o
-    apagaria do documento, deixando o extrato de posicao do F8 ("soma dos instrumentos +
-    caixa = patrimonio diario", 7.5) sem a parcela de caixa.
+    apagaria do documento, deixando o extrato de posicao do F8 sem a parcela de caixa. NAO
+    USE a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5) como criterio:
+    e ela que a PENDENCIA BLOQUEANTE do caixa:BRL (F3, V2) deixa em aberto, e o F8 Pronto (g)
+    ja deixou de afirma-la. O que esta fase precisa e so que A LINHA DE CAIXA EXISTA no
+    snapshot.
   - snapshots_posicao versionado: marca vigente=false e INSERE a nova com calculado_em.
     Versiona SO SE o valor DIFERE do vigente.
   - worker recalcular(cliente?, instrumento, desde) da 7.4: UM SO CODIGO para os tres
@@ -4671,9 +5435,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     reconstrucao (corte D = infinito) usam, NUNCA uma terceira implementacao: duas
     dobras divergem na primeira correcao aplicada em uma so, e a reconciliacao passaria a
     alertar sobre a propria divergencia. E UMA FUNCAO COM UM PARAMETRO DE CORTE, nao duas
-    funcoes. E ELE ALERTA TAMBEM QUANDO MAX(snapshots_posicao.data) > U — estado que o
-    recorte [desde, U] proibe por construcao e que aparece quando alguem mexeu na projecao e
-    no watermark em ordens diferentes (decisao 1b, direcao inversa). A comparacao e deterministica
+    funcoes. E ELE ALERTA NAS DUAS DIRECOES DE U CONTRA A PROJECAO, E SAO DUAS ALINEAS
+    SEPARADAS PORQUE PEGAM COISAS OPOSTAS:
+      (iii) MAX(snapshots_posicao.data) > U — snapshot escrito POR FORA do handler e do
+            comando, ou as duas tabelas mexidas em ordens diferentes. Com a unidade de
+            completude sendo o DIA, isto e invariante literal A QUALQUER INSTANTE, INCLUSIVE
+            COM BATCH EM CURSO (snapshot de d e eod_processado(d) sao a MESMA transacao),
+            entao o alerta e INCONDICIONAL — ele NAO precisa saber se ha handler rodando, e
+            NAO DEVE precisar: exigir isso seria criar um segundo estado de controle.
+      (iv)  MAX(snapshots_posicao.data) < U COM U MAIOR QUE O ULTIMO `D` CONHECIDO (o maior
+            entre MAX(data_ref) anunciado por um eod.ready e o D da mensagem estacionada).
+            E o estado "U ADIANTADO", que a alinea (iii) NAO VE — ela vigia `>`, e aqui o
+            sintoma e `<`. E o unico detector da unica corrupcao que esta tabela permite, e
+            e o que um `materializar --ate` no futuro produziria. A comparacao e deterministica
     porque I4 NAO tem filtro por relogio (o corte infinito) — e a decisao da liquidacao por
     job, no F5, que preserva isso.
   - comando administrativo DENTRO DO CONTAINER, `materializar --desde --ate`, SEM ENDPOINT
@@ -4681,6 +5455,26 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     com eod_processado vazia", e e ele que faz o eod.ready estacionado por
     intervalo_acima_do_teto voltar a caber no teto (decisao 1b). Mesma familia do comando de
     reconstrucao de posicao_corrente do F4.
+    O `--ate` TEM GUARDA, E ELA NAO E OPCIONAL: ESTE COMANDO E O UNICO ESCRITOR CAPAZ DE
+    ADIANTAR `U`. `materializar --desde 2026-01-01 --ate 2026-12-31` (uso plausivel — o
+    comando existe para intervalo grande) gravaria eod_processado ate dezembro, e a partir
+    dai (1) o handler calcula [U_anterior + 1, D] com U_anterior > D, isto e, intervalo
+    VAZIO OU INVERTIDO: o batch "fecha" por vacuidade e nenhum eod.ready materializa mais
+    nada, PARA SEMPRE; (2) o worker percorre [desde, U] ate uma data FUTURA, materializando
+    dias que nenhum eod.ready fechou — que e o que o recorte existe para impedir (ADR-9).
+    REGRA: RECUSE `--ate` maior que o ULTIMO `D` ANUNCIADO (o maior entre MAX(data_ref) de
+    eod_processado e o D da mensagem estacionada com intervalo_acima_do_teto, se houver),
+    com FALHA ALTA, mensagem dizendo qual e o limite e por que, e NADA GRAVADO. O detector
+    complementar e a alinea (iv) da reconciliacao, acima — validacao de argumento nao cobre
+    UPDATE manual nem binario antigo.
+    PARADA CLASSIFICADA (PADROES 10.31), porque isto e um laco e ele esta em I15:
+    COMPLETUDE = o intervalo inteiro pedido materializado, dia a dia, em ORDEM CRESCENTE;
+    LIMITE = interrupcao do operador, falha no meio, ou recusa do --ate -> FALHA COM CODIGO
+    DE SAIDA NAO-ZERO, nunca "materializei o que deu". ISTO NAO ACRESCENTA VALOR A LISTA DE
+    x-custodia-motivo: aquela lista e de MENSAGEM ESTACIONADA no broker, e este comando nao
+    estaciona mensagem nenhuma — o desfecho dele e codigo de saida e log. Interromper no
+    meio e SEGURO por construcao: como cada dia commita inteiro e em ordem crescente, U fica
+    no ultimo dia INTEIRO e a proxima execucao recomeca de onde parou.
   - alerta de "dia util sem eod.ready ate 12:00" (ARQUITETURA 12), lido da coluna
     eod_processado.processado_em — NUNCA de data_ref: data_ref e propriedade do DADO DA
     FONTE e nao responde a pergunta da secao 12 ("chegou evento hoje?"), e ela erra nos DOIS
@@ -4688,8 +5482,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     nunca e hoje": isso e absoluto falso, e o contraexemplo (ii) da decisao 1b — uma fonte
     futura que publique preco do PROPRIO dia — o derruba. E NUNCA de um gauge em memoria, que zeraria no deploy (o mesmo defeito
     que o F4 rejeita no drenador).
-  - drenagem do custodia.parked do motivo `tipo_nao_tratado_eod`, pelo drenador e pela
-    mecanica do F4 (parada classificada, sem inspecionar routing key).
+  - drenagem do custodia.parked de DOIS motivos, pelo drenador e pela mecanica do F4
+    (parada classificada, sem inspecionar routing key): `tipo_nao_tratado_eod` (o backlog
+    acumulado desde o F2) e `intervalo_acima_do_teto` (o motivo que ESTA fase cria, na
+    decisao 1b — a passagem dele e metade do Pronto (f2), e sem ela "parar" e "perder" ficam
+    indistinguiveis). As DUAS passagens tem que devolver COMPLETUDE com n_motivo >= 1.
 
   DECISOES JA TOMADAS:
   1. ADR-9, COM O QUALIFICADOR INTEIRO: eod.ready e o UNICO gatilho da VALORACAO DIARIA
@@ -4722,6 +5519,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
          NAO BLOQUEIA a emissao (IngerirPrecosTdCommandHandler.cs:339-345). Logo
          eod.ready(D) PODE CHEGAR com instrumento ativo sem preco algum — e o caso do
          Pronto (k): SINAL, nunca preco fabricado.
+         E HA UM TERCEIRO QUALIFICADOR, sobre o CONJUNTO de que o MIN e tomado: o WHERE/JOIN
+         daquele SQL (linhas 42 e 44) restringe por instrumento_fontes.fonte = @fonte E por
+         ativo_ate >= @hoje — um parametro de RELOGIO. Isso NAO torna D uma data de relogio
+         (a assercao principal sobrevive), mas o conjunto do MIN depende de `hoje` e da
+         fonte, e um instrumento ativo SEM LINHA em instrumento_fontes para aquela fonte some
+         do MIN E do SqlDataEodAtivosSemPreco — nem entra na conta nem gera o warning. NAO
+         ESCREVA "sao dois qualificadores": sao tres, e a consequencia pratica e a mesma do
+         segundo (o Pronto k).
        FATO 2: eod.ready(D) E EMITIDO UMA VEZ POR DATA, PARA SEMPRE.
          hub-precos/src/Hub.Application/Ingestao/IngerirPrecosTdCommandHandler.cs linha
          337 so emite se fechado > eod.UltimoEmitido; e a migration
@@ -4774,16 +5579,23 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      verdade em todo dia util normal e o alerta dispararia TODO DIA, PARA SEMPRE. E se um
      dia uma fonte publicar preco do PROPRIO dia, data_ref viraria hoje e o alerta NUNCA
      dispararia, mesmo com o Hub mudo desde ontem — o mesmo campo errando nos dois sentidos.
-     A REGRA E: MAX(processado_em) < hoje 12:00 num dia util.
+     A REGRA E: MAX(processado_em) < hoje 12:00 num dia util — E "hoje", "dia util" e
+     "12:00" SAO NO FUSO America/Sao_Paulo, decidido no F3 (item 5e) e herdado aqui. A REGRA
+     DO ALERTA CARREGA O OFFSET EXPLICITAMENTE, porque o avaliador do Grafana Cloud roda em
+     UTC: sem isso o alerta dispara (ou deixa de disparar) por tres horas todo dia, e o sinal
+     erra na janela em que o Hub publica (06:00 BRT).
      ESTA TABELA E UM DESVIO DA ADR-5 E DO ANTIPADRAO NOMINAL DA SECAO 9 DO PADROES
      ("estado de controle duplicando dados — derive dos dados, padrao
      watermark/reconciliacao") — ROTULADO, e esta na lista canonica de desvios (no F5). E O
      UNICO DESVIO DESTE ROADMAP QUE VIOLA UM ANTIPADRAO NOMINAL, entao ele carrega a
      clausula inteira: JA APROVADO PELO ADVISOR com as quatro condicoes escritas nesta
-     decisao (U atrasa e nunca adianta, com a linha so no commit que fecha a ULTIMA unidade
-     do batch; a regra do par snapshots_posicao <-> eod_processado; a DDL com PRIMARY KEY
-     (data_ref); e o escopo estreito), e VOCE GRAVA NA MEMORIA ao fechar a fase — igual ao
-     cursor do F8.
+     decisao (U atrasa e nunca adianta, com A UNIDADE DE COMPLETUDE SENDO O DIA: a linha
+     eod_processado(d) entra na MESMA TRANSACAO que fecha o dia `d` inteiro, percorrido em
+     ordem crescente — a formulacao anterior, "so no commit que fecha a ULTIMA unidade do
+     batch", FOI REVOGADA pelo advisor porque tratava o batch como unidade de completude e
+     contradizia a alinea (iii) da reconciliacao em operacao normal; a regra do par
+     snapshots_posicao <-> eod_processado; a DDL com PRIMARY KEY (data_ref); e o escopo
+     estreito), e VOCE GRAVA NA MEMORIA ao fechar a fase — igual ao cursor do F8.
      O ARGUMENTO QUE SUSTENTA O DESVIO E O I6 (os outros dois que estavam escritos aqui nao
      sustentavam — veja os NAO USE abaixo): so existe linha de snapshot em
      dia util com posicao != 0, entao um dia materializado em que NENHUM cliente tinha
@@ -4853,15 +5665,35 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      para intervalo grande) e GRAVA eod_processado PARA CADA DIA QUE MATERIALIZA, pela mesma
      regra do handler. Rodado o comando, U avanca, e a passagem do drenador do
      motivo intervalo_acima_do_teto reentrega o eod.ready(D) estacionado, que agora cabe no
-     teto. NAO troque o teto por commit-por-dia "para a reentrega progredir": ela NAO
-     progride, porque eod_processado(D) so entra no ULTIMO commit e a mensagem que volta
-     recomeca em U_anterior + 1 com U_anterior intacto.
+     COMMIT POR DIA E ADOTADO (e a unidade de completude desta fase), MAS ELE NAO
+     SUBSTITUI O TETO — e o argumento antigo deste rejeitado ("a reentrega nao progride
+     porque eod_processado(D) so entra no ultimo commit") CAIU JUNTO COM AQUELA REGRA, alem
+     de ser CIRCULAR (rejeitava a alternativa citando a regra que a alternativa propunha
+     mudar). PROGREDIR NAO E CABER, por tres razoes independentes: (i) o ack so sai na
+     completude do intervalo, e custodia.prices e a MESMA FILA que carrega trades.registered
+     (7.3) — um batch de anos avancando um dia por reentrega mantem a fila inteira parada
+     atras dele, e o registro de operacoes para junto; (ii) num host de 1 NUCLEO e sob o teto
+     de memoria desta fase, isso e um laco quente de reentregas competindo com os vizinhos
+     (PADROES 10.14) por horas, INDISTINGUIVEL DE LENTIDAO para quem olha de fora;
+     (iii) PADROES 10.31: um laco cuja unica parada e a exaustao do intervalo NAO TEM PARADA
+     POR LIMITE NENHUMA — o teto e o que da NOME a condicao, e o nome
+     (intervalo_acima_do_teto, com alerta e parking) e o que transforma "travado em silencio"
+     em "estacionado e visivel".
      A PROPRIEDADE DA QUAL TUDO ISSO E CONSEQUENCIA: U PODE ATRASAR, NUNCA ADIANTAR. U
      atras e AUTO-CURAVEL (re-percurso custa zero INSERT pela regra "so versiona se
      difere"); U A FRENTE e a unica corrupcao desta tabela — tira do alcance do worker dias
-     que ninguem materializou. O BATCH PODE SER N TRANSACOES (commit por dia e legitimo e o
-     perfil de recurso o favorece); o que NAO PODE e a linha eod_processado(D) num commit
-     INTERMEDIARIO: ela entra SO no commit que fecha a ULTIMA unidade do batch.
+     que ninguem materializou (e o UNICO escritor capaz de produzi-la e o comando
+     `materializar`, por isso a guarda do --ate).
+     A UNIDADE DE COMPLETUDE E O DIA, NAO O BATCH: percorra [inicio, D] em ORDEM CRESCENTE e
+     grave eod_processado(d) na MESMA TRANSACAO que fecha o dia `d` INTEIRO (todos os
+     clientes x todos os instrumentos daquele dia) — nunca antes dela, nunca num commit que
+     fechou `d` pela metade. O batch e N TRANSACOES, UMA POR DIA. A ORDEM CRESCENTE E PARTE
+     DA REGRA: como U = MAX(data_ref), materializar fora de ordem faria U SALTAR por cima de
+     dias nao materializados, que e a corrupcao proibida. Interrupcao no meio do intervalo
+     deixa U no ultimo dia INTEIRO — atrasado, nunca adiantado — e a reentrega recomeca em
+     U + 1. ACK E WATERMARK SAO COISAS SEPARADAS: o ack sai so na COMPLETUDE DO INTERVALO
+     INTEIRO; eod_processado e sobre o DIA. NAO ESCREVA "a linha entra so no commit que
+     fecha a ultima unidade do batch": essa regra FOI REVOGADA.
      A DIRECAO INVERSA, E ELA NAO ESTAVA COBERTA: snapshots_posicao TRUNCADA com
      eod_processado INTACTA. U continua em D, o worker nunca volta aqueles dias e pelo FATO
      2 nenhum eod.ready novo os anuncia = BURACO PERMANENTE E SILENCIOSO — era o que o
@@ -4872,8 +5704,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
            reparo, nao na cabeca de quem executa;
        (ii) o Pronto prova a reconstrucao COM OS DOIS TRUNCADOS e registra, como metade
            negativa, que truncar SO A PROJECAO nao se auto-cura;
-       (iii) o job de reconciliacao ALERTA quando MAX(snapshots_posicao.data) > U — estado
-           que o recorte [desde, U] proibe por construcao.
+       (iii) o job de reconciliacao ALERTA quando MAX(snapshots_posicao.data) > U, e com a
+           unidade de completude sendo o DIA isso e INVARIANTE LITERAL A QUALQUER INSTANTE,
+           inclusive com batch em curso (snapshot de d e eod_processado(d) sao a MESMA
+           transacao) — por isso o alerta e INCONDICIONAL;
+       (iv) e a alinea SIMETRICA: ALERTA quando MAX(snapshots_posicao.data) < U COM U MAIOR
+           QUE O ULTIMO `D` CONHECIDO. E o estado "U adiantado", que a (iii) nao ve, e o
+           unico detector da unica corrupcao que esta tabela permite.
      ESCOPO DO DESVIO, ESTREITO DE PROPOSITO: o que esta autorizado e ESTE watermark
      (eod_processado, para o recorte da valoracao diaria) e so ele. A ADR-5 continua
      valendo para qualquer outro watermark da Custodia — o bootstrap/backfill de preco do
@@ -4927,11 +5764,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      intervalo inteiro materializado, ack; LIMITE = os dias uteis de [inicio, D] passaram
      do teto da decisao 1b, e ai o handler NEM COMECA (parking com intervalo_acima_do_teto
      + alerta, nunca retentativa). Confirmar o evento com o lote processado pela metade
-     e o mesmo defeito com outra roupa — e aqui ele e pior, porque eod_processado(D)
-     gravado com o intervalo pela metade faria U avancar sobre dias que ninguem
-     materializou: grave eod_processado(D) SO NA COMPLETUDE, NO COMMIT QUE FECHA A ULTIMA
-     UNIDADE DO BATCH. O batch PODE ser N transacoes (commit por dia e legitimo); o que nao
-     pode e a linha num commit intermediario.
+     e o mesmo defeito com outra roupa. MAS A UNIDADE DO WATERMARK E OUTRA: grave
+     eod_processado(d) POR DIA, na MESMA TRANSACAO que fecha aquele dia INTEIRO, com o
+     intervalo percorrido em ORDEM CRESCENTE. Gravar com O DIA pela metade e que faria U
+     avancar sobre o que ninguem materializou; gravar com O INTERVALO pela metade e CORRETO
+     e desejavel, porque deixa U no ultimo dia inteiro e a reentrega recomeca em U + 1. O
+     ACK e que sai so na completude do INTERVALO. NAO CONFUNDA AS DUAS UNIDADES: foi essa
+     confusao que fez a alinea (iii) da reconciliacao alertar em operacao normal.
   3. Dia sem preco <= D para instrumento posicionado: NAO invente valor e NAO repita o
      preco anterior como observacao (forward-fill materializado e antipadrao nominal da
      secao 9 do PADROES). Falta de preco em dia util com posicao e SINAL: metrica +
@@ -4960,6 +5799,52 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   6. O fan-out do gatilho 2 roda FORA do handler do evento, com teto e enfileiramento —
      recalcular sincronamente seguraria o ack, e num host de UM nucleo o teto de CPU nao
      contem nada, so corta rajada (PADROES 10.13).
+  6b. A DURABILIDADE DO FAN-OUT NAO E DA FILA: E DE UMA VARREDURA DERIVADA. NAO LEIA "com
+     teto e enfileiramento" como "Channel<T> em memoria e pronto". O PriceObserved JA FOI
+     ACKED (a decisao 6 so tira o fan-out do handler; nada segura o ack); o handler de
+     eod.ready seguinte percorre [U_anterior + 1, D] e NAO VOLTA aos dias ja materializados;
+     pelo FATO 2 o Hub NAO REANUNCIA aquela data; e a reconciliacao compara livro x
+     posicao_corrente, NAO snapshot x preco. Um restart entre o ack e o recalculo perde a
+     correcao de preco PARA SEMPRE, em silencio, no documento que o cliente ve (P2) — e o
+     Fluxo 5 e metade do criterio de pronto do item 4 da secao 9. E VIOLACAO DIRETA DO P2 DA
+     ARQUITETURA ("crash em qualquer ponto se resolve na proxima execucao").
+     IMPLEMENTE A `varredura de defasagem de snapshot`, DERIVADA (disciplina do P5, sem
+     estado de controle novo): ela percorre os (cliente, instrumento, data) que TEM SNAPSHOT
+     VIGENTE com data <= U e marca como DEFASADO todo aquele em que existe
+       (a) linha de historico_precos daquele instrumento COM revisao > 0, data_ref <= data
+           e `observado_em` POSTERIOR ao `calculado_em` do snapshot vigente (gatilho 2). O
+           `revisao > 0` NAO E FILTRO DE EFICIENCIA: e o que mantem a ADR-9 intacta. Uma
+           varredura sobre TODA observacao faria um prices.td COMUM chegando depois do
+           snapshot re-versionar o dia — preco individual disparando re-valoracao diaria,
+           que a ADR-9 proibe e que o Pronto (a) desta fase REPROVA por assercao; ou
+       (b) movimento daquela chave com data_evento <= data e `registrado_em` POSTERIOR ao
+           `calculado_em` (gatilho 1, inclusive a liquidacao retroativa do job do F5).
+     O ESCOPO DO recalcular QUE ELA ENFILEIRA E O CLIENTE, NAO A CHAVE DEFASADA: achado um
+     (cliente, instrumento, data) defasado, enfileire recalcular(cliente, i, desde=data) PARA
+     CADA instrumento `i` daquele cliente com movimento ou posicao no intervalo. SEM ISSO ela
+     nao conserta o caso que mais a motivou — na liquidacao retroativa do F5 quem fica
+     defasado e o snapshot de caixa:a_liquidar (que EXISTE), e a linha que FALTA CRIAR e a de
+     caixa:BRL, que naquele dia NAO TEM SNAPSHOT e portanto NAO E PERCORRIDA. O custo e
+     O(instrumentos do cliente), minusculo (secao 11). A assinatura da 7.4 nao muda; muda
+     quantas chamadas voce faz.
+     A FILA EM MEMORIA CONTINUA EXISTINDO e continua sendo o caminho normal — ela e LATENCIA,
+     NAO GARANTIA. A varredura e a garantia.
+     PARADA CLASSIFICADA (10.31, e ela esta em I15): COMPLETUDE = varri todos os (cliente,
+     instrumento, data) com snapshot vigente e data <= U; LIMITE = teto de chaves por ciclo
+     -> FALHA, nunca sucesso parcial (o ciclo seguinte recomeca, porque a condicao e derivada
+     do dado e nao se consome).
+     ELA NAO E UM QUARTO GATILHO E NAO FURA A ADR-9: chama o MESMO recalcular, com o mesmo
+     recorte [desde, U], entao NAO materializa dia que o eod.ready nao fechou.
+     LIMITE DECLARADO: um dia em que o cliente nao tem NENHUM snapshot (posicao zero em tudo,
+     por I6) nao e percorrido. NAO "conserte" isso usando `movimentos` como conjunto
+     dirigente e disparando quando NAO EXISTE snapshot para a data: isso dispararia PARA
+     SEMPRE em todo dia de posicao zero — o estado normal de qualquer venda que zera — e
+     viraria o alerta diario permanente que este arquivo condena. Esse caso fica com os dois
+     caminhos que ja existem (a chamada enfileirada e o eod.ready que vier a fechar o dia).
+     NAO PENDURE a varredura no job de reconciliacao: aquele job ALERTA E NUNCA CORRIGE
+     (decisao 4), e misturar um corretor dentro dele apaga a regra que o define. E NAO a rode
+     no mesmo ciclo do eod.ready: ela precisa rodar TAMBEM quando nenhum evento chega, que e
+     metade dos casos que ela existe para pegar.
 
   AVISO SOBRE A PROVA DO FLUXO 5, e ele muda o que voce tem que entregar: a ARQUITETURA
   13.5 registra que a TD API DESCARTA correcao retroativa (so INSERE). Logo revisao > 0
@@ -5021,7 +5906,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   controle positivo**: injetar `revisao: 1` e exigir que os snapshots do intervalo
   **ganhem versão nova**, sem que nenhuma linha de dia `> U` seja materializada por isso.
   Escrito assim, o Pronto reprova as duas regressões opostas: valorar por ping individual e
-  não implementar o gatilho 2;
+  não implementar o gatilho 2. **E há uma terceira regressão a reprovar, que só existe desde
+  que a varredura de defasagem entrou:** os `PriceObserved` com `revisao = 0` do fixture
+  chegam **depois** de o dia já ter snapshot, e a varredura roda entre as duas asserções — se
+  ela olhasse toda observação em vez de só `revisao > 0`, ela versionaria os snapshots e a
+  primeira metade deste critério cairia. O teste **roda a varredura de propósito** entre a
+  publicação e a asserção, e é isso que prova que o recorte dela por `revisao > 0` está
+  implementado e não só escrito;
   (b) dia com posição zerada e dia sem pregão **não** geram linha;
   (c) reentrega do mesmo `eod.ready(D)` **não** cria segunda versão quando nada mudou — a
   reentrega é a **do broker** (nack, ou reinício antes do ack), porque pelo fato 2 o Hub
@@ -5045,6 +5936,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (f) o batch interrompido no meio **não** confirma o evento **e não grava
   `eod_processado(D)`**, provado por injeção de falha — as duas metades, porque `U` avançado
   sobre um batch pela metade tira os dias faltantes do alcance do worker **para sempre**.
+  **E, com a unidade de completude sendo o DIA, esta alínea diz mais duas coisas e vira o
+  CONTROLE POSITIVO da alínea (iii) da reconciliação:** (i) os dias **anteriores** ao ponto
+  de falha, cada um fechado inteiro, **têm** sua linha em `eod_processado` — é isso que faz a
+  reentrega recomeçar em `U + 1` em vez de refazer o intervalo todo, e uma asserção que
+  exigisse `eod_processado` **vazia** depois da falha reprovaria a implementação correta;
+  (ii) depois da falha, **`MAX(snapshots_posicao.data) ≤ U`** — nenhum snapshot ficou visível
+  sem o watermark dele, porque os dois são a mesma transação. *A versão anterior desta alínea
+  produzia, com commit por dia, um `MAX(snapshots.data) > U` **durável** até o próximo
+  `eod.ready`, isto é, o próprio alerta da (iii) disparando por operação normal. Escrita
+  assim, ela prova a (iii) em vez de contradizê-la.*
   **E a PERDA TOTAL da tabela, no mesmo critério:** com `eod_processado` truncada depois de
   um `U = D−4`, o `eod.ready(D)` seguinte materializa a partir de `MIN(data_evento)` do livro
   e **os dias ÚTEIS de `D−3..D−1` em que o cliente do fixture tem posição ≠ 0 têm linha** ao
@@ -5079,9 +5980,26 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   fora do escopo;
   (h) a versão antiga continua legível e "por que o extrato de julho mudou?" é respondível
   pelos dados (`calculado_em`, `registrado_em`, `revisao`/`observadoEm`);
-  (i) a reconciliação, alimentada com uma divergência plantada **em cada uma das três
-  colunas** (quantidade, `preco_medio`, `custo_total`), **alerta e não corrige** — plantar
-  só na quantidade deixa as outras duas sem prova;
+  (i) **o job de reconciliação tem CINCO asserções, não três, e o inventário é recontado
+  aqui e não copiado:** as **três comparações de coluna** (quantidade, `preco_medio`,
+  `custo_total`) — cada uma com uma divergência plantada **na própria coluna**, porque
+  plantar só na quantidade deixa as outras duas sem prova — **mais as duas alíneas de estado
+  do watermark**: (iii) `MAX(snapshots_posicao.data) > U` alertando, provado escrevendo um
+  snapshot **por fora** do handler e do comando; e (iv) `MAX(snapshots_posicao.data) < U` com
+  `U` além do último `D` conhecido alertando, provado adiantando `eod_processado` à mão. Nas
+  cinco, **alerta e não corrige** — a asserção afirma também que a linha divergente
+  **continua divergente** depois do job. *Sem (iii) e (iv) escritas como asserção, elas são
+  prosa: o job compila, o alerta nunca existe, e a única corrupção que a tabela permite fica
+  sem detector.* **E o CONTROLE NEGATIVO das duas: em operação normal — batch corrente
+  inclusive — nenhuma das duas alíneas dispara**, que é o que separa um detector de um alerta
+  diário permanente;
+  (i2) **os DOIS índices de `eod_processado` conferidos contra o banco**, não contra a
+  migration: `PRIMARY KEY (data_ref)` e `ix_eod_processado_processado_em`, lidos de
+  `pg_indexes` com o nome no padrão `ix_tabela_colunas`. É a §10.22 aplicada — objeto de
+  schema cuja ausência degrada **em silêncio** (o alerta das 12:00 vira seq scan, e a chave
+  ausente deixa duas reentregas concorrentes gravarem duas linhas) vai para a sonda, não para
+  a prosa. A varredura de `pg_indexes` do F3 já reprova índice fora da convenção; o que falta
+  e entra aqui é a asserção de **presença** destes dois;
   (j) **`caixa:*` não dispara o alerta de preço ausente**, provado num dia útil com posição
   de caixa e sem nenhum `PriceObserved` de caixa (é o falso positivo diário que a V4
   impede), **com controle positivo**: um instrumento **do Hub** posicionado e sem preço ≤ D
@@ -5108,11 +6026,39 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   é onde a cópia sem corte o quebraria;
   (m) **o recorte `[desde, U]` nos dois ramos da dicotomia, e o dia pulado:** um
   `eod.ready(D)` com **salto de datas** (`U_anterior = D−4`, injetado) materializando **os
-  dias pulados também**, com `eod_processado(D)` gravado uma vez; um movimento retroativo
+  dias pulados também**, com **uma linha de `eod_processado` por DIA do intervalo — cinco, no
+  caso — e a de `D` exatamente uma**, e com as datas em ordem crescente. *A versão anterior
+  desta asserção dizia "`eod_processado(D)` gravado uma vez", que era verdade e insuficiente:
+  ela ficava verde tanto com a granularidade por dia quanto com a por batch, que são as duas
+  regras que este arquivo já sustentou e que dão respostas diferentes para o alerta da (iii);* um movimento retroativo
   com `data_evento ≤ U` **versionando** o dia; e o mesmo movimento com `data_evento > U`
   **não criando nada agora** e aparecendo **correto de primeira** no `eod.ready` que vier a
   fechar aquele dia — que é o ramo em que o intervalo vazio está certo. Sem os dois ramos,
   "o worker não fez nada" é indistinguível de "o worker deixou um buraco permanente";
+  (n) **A VARREDURA DE DEFASAGEM, provada por CRASH e não pelo caminho feliz — é ela que
+  torna o gatilho 2 durável, e sem esta alínea a decisão fica escrita e não entregue.** Nos
+  **dois** caminhos, e os dois são injeção: (n1) um `prices.td` com `revisao: 1` sobre uma
+  data já materializada é **acked** e o processo é **derrubado antes do recálculo** — os
+  snapshots do intervalo ficam com a versão velha (metade negativa, que sozinha é verdadeira
+  na implementação certa e na errada) e, **na execução seguinte, sem que nada seja
+  reenfileirado**, a varredura os reversiona (metade positiva, e é ela que prova a
+  recuperação); (n2) o mesmo com o job de liquidação do F5 — um `a_liquidar` vencido há três
+  dias é liquidado, o processo cai antes do recálculo, e a execução seguinte tem de produzir
+  **as duas** linhas do dia: `caixa:a_liquidar` **zerada** e **`caixa:BRL` CRIADA**. *(n2) é o
+  teste que reprova a implementação que recalcula só a chave defasada: `caixa:BRL` não tem
+  snapshot naquele dia, não é percorrida, e só aparece porque o `recalcular` enfileirado pela
+  varredura tem escopo de **cliente**.* Mais o **controle negativo, sem o qual a varredura
+  vira alerta permanente**: rodada duas vezes sobre um estado já convergido, a segunda
+  passagem faz **zero INSERT** e enfileira **zero** recálculos;
+  (o) **A GUARDA DO `--ate`, nas duas direções.** `materializar --desde X --ate Y` com `Y`
+  **maior** que o último `D` anunciado **falha com código de saída não-zero, não grava
+  NENHUMA linha** de `eod_processado` e diz na mensagem qual é o limite — **com controle
+  positivo**: o mesmo comando com `Y` igual ao último `D` anunciado roda e materializa. E o
+  **detector**, provado por fora do comando (porque validação de argumento não cobre `UPDATE`
+  manual nem binário antigo): adiantando `eod_processado` à mão para além do último `D`
+  conhecido, a alínea (iv) da reconciliação **alerta**. *Sem esta alínea, o único caminho do
+  sistema capaz de violar "`U` atrasa, nunca adianta" entra sem validação e sem detector — e
+  o efeito não é um erro visível, é o handler passando a calcular intervalo vazio para sempre;*
   Mais: `docker stats` durante o recálculo **e durante um `eod.ready` com salto de datas**,
   com o efeito nos vizinhos conferido.
 
@@ -5129,7 +6075,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   de movimentos que ele acabou de ler. A §7.5 escreve `(data_evento, desempate
   registrado_em)` e **não** define desempate para `registrado_em` empatado; o `id` fecha essa
   ordem sem trocar nenhuma das duas chaves que ela prescreve. **Posição:** leitura de `snapshots_posicao WHERE vigente`,
-  agregável por dia (soma dos instrumentos + caixa = patrimônio diário). Erro em
+  agregável por dia. *A §7.5 escreve essa agregação como "soma dos instrumentos + caixa =
+  patrimônio diário"; **enquanto a PENDÊNCIA BLOQUEANTE do `caixa:BRL` (F3, V2) estiver
+  aberta, essa igualdade NÃO é afirmada por esta fase** — o campo de total chama-se
+  `somaDosValores` e o Pronto (g) diz exatamente o que ele afirma.* Erro em
   problem+json com `code`, leitura via **Dapper** com SQL explícito (leitura via EF é
   defeito, não estilo — §3), portas devolvendo `Result<T>`, `X-Api-Key` exigida,
   GET+HEAD+OPTIONS com 405 e `Allow`, ETag/304.
@@ -5144,6 +6093,62 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
 
   **Decisões desta fase:**
 
+  - **O CONTRATO DOS DOIS ENDPOINTS, decidido aqui — porque esta é a única superfície HTTP
+    do serviço e o resto do arquivo fecha DDL coluna a coluna e cabeçalho valor a valor.**
+    *A §7.5 descreve o que cada extrato lê e a ordem; ela não dá rota, parâmetro nem forma de
+    resposta. Deixar isso para o executor é deixá-lo inventar o contrato de uma API pública
+    dentro da fase que a entrega, e o Pronto (g) já pressupunha um parâmetro de dia que
+    ninguém tinha definido.*
+
+    ```
+    GET /v1/extratos/movimentacao
+        clienteId      OBRIGATÓRIO   (ausente -> 400 com code, nunca "todos os clientes")
+        de, ate        opcionais     date, sobre data_evento, intervalo FECHADO nos dois lados
+        instrumentoId  opcional      filtro exato, id do Hub cru (sem normalização)
+        cursor         opcional      OPACO, nunca construído pelo cliente
+        pageSize       opcional      default 100, clamp em 500
+
+    GET /v1/extratos/posicao
+        clienteId      OBRIGATÓRIO   (ausente -> 400 com code)
+        data           opcional      date; default = MAX(data) dos snapshots VIGENTES
+                                     daquele cliente
+        cursor         opcional      OPACO, sobre instrumento_id
+        pageSize       opcional      default 100, clamp em 500
+    ```
+
+    **Toda `date` é no fuso `America/Sao_Paulo`** (decisão do F3, item 5e).
+    **O default de `data` na posição é `MAX(data)` do próprio cliente, NUNCA "hoje" — e isto
+    é consequência direta do FATO 1 do F7:** o dia que o `eod.ready` fecha **não é uma data de
+    relógio** (`D` é tipicamente `hoje−1`, e mais antigo em segunda, feriado ou instrumento
+    atrasado), então um default em "hoje" devolveria **lista vazia em todo dia útil normal** —
+    o mesmo erro que fez o alerta das 12:00 ser medido em `processado_em` e não em `data_ref`.
+    **`data` sem snapshot devolve 200 com lista vazia e a `data` ecoada, nunca 404:** ausência
+    de posição não é ausência de recurso, e 404 aqui seria indistinguível de cliente
+    inexistente — que esta fase, por não ter catálogo de clientes, não sabe responder.
+    **`de > ate` é 400 com `code`**, não lista vazia.
+    **Valores monetários e quantidades saem como STRING DECIMAL**, nunca float JSON — é a
+    mesma convenção que a §5.1 impõe na entrada, e trocá-la na saída reintroduziria na borda
+    de leitura o erro de precisão que o livro evita.
+    **Forma da resposta**, com os nomes vindo das colunas e sem renomear nada:
+    movimentação devolve `refExterna`, `tipo`, `instrumentoId`, `qtdDelta`,
+    `valorFinanceiro`, `dataEvento`, `registradoEm` e `refEstorno`; posição devolve `data` e,
+    por linha, `instrumentoId`, `quantidade`, `precoMedio`, `custoTotal`, `preco` e `valor`
+    (`= quantidade × preco`). **`X-Total-Count` é omitido nos dois** (é o desvio da §2
+    declarado abaixo) e o `Link` com `next` é a superfície de navegação.
+    **A posição também pagina, e isso não é zelo:** o número de instrumentos de um cliente é
+    pequeno **hoje**, não **limitado por construção**, e "coleção sem limite superior" é
+    antipadrão nominal da §9 — o mesmo argumento que obriga a paginação da movimentação. O
+    cursor dela é sobre `instrumento_id`, que é chave única dentro de `(cliente, data)`.
+    **O CAMPO DE TOTAL DA POSIÇÃO CHAMA-SE `somaDosValores`, NÃO `patrimonio`, e o nome é a
+    decisão:** ele é, literalmente, a soma dos `valor` das linhas devolvidas — nada além
+    disso. Chamá-lo de patrimônio afirmaria a igualdade da §7.5 que a **PENDÊNCIA BLOQUEANTE
+    do `caixa:BRL`** (F3, V2) deixa em aberto, e afirmá-la num nome de campo é pior que num
+    critério de teste, porque o nome vai para o cliente e não sai mais.
+    *Rejeitado:* `clienteId` na rota (`/v1/clientes/{id}/extratos/...`) — sugere um recurso
+    "cliente" que esta casa **não tem** (não há tabela de clientes, por I11/ADR-4) e convida o
+    `GET /v1/clientes` que a fase seguinte acrescentaria. *Rejeitado:* um endpoint só com
+    `tipo=movimentacao|posicao` — as duas respostas têm formas diferentes e políticas de cache
+    diferentes, e o discriminador viraria `switch` na borda.
   - **De onde vem o `clienteId`: parâmetro OBRIGATÓRIO da requisição, e a autorização por
     usuário final está FORA de escopo — ausência decidida, não esquecida.** A fase inteira é
     sobre "o extrato de uma pessoa", e nada dizia se o cliente vem de query, de rota ou do
@@ -5182,9 +6187,20 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     `IHostedService` de liquidação escreve enquanto o consumidor de eventos escreve). Com as
     duas chaves diferentes, a página **pula ou duplica linha** sempre que a fronteira cai
     dentro de um grupo empatado em `registrado_em` — e esse grupo é comum, não hipotético:
-    são as **três** linhas de `caixa:a_liquidar` de todo resgate (V2 do F3). Com a tripla nas
-    duas coisas, a §7.5 fica satisfeita **literalmente** e não há ordem nova a rotular; o
-    custo é um campo a mais dentro do cursor opaco.
+    são as linhas que **todo resgate** grava na mesma transação. **E o número aqui é QUATRO,
+    não três — o inventário é recontado NO ESCOPO DESTA FASE, não copiado do F3.** No F3 o
+    "três" está certo, porque lá o recorte da dobra é `(cliente, instrumento)` e só três das
+    quatro caem em `caixa:a_liquidar`; **aqui o extrato de movimentação é POR CLIENTE, sem
+    recorte de instrumento** (`clienteId` é o único parâmetro obrigatório), então o grupo
+    empatado em `(data_evento, registrado_em)` inclui também a **`venda`**, que está no
+    instrumento do título: são **`venda`, `ir_retido`, `iof` e `a_liquidar`** — as quatro com
+    `data_evento = dataEvento` e o mesmo `registrado_em`, porque `now()` é hora de transação.
+    *Quantas são exatamente depende do fato: **quatro** com IOF, **três** sem IOF (prazo ≥ 30
+    dias) e **duas** quando a base do IR é zero ou negativa (F5), porque aí `ir:` e `iof:` não
+    existem. O fixture do Pronto (e2) fixa o caso de **quatro**, de propósito, porque é o
+    maior — e um `pageSize` escolhido para cortar um grupo de três não corta o de quatro.*
+    Com a tripla nas duas coisas, a §7.5 fica satisfeita **literalmente** e não há ordem nova
+    a rotular; o custo é um campo a mais dentro do cursor opaco.
     **E isto é um DESVIO da §2 dos padrões, não uma aplicação dela — registre-o como tal,
     aprove-o com o `advisor` e grave-o na memória**, na mesma convenção do `ref_externa NOT
     NULL` do F3 e da decisão do `operacoes` de dispensar paginação no F5 dele. A §2 prevê
@@ -5239,8 +6255,43 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   Auditavel por construcao — NAO derive dos snapshots, isso perderia exatamente a
   auditabilidade que faz o livro ser a verdade. Tributos e liquidacoes aparecem como
   LINHAS PROPRIAS.
-  POSICAO: leitura de snapshots_posicao WHERE vigente, agregavel por dia (soma dos
-  instrumentos + caixa = patrimonio diario).
+  POSICAO: leitura de snapshots_posicao WHERE vigente, agregavel por dia. A 7.5 escreve
+  essa agregacao como "soma dos instrumentos + caixa = patrimonio diario", MAS NAO A AFIRME:
+  e ela que a PENDENCIA BLOQUEANTE do caixa:BRL (F3, V2) deixa em aberto. O campo de total
+  chama-se `somaDosValores` e e, literalmente, a soma dos `valor` das linhas devolvidas.
+
+  O CONTRATO DOS DOIS ENDPOINTS ESTA DECIDIDO — implemente-o, nao o invente:
+    GET /v1/extratos/movimentacao
+        clienteId      OBRIGATORIO   (ausente -> 400 com code, NUNCA "todos os clientes")
+        de, ate        opcionais     date, sobre data_evento, intervalo FECHADO nos dois lados
+        instrumentoId  opcional      filtro exato, id do Hub CRU (sem normalizacao)
+        cursor         opcional      OPACO
+        pageSize       opcional      default 100, clamp em 500
+    GET /v1/extratos/posicao
+        clienteId      OBRIGATORIO   (ausente -> 400 com code)
+        data           opcional      date; default = MAX(data) dos snapshots VIGENTES DAQUELE
+                                     CLIENTE — NUNCA "hoje": pelo FATO 1 do F7 o dia que o
+                                     eod.ready fecha nao e uma data de relogio (D e
+                                     tipicamente hoje-1), entao um default em "hoje"
+                                     devolveria LISTA VAZIA EM TODO DIA UTIL NORMAL
+        cursor         opcional      OPACO, sobre instrumento_id
+        pageSize       opcional      default 100, clamp em 500
+  TODA `date` e no fuso America/Sao_Paulo (decisao do F3, item 5e).
+  `data` sem snapshot -> 200 com lista VAZIA e a `data` ecoada, NUNCA 404 (ausencia de
+  posicao nao e ausencia de recurso, e esta casa nao tem catalogo de clientes para
+  responder "cliente inexistente"). `de > ate` -> 400 com code, nao lista vazia.
+  VALORES MONETARIOS E QUANTIDADES SAEM COMO STRING DECIMAL, nunca float JSON — mesma
+  convencao que a 5.1 impoe na entrada.
+  FORMA: movimentacao devolve refExterna, tipo, instrumentoId, qtdDelta, valorFinanceiro,
+  dataEvento, registradoEm e refEstorno; posicao devolve `data`, `somaDosValores` e, por
+  linha, instrumentoId, quantidade, precoMedio, custoTotal, preco e valor (= quantidade x
+  preco). X-Total-Count OMITIDO nos dois (desvio declarado); Link com `next` e a navegacao.
+  A POSICAO TAMBEM PAGINA: o numero de instrumentos de um cliente e pequeno HOJE, nao
+  LIMITADO POR CONSTRUCAO, e "colecao sem limite superior" e antipadrao nominal da secao 9.
+  NAO ponha clienteId na rota (/v1/clientes/{id}/...): sugere um recurso "cliente" que esta
+  casa NAO TEM (sem tabela de clientes, I11/ADR-4) e convida o GET /v1/clientes da fase
+  seguinte. E NAO faca um endpoint so com tipo=movimentacao|posicao: as duas respostas tem
+  formas e politicas de cache diferentes, e o discriminador viraria switch na borda.
 
   Leitura via DAPPER com SQL explicito em ReadRepository, NUNCA EF (PADROES secao 3 —
   leitura via EF e defeito, nao estilo). Portas devolvendo Result<T>. problem+json com
@@ -5280,8 +6331,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      ordenam AO CONTRARIO nos dois campos, e o segundo escritor existe POR DESENHO a
      partir do F5 (o IHostedService de liquidacao escreve enquanto o consumidor escreve).
      Com as duas chaves diferentes a pagina PULA OU DUPLICA LINHA quando a fronteira cai
-     dentro de um grupo empatado em registrado_em — e esse grupo e comum: sao as TRES
-     linhas de caixa:a_liquidar de todo resgate (V2 do F3).
+     dentro de um grupo empatado em registrado_em — e esse grupo e comum: sao as linhas que
+     todo resgate grava NA MESMA TRANSACAO. AQUI O NUMERO E QUATRO, NAO TRES: o "tres" do F3
+     esta certo LA, onde o recorte da dobra e (cliente, instrumento) e so tres das quatro
+     caem em caixa:a_liquidar; ESTE extrato e POR CLIENTE, SEM RECORTE DE INSTRUMENTO
+     (clienteId e o unico parametro obrigatorio), entao o grupo inclui tambem a VENDA, que
+     esta no instrumento do titulo — venda, ir_retido, iof e a_liquidar, as quatro com
+     data_evento = dataEvento e o mesmo registrado_em (now() e hora de TRANSACAO). Sao
+     QUATRO com IOF, TRES sem IOF (prazo >= 30 dias) e DUAS quando a base do IR e zero ou
+     negativa (F5). O fixture do Pronto (e2) fixa o caso de QUATRO, de proposito: um
+     pageSize escolhido para cortar um grupo de tres NAO corta o de quatro.
      ISTO E UM DESVIO DA SECAO 2 DO PADROES, NAO UMA APLICACAO DELA. A secao 2 preve
      page/pageSize com clamp (default 100, max 500), X-Total-Count SEMPRE e Link
      (next/prev) so quando `page` informado; cursor nao e uma das formas previstas e e
@@ -5322,7 +6381,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   `Cache-Control` da resposta **real** contendo `private` e **não** contendo `public`; (c)
   401 **sem** chave **e** 401 **com chave errada** (só o primeiro passaria também com chave
   errada); (d) `clienteId` **ausente** devolvendo **400** com `code` — nunca o extrato de
-  todo mundo —, e `clienteId` de outro cliente **não** devolvendo linha nenhuma. *O nome do
+  todo mundo —, e `clienteId` de outro cliente **não** devolvendo linha nenhuma;
+  **`de > ate` devolvendo 400 com `code`** e não lista vazia; **`data` sem snapshot
+  devolvendo 200 com lista vazia e a `data` ecoada**, nunca 404; e **o default de `data` na
+  posição sendo `MAX(data)` dos snapshots vigentes daquele cliente, provado com `U` em
+  `hoje−1`** — o teste chama o endpoint **sem** `data` num dia em que não há snapshot de
+  hoje e exige a linha de `hoje−1`; escrito com "hoje" como default, ele devolveria vazio em
+  todo dia útil normal, que é o mesmo erro do alerta medido em `data_ref`. *O nome do
   teste diz o que ele prova: **filtro**, não isolamento — com uma `X-Api-Key` única de
   serviço, essa asserção é satisfeita por um `WHERE cliente_id = @x` e não afirma nada sobre
   autorização, que esta fase declara fora de escopo;* (e) o limite
@@ -5330,24 +6395,54 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   três linhas, e o cursor exercitado nos **DOIS** modos de quebra, que são defeitos
   diferentes e nenhum pega o outro: (e1) **inserção concorrente** — inserir movimento no
   livro entre a página 1 e a página 2 **não** duplica nem pula linha, que é o motivo inteiro
-  de o cursor existir e o teste que um offset reprovaria; (e2) **fronteira de página dentro
-  de um grupo EMPATADO** — as **três** linhas de `caixa:a_liquidar` de um resgate (mesmo
-  `data_evento` e mesmo `registrado_em`, V2 do F3), com `pageSize` escolhido **de propósito**
-  para cortar esse grupo ao meio, e a concatenação das páginas batendo **linha a linha e na
+  de o cursor existir e o teste que um offset reprovaria. **E o LIMITE de (e1) fica
+  declarado, porque a própria decisão desta fase o introduz:** o cursor protege contra o
+  deslocamento causado por inserção **commitada depois** da leitura do cursor; uma transação
+  de escrita **iniciada ANTES** da página 1 e commitada **depois** insere uma linha **atrás**
+  do cursor, e essa linha é pulada. Isso segue do argumento que sustenta a tripla —
+  `registrado_em` é hora de **transação** e `id` é `bigserial` alocado no INSERT, logo
+  **nenhum dos dois é monotônico na ordem de COMMIT** — e o segundo escritor de transação
+  longa existe **por desenho**: é o `IHostedService` de liquidação do F5, que é
+  O(`a_liquidar` em aberto). O fixture de (e1) fixa a hipótese **"sem transação de escrita
+  aberta antes da página 1"**, e diz isso no nome do teste; sem a hipótese escrita, (e1)
+  afirma uma garantia que o desenho não dá; (e2) **fronteira de página dentro
+  de um grupo EMPATADO** — as **quatro** linhas que um resgate **com IOF** grava na mesma
+  transação (`venda`, `ir_retido`, `iof` e `a_liquidar`: mesmo `data_evento` e mesmo
+  `registrado_em`, V2 do F3), **das quais três em `caixa:a_liquidar` e uma no instrumento do
+  título** — e são quatro porque **este** extrato é por cliente, sem recorte de instrumento;
+  o "três" do F3 é o número da dobra, que é por `(cliente, instrumento)` —, com `pageSize`
+  escolhido **de propósito** para cortar esse grupo de **quatro** ao meio, e a concatenação das páginas batendo **linha a linha e na
   mesma ordem** com o `SELECT` sem paginação. *Sem (e2) esta fase fecha verde com um defeito
   real: era o que acontecia enquanto o `ORDER BY` era `(data_evento, registrado_em)` e o
   cursor era `(data_evento, id)` — ordens diferentes só divergem **dentro** do empate, e
   (e1) não produz empate nenhum;* (f) a consulta de auditoria por
   `calculado_em <= X` devolvendo a versão antiga, provando que o documento que o cliente
-  viu continua existindo; (g) as **linhas de caixa presentes** no extrato de posição, com o
-  patrimônio do dia batendo com "soma dos instrumentos + caixa" (§7.5) — é a ponta em que a
-  V4 do F3 e o snapshot de caixa do F7 são conferidos por quem lê; (h) o contrato de
+  viu continua existindo; (g) as **linhas de caixa presentes** no extrato de posição — `caixa:BRL` e
+  `caixa:a_liquidar`, com `preco = 1,000000` —, e o `somaDosValores` da resposta **igual à
+  soma dos `valor` das linhas que ela mesma devolveu**, conferido item a item. É a ponta em
+  que a V4 do F3 e o snapshot de caixa do F7 são conferidos por quem lê.
+  **Esta alínea DEIXOU DE AFIRMAR "soma dos instrumentos + caixa = patrimônio", e a troca é
+  deliberada:** enquanto a **PENDÊNCIA BLOQUEANTE do `caixa:BRL`** (F3, V2) estiver aberta,
+  aquela igualdade **fecharia VERDE com o número errado** — o extrato diria 1800 para um
+  cliente que tem 900, no dia seguinte a uma reaplicação, que é o ciclo de vida normal do
+  produto. Dos três estados possíveis (certo, errado e visível, errado e verde), o pior é o
+  terceiro, e era esse que o critério anterior produzia. O que ficou é uma asserção de
+  **consistência interna da resposta**, que não depende da decisão pendente e continua
+  valendo sob qualquer desfecho dela. *Quando a pendência fechar, é AQUI que a igualdade
+  volta como critério — e a redação dela dependerá da saída escolhida: com a perna simétrica,
+  "soma das linhas = patrimônio"; com o livro-caixa parcial, "soma dos instrumentos =
+  patrimônio, e caixa é o não-reinvestido conhecido".* (h) o contrato de
   paginação conferido como **desvio declarado**: `X-Total-Count` **ausente**, header `Link`
   com `next` e **sem** `prev`, e `pageSize` acima de 500 **clampado**.
 
 - [ ] **F9** — corpactions: um fato do Hub virando N movimentos. Por último de propósito.
   **Dependência externa nova: o Hub publicando `corpactions.*` — e isso exige código no
   `../hub-precos`, OUTRO REPO.**
+
+  **PENDÊNCIAS QUE ESTA FASE HERDA OU ABRE, e as duas estão escritas nas decisões abaixo:**
+  ela **herda a PENDÊNCIA BLOQUEANTE do `prazo`** (F5 — a alíquota do cupom depende dela do
+  mesmo jeito) e **abre a pendência da reversão de corpaction**, que hoje não é
+  representável. Nenhuma das duas se resolve dentro desta fase.
 
   **AVISO DE BLOQUEIO, leia antes de despachar:** a §9 item 5 põe **o gerador determinístico
   de cupom/vencimento no Hub**, não aqui — "gerador determinístico no Hub (cupom/vencimento)
@@ -5361,7 +6456,17 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   e é para eles que o estacionamento existiu. **Cupom:** para cada cliente com posição > 0
   no instrumento **na data**, movimento `cupom` (qtd 0, valor = qtd × `valorPorUnidade`) +
   `ir_retido` pela tabela regressiva do prazo + `a_liquidar` → `liquidacao`, reusando o motor
-  do F5 — **inclusive o job de liquidação**, que grava as duas pernas em D+1 útil. **
+  do F5 — **inclusive o job de liquidação**, que grava as duas pernas em D+1 útil.
+  **MAS A BASE DO CUPOM É O VALOR INTEGRAL, e reusar o motor do F5 sem esta qualificação
+  SUBTRIBUTA TODO CUPOM.** O motor do F5 calcula sobre o **ganho de alienação**
+  (`valorFinanceiro − preco_medio × quantidade`); um cupom **não tem custo de aquisição** —
+  ele é renda, é o que a V1 do F3 já diz ao mandar `cupom` não tocar `custo_total` nem
+  `preco_medio` —, então subtrair um preço médio dele daria base zero ou negativa e
+  **nenhuma** linha de `ir_retido`. A `ARQUITETURA` §11 trata "IR de **cupom na fonte**" como
+  caso próprio. **Regra: o motor recebe a BASE como parâmetro**, e quem a calcula é o
+  chamador — `ganho de alienação` na venda e no vencimento (F5), **valor integral** no cupom
+  (aqui). *O que se reusa é a tabela regressiva, as faixas, o IOF e o arredondamento; o que
+  NÃO se reusa é a fórmula da base, e é por isso que ela tem nome nas duas pontas.* **
   Vencimento:** `resgate` (o `tipo` do livro, que **é** vencimento — V2 do F3) com
   `qtd_delta = -qtd` e valor = qtd × PU final, mais a tributação da ponta e a liquidação em
   D+1 útil. O fan-out mercado→clientes acontece **aqui**, no join com posições — o Hub
@@ -5427,6 +6532,26 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     porque aquela fase declarou o cabeçalho `x-custodia-motivo` **obrigatório e sem
     default**, e "com motivo nomeado" sem dizer o nome é justamente o default voltando pela
     porta dos fundos. Nunca é tratada como cupom por semelhança.
+  - **Pendência aberta: NÃO EXISTE reversão de corpaction, e a ausência é declarada aqui
+    em vez de descoberta na primeira vez que um cupom for lançado errado.** A família `est:`
+    da V3 do F3 é definida sobre `<tradeIdEstorno>`, e cupom e vencimento **não têm
+    `tradeId`**: o `<fato>` deles é `cupom:<instrumentoId>:<data>` / `venc:…`. Some-se que o
+    único evento de reversão que esta casa consome é `TradeRegistered` com
+    `operacao = estorno`, de **Operações**, que não conhece corpactions. **Consequência: um
+    cupom lançado errado — pelo Hub, ou por bug do fan-out — é IRREVERSÍVEL num livro
+    append-only.** Isso pode ser aceitável (o gerador do Hub é determinístico, e o fato é
+    derivado do próprio instrumento), mas é **ausência decidida em outro lugar deste arquivo
+    e ausência silenciosa aqui**, e a diferença importa: toda outra família de linha tem
+    caminho de reversão escrito. **Pendência aberta — decidir antes de escrever código desta
+    fase**, e as opções são duas: (a) estender a gramática `est:` para as famílias de
+    corpaction (`est:cupom:<instrumentoId>:<data>`, `est:ir:cupom:…`), o que é edição da **V3
+    do F3** e não desta fase — e o F3 é a fase que se declara "a última barata" para o
+    vocabulário; ou (b) declarar por escrito que corpaction não se reverte, e que o reparo é
+    **estorno manual por comando administrativo** com a gramática decidida no momento do
+    incidente — que é a opção que este roadmap recusa em toda outra ponta. *Não escolhi por
+    você porque (a) mexe num vocabulário que uma fase anterior fechou e (b) aceita dado
+    irreparável; as duas são decisões de dono, e nenhuma é urgente até o Hub publicar
+    `corpactions.td`, que é a dependência externa que já bloqueia esta fase.*
   - **Enum mínimo, e ele já está fechado no F3 (V1):** `cupom` e `resgate` (que no livro
     **é** vencimento) já estão na lista, e nada precisa crescer nesta fase. *Rejeitado:* a
     taxonomia completa da B3 no dia 1 — cada valor a mais é um valor no CHECK de uma tabela
@@ -5456,6 +6581,17 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (qtd_delta 0, valor = qtd x valorPorUnidade) + ir_retido pela tabela regressiva do
   prazo + a_liquidar -> liquidacao. REUSE o motor do F5, nao reescreva — inclusive o JOB
   DE LIQUIDACAO, que grava as duas pernas em D+1 util.
+  MAS A BASE DO CUPOM E O VALOR INTEGRAL, E REUSAR O MOTOR SEM ISSO SUBTRIBUTA TODO CUPOM.
+  O motor do F5 calcula sobre o GANHO DE ALIENACAO (valorFinanceiro - preco_medio x
+  quantidade); um cupom NAO TEM CUSTO DE AQUISICAO — e renda, e e por isso que a V1 do F3
+  manda `cupom` nao tocar custo_total nem preco_medio —, entao subtrair preco medio dele
+  daria base zero ou negativa e NENHUMA linha de ir_retido. A ARQUITETURA 11 trata "IR de
+  CUPOM NA FONTE" como caso proprio. REGRA: O MOTOR RECEBE A BASE COMO PARAMETRO, e quem a
+  calcula e o chamador — ganho de alienacao na venda e no vencimento (F5), VALOR INTEGRAL
+  no cupom. Reuse a tabela regressiva, as faixas, o IOF e o arredondamento; NAO reuse a
+  formula da base.
+  E ESTA FASE HERDA A PENDENCIA BLOQUEANTE DO `prazo` (F5): a aliquota do cupom depende
+  dela do mesmo jeito. Se a pendencia estiver aberta, PARE — vale o mesmo aviso do F5.
   VENCIMENTO: `resgate` (o tipo do LIVRO, que E vencimento — V2 do F3) com
   qtd_delta = -qtd e valor = qtd x PU final + tributacao da ponta + liquidacao em D+1
   util.
@@ -5521,7 +6657,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   e a conferência é por **CONTAGEM DE LINHAS POR CLIENTE igual ao conjunto completo da
   §7.3** (cupom, `ir_retido`, `a_liquidar` e as **duas pernas** da liquidação), não "N
   conjuntos": contar conjuntos passa mesmo com o conjunto incompleto, que é como a colisão
-  de chaves se esconde; um vencimento zerando a posição e creditando o caixa em D+1 útil;
+  de chaves se esconde. **E o conjunto completo só existe em DOIS DIAS DIFERENTES — a
+  hipótese do fixture fica escrita, como o F5 fez com o "preço congelado":** cupom,
+  `ir_retido` e `a_liquidar` nascem em **D**, no handler; as **duas pernas** nascem em
+  **D+1 útil**, por **job** (é o desvio (1) da lista canônica). *Uma asserção de contagem
+  feita logo depois do handler encontra **três** linhas e reprova a implementação correta.* O
+  fixture posiciona a conferência **depois de o job de liquidação de D+1 ter rodado** — com o
+  relógio do teste avançado, não com espera — e diz isso no nome do teste; a contagem em **D**
+  é uma asserção **separada**, de três linhas; um vencimento zerando a posição e creditando o caixa em D+1 útil;
   **a passagem completa do drenador do motivo `tipo_nao_tratado_corpactions` devolvendo
   COMPLETUDE e residual 0, com `n_motivo ≥ 1`** — o
   teste **planta** a mensagem antes de rodar, e **aqui a cláusula do `n_motivo ≥ 1` é a que
@@ -5576,6 +6719,15 @@ Três coisas que este roadmap pede em toda fase, e que não são cerimônia:
    continua existindo, compila, e os testes passam. E revisão sobre arquivos novos começa por
    `git status --short`: `git ls-files` e `git diff` não mostram o que ainda não foi
    rastreado.
+
+6. **Antes de despachar uma fase, releia as PENDÊNCIAS dela — elas estão no cabeçalho da
+   fase e nas decisões, com o nome, o estado, quem decide e as opções.** Há **três** abertas
+   neste arquivo: `caixa:BRL` nunca ser debitado (**bloqueia o F3**, e a correção é um campo
+   novo na §5.1 do `../plataforma-docs`), a definição de `prazo` (**bloqueia o F5 e, por
+   herança, o F9**) e a reversão de corpaction (**aberta no F9**, não bloqueante até o Hub
+   publicar `corpactions.td`). Fechar uma delas é editar a fase dona **e** os critérios de
+   Pronto que a citam — o Pronto (g) do F8 diz, dentro dele, o que volta a valer quando a
+   primeira fechar.
 
 E duas do dado, que valem enquanto este livro for append-only:
 

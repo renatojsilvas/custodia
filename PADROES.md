@@ -959,3 +959,72 @@ desenvolve. O gate do CI escreve o próprio insumo com dummies e fica verde exat
 enquanto o `.env` local de todo mundo quebra (`LEIA-ME-KIT`, "Gate de compose no CI passa
 com dummy"). Credencial nova é **mudança quebrante**: avise no PR, citando as linhas, e
 rode `docker compose config -q` contra o `.env` **real**.
+
+---
+
+### 10.34. Coluna `date` de negócio sem fuso declarado: três relógios decidem o dado, e nenhum concorda
+
+`current_date` no Postgres é o dia no **fuso do servidor** — e num container padrão isso é
+**UTC**. `DateOnly.FromDateTime(DateTime.Now)` num job .NET é o fuso do processo. E a regra
+de alerta do Grafana Cloud avalia `hoje 12:00` no fuso **dele**. Três relógios, uma mesma
+`date`, e a divergência não aparece como erro: aparece como comportamento de três horas por
+dia.
+
+O modo de falha concreto, achado ao abrir a `custodia` (2026-09-07) antes de existir código:
+um job de ciclo curto que roda 24 h por dia, um livro append-only com **trigger de data
+futura** comparando contra `current_date`, e a janela **00:00–03:00 BRT** — em que o dia BRT
+já virou e o UTC ainda não. Nessa janela o job tenta inserir `data_evento = hoje_BRT` e a
+trigger **rejeita como data futura**, todo dia, com um desfecho que o job não tem nome para
+classificar. A suíte fica verde: nenhum teste roda às 01:00 UTC−3.
+
+**Regra:** o fuso de negócio é **decidido na fase do schema**, escrito no arquivo, e vale
+para toda `date` daquele banco. Comparações de "hoje" no banco usam
+`(now() AT TIME ZONE '<fuso>')::date`, nunca `current_date`. "Dia útil", "hoje" e horários de
+alerta são **naquele** fuso, e a regra do alerta carrega o offset explicitamente, porque o
+avaliador é de outro repo e roda em UTC.
+
+**Rejeitado:** `TZ=<fuso>` no container. Põe em configuração de ambiente o que é regra de
+**dado**, some no primeiro compose que esquecer a variável (e a variável não está nas cinco
+listas da §10.33), e **não alcança** o avaliador de alerta, que não é seu.
+
+**Guarda:** o teste de fronteira roda com a sessão do banco em `SET TIME ZONE 'UTC'` e o
+relógio **injetado** dentro da janela crítica, e exige que a data de negócio de hoje seja
+**aceita**. Escrito com `current_date` dos dois lados, o teste passa com a implementação
+errada — é a mesma tautologia da §10.22.
+
+---
+
+### 10.35. "Com teto e enfileiramento" significa fila em memória — e fila em memória não é durabilidade
+
+Num serviço .NET, escrever que um fan-out "roda fora do handler, com teto e enfileiramento"
+é escrever `Channel<T>`. Isso é a leitura certa da frase e a implementação errada do
+requisito, sempre que o **produtor já deu ack** antes de o trabalho enfileirado acontecer.
+
+A conta que fecha o buraco: a mensagem foi confirmada, o broker não a reentrega; o consumidor
+seguinte processa apenas o que **chega depois**; a fonte não reanuncia o mesmo fato; e a
+reconciliação que existe compara outras duas tabelas. Um restart entre o ack e o trabalho
+enfileirado **perde a correção para sempre**, em silêncio, e o sintoma aparece no documento
+que o cliente lê. É violação direta do princípio "crash em qualquer ponto se resolve na
+próxima execução".
+
+**Regra:** onde o ack já saiu, a **garantia** não pode ser a fila. Ou (a) a fila é durável, e
+aí ela é estado de controle novo — que a §9 restringe, e que num serviço que já paga um
+desvio por causa de outra tabela de controle vira precedente —, ou (b) **a garantia é
+derivada do dado**: uma varredura periódica que compara o carimbo da **entrada**
+(`observado_em`, `registrado_em`) com o carimbo da **projeção** (`calculado_em`) e refaz o que
+ficou para trás. Preferir (b): as três grandezas já existem, ninguém precisa gravar
+"pretendo recalcular", e a condição **não se consome** — o ciclo seguinte a reencontra.
+
+**A fila em memória continua existindo, e é o caminho normal: ela é LATÊNCIA, não garantia.**
+Escrever isso é o que impede a próxima pessoa de "otimizar" removendo a varredura.
+
+**Guarda — e ela é a única que separa as duas implementações:** o teste **derruba o processo
+entre o ack e o trabalho** e afirma que a **execução seguinte** conserta, **sem que nada seja
+reenfileirado**. A metade negativa sozinha ("ficou errado depois do crash") é verdadeira nas
+duas. E a varredura precisa de **controle negativo**: rodada sobre estado já convergido, faz
+zero escrita — senão ela é um alerta diário permanente com outro nome.
+
+**Cuidado com o ESCOPO do trabalho que a varredura reenfileira:** ela detecta pela projeção
+que **existe** e está velha, e frequentemente a linha que **falta criar** é de outra chave, que
+por não existir não é percorrida. Detectar por uma chave e reparar só aquela chave deixa
+justamente o buraco que motivou a varredura.
