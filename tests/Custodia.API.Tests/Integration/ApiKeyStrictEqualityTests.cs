@@ -47,13 +47,28 @@ public sealed class ApiKeyStrictEqualityTests(ApiTestFactory factory)
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    public static IEnumerable<object[]> EveryIndexOfConfiguredApiKey() =>
+        Enumerable.Range(0, ApiTestFactory.ValidApiKey.Length).Select(index => new object[] { index });
+
     [Fact]
-    public async Task Get_WithOneCharacterSwappedInTheMiddleOfConfiguredApiKey_ShouldReturn401()
+    public void EveryIndexOfConfiguredApiKey_ShouldNotBeEmpty()
     {
-        var middleIndex = ApiTestFactory.ValidApiKey.Length / 2;
-        var originalChar = ApiTestFactory.ValidApiKey[middleIndex];
+        var indexCount = EveryIndexOfConfiguredApiKey().Count();
+
+        Assert.True(
+            indexCount > 0,
+            "O gerador de índices tem que devolver pelo menos um caso, senão o Theory " +
+            "abaixo roda zero vezes e a classe inteira de mutação (§10.8) fica sem cobertura " +
+            "sem que nenhum teste acuse. Se isto falhar, ApiTestFactory.ValidApiKey virou string vazia.");
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryIndexOfConfiguredApiKey))]
+    public async Task Get_WithOneCharacterSwappedAtEachIndexOfConfiguredApiKey_ShouldReturn401(int indexToSwap)
+    {
+        var originalChar = ApiTestFactory.ValidApiKey[indexToSwap];
         var swappedChar = originalChar == 'z' ? 'y' : 'z';
-        var swappedKey = ApiTestFactory.ValidApiKey[..middleIndex] + swappedChar + ApiTestFactory.ValidApiKey[(middleIndex + 1)..];
+        var swappedKey = ApiTestFactory.ValidApiKey[..indexToSwap] + swappedChar + ApiTestFactory.ValidApiKey[(indexToSwap + 1)..];
         Assert.Equal(ApiTestFactory.ValidApiKey.Length, swappedKey.Length);
         Assert.NotEqual(ApiTestFactory.ValidApiKey, swappedKey);
 
