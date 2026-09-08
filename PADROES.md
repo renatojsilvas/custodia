@@ -289,6 +289,23 @@ mutação mudou o sinal que o teste lê, não só o texto ao redor — mutação
 esse sinal é mutação que não aconteceu, e o verde resultante é falsa confirmação de que
 o teste presta.
 
+**Corolário: teste que mira uma POSIÇÃO FIXA prova aquela posição, e só ela.** No F1 da
+`custodia` (2026-09-07) o teste "chave com um caractere trocado **no meio**" mirava
+exatamente o índice `Length / 2`. Uma degradação da comparação que ignorasse **qualquer
+outro índice fixo** — o 3, o 0, o último — passava pela suíte inteira. A correção errada,
+e tentadora, é acrescentar "o caso do índice 3": troca um buraco pelo vizinho e a
+enumeração não termina. A certa é **fechar a classe**: `[Theory]` sobre **todos** os
+índices, derivados do comprimento — nunca de uma lista escrita à mão, que desatualiza em
+silêncio quando o valor mudar de tamanho (mesmo raciocínio da §10.22). E o laço de
+asserção negativa ganha duas guardas próprias, porque ele tem duas formas novas de virar
+vácuo: o gerador devolver coleção vazia (o `[Theory]` roda zero vezes e ninguém acusa) e o
+caso gerado não ser de fato diferente do original.
+**Como reconhecer:** a palavra "no meio", "no fim", "no começo" no nome de um teste é o
+sinal. Ela descreve um exemplo onde o autor queria descrever uma classe. E ao fechar uma
+classe, procure a **irmã** no mesmo arquivo: ali o caractere *trocado* virou `[Theory]` e o
+caractere *removido* ficou no `Length / 2` por mais uma rodada, porque ninguém perguntou
+"que outro teste tem a mesma forma?".
+
 ### 10.9. Verifique com o comando literal da documentação
 
 Ao validar, rode **exatamente** o comando que está escrito no README — não um
@@ -1028,3 +1045,62 @@ zero escrita — senão ela é um alerta diário permanente com outro nome.
 que **existe** e está velha, e frequentemente a linha que **falta criar** é de outra chave, que
 por não existir não é percorrida. Detectar por uma chave e reparar só aquela chave deixa
 justamente o buraco que motivou a varredura.
+
+---
+
+### 10.36. Comparação criptográfica não se prova por exemplo
+
+Teste que alimenta uma comparação de segredo com **valores concretos** prova que aqueles
+valores se comportam como esperado — não prova a propriedade da comparação. Para
+igualdade de segredo, escreva os casos de fronteira **e** registre por escrito o que eles
+não alcançam.
+
+**Por quê:** aprendido no F1 da `custodia` (2026-09-07), por mutação. Truncar o SHA-256
+para os **primeiros 4 bytes** antes do `FixedTimeEquals` sobreviveu à suíte **inteira**,
+com 156 testes verdes. É degradação real — a comparação cai para 32 bits e a chave passa
+a ser forjável —, e nenhuma quantidade de casos por exemplo a pega em custo razoável: o
+efeito avalanche do SHA-256 faz qualquer chave errada diferir nos primeiros bytes com
+probabilidade praticamente 1, então o caso que exporia a mutação é justamente o que
+ninguém escreve à mão.
+
+**O que os exemplos ALCANÇAM, e vale escrever:** a metade estrita da igualdade — prefixo,
+superset, caractere trocado, caractere removido, caixa invertida. Todas essas foram pegas.
+
+**O que só outra ferramenta alcança:** tamanho do digest, comparação por pares que só
+relaxa coordenadamente, e qualquer degradação cujo contraexemplo tenha que ser
+*procurado*. Ou se dá uma costura testável (afirmar `hash.Length == 32` num ponto que a
+mutação teria de alterar), ou se aceita como risco residual — **mas escrito**, porque a
+alternativa é a suíte verde sugerindo cobertura que não existe (§10.22).
+
+**Guarda:** ao fechar um invariante de segurança por enumeração de casos, termine o
+commit dizendo qual mutação você tentou e **sobreviveu**. Sem essa frase, a próxima
+pessoa lê "a suíte cobre a comparação de chave".
+
+---
+
+### 10.37. Override de configuração em teste só alcança quem lê DEPOIS do `Build()`
+
+`WebApplicationFactory.ConfigureAppConfiguration` (e `ConfigureAppConfiguration` em
+geral) só é mesclado quando `Build()` é chamado. Todo código que lê a configuração
+**antes** disso — `services.AddX(builder.Configuration)` na composição — enxerga o valor
+do `appsettings.json`, não o do teste.
+
+**Por quê:** achado no F1 da `custodia` (2026-09-07), em revisão adversarial. O
+`AddInfrastructure` lê `configuration.GetConnectionString("DefaultConnection")` e crava o
+`NpgsqlDataSource` no registro do singleton; a `ConnectionStringGuard` lê
+`app.Configuration` depois do `Build()`. Um fixture de boot injetava
+`Host=localhost;Database=fake` esperando apontar a aplicação para um banco inexistente:
+**a guarda via o valor falso, o EF nunca viu**. Com a guarda removida por mutação, o boot
+seguia com a string do `appsettings.json` e morria tentando conectar de verdade — e a
+mensagem concreta **mudava conforme houvesse ou não um Postgres na porta publicada pelo
+`docker-compose.yml` local**, isto é, conforme a máquina de quem rodava.
+
+O teste continuava pegando a regressão, pelo **tipo** da exceção. Mas o que ele dizia
+fazer não era o que fazia, e um teste de boot cujo desfecho depende do que está escutando
+numa porta da máquina é um teste que um dia vai mentir nos dois sentidos.
+
+**Guarda:** ao escrever fixture de boot, pergunte **quem lê a configuração que você está
+sobrescrevendo, e em que momento**. Se for código de composição, o override é decorativo
+— e um override decorativo é pior que nenhum, porque descreve um cenário que não
+acontece. Escreva no assert o que o teste prova **e** o que ele não prova; separar as
+duas coisas é o que impede a §10.22 de renascer dentro da própria correção que a combate.

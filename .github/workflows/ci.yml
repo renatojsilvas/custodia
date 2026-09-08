@@ -168,7 +168,11 @@ jobs:
             # nos composes desta fase, entao nao entram no .env — e validar secret que
             # ninguem consome so cria motivo de reprovar deploy sem causa. Ao acrescenta-los,
             # normalize na ORIGEM com `tr -d '\r\n'` (§10.4), como as duas acima, E lembre
-            # de incluir no printf do .env abaixo E no `envs:` do ssh-action.
+            # de incluir nas CINCO listas (PADROES §10.33): os dois composes, o `envs:`
+            # do ssh-action, o `env:` do MESMO step (de onde vem o valor — esquecer esta
+            # encaminha uma variavel INEXISTENTE, que chega aqui como string vazia e o
+            # `-z` abaixo acusaria "secret vazio" com o secret certo cadastrado no
+            # GitHub), o printf do .env abaixo, e as dummies do config gate.
 
             # ATENÇÃO: este .env é reescrito POR COMPLETO a cada deploy — não é um merge com
             # o que já existe na VPS. Qualquer variável obrigatória (${VAR:?...} no compose)
@@ -242,7 +246,7 @@ jobs:
             # ativo) e 404 COM a CUSTODIA_API_KEY provisionada (autenticado, mas a rota não
             # existe). As duas juntas provam o fato — só o 401 não provaria nada, porque
             # passaria também com a chave errada.
-            unauthenticated_status=$(docker exec custodia-app curl -s -o /dev/null -w '%{http_code}' \
+            unauthenticated_status=$(docker exec custodia-app curl -sS -o /dev/null -w '%{http_code}' \
               http://localhost:8080/v1/smoke-inexistente)
             if [ "$unauthenticated_status" != "401" ]; then
               echo "ERRO: GET /v1/smoke-inexistente SEM chave não retornou 401 (retornou"
@@ -253,7 +257,7 @@ jobs:
             fi
             echo "    sem chave: 401 ok"
 
-            authenticated_status=$(docker exec custodia-app curl -s -o /dev/null -w '%{http_code}' \
+            authenticated_status=$(docker exec custodia-app curl -sS -o /dev/null -w '%{http_code}' \
               -H "X-Api-Key: $CUSTODIA_API_KEY" http://localhost:8080/v1/smoke-inexistente)
             if [ "$authenticated_status" != "404" ]; then
               echo "ERRO: GET /v1/smoke-inexistente com a CUSTODIA_API_KEY provisionada não retornou"

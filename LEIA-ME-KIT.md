@@ -1054,3 +1054,61 @@ igualdade que depende de uma decisão pendente fecha a fase com o número errado
 marcado. Enquanto a pendência estiver aberta, o critério é **substituído** por uma asserção
 que não dependa dela (consistência interna da resposta, por exemplo), e o texto diz **por que
 mudou** e **o que volta** quando a pendência fechar.
+
+---
+
+## Reverter o fonte por `cp` e medir com `--no-build` mede o binário MUTADO
+
+Aconteceu comigo no F1 da `custodia` (2026-09-07), e o estrago foi curto só por sorte.
+A disciplina de mutação está certa: commite antes, copie o fonte para fora do repo, mute,
+rode, **restaure por `cp`** (nunca `git checkout`, que apagaria os arquivos novos ainda não
+rastreados). Eu fiz tudo isso. E aí rodei a medição final com `dotnet test --no-build`.
+
+O `--no-build` existe para não recompilar o que já está compilado — e o que estava
+compilado era o **binário da mutação**. O `src/` no disco estava correto (confirmei por
+`diff` contra a cópia), o `git status` estava limpo, e mesmo assim a suíte saiu **vermelha**
+e a cobertura veio sobre 460 linhas em vez de 457 — três linhas que só existiam no fonte
+mutado. Eu tinha acabado de commitar afirmando o número certo.
+
+O detalhe que torna isso perigoso: as duas verificações óbvias — `git status` e `diff` do
+fonte — **confirmam que está tudo certo**, porque o fonte está mesmo certo. O que está
+errado é o artefato, e nada no repositório aponta para ele.
+
+**Regra:** depois de restaurar um fonte mutado, `dotnet build` **antes** de qualquer
+medição, e nunca meça com `--no-build` na mesma passada em que restaurou. E a conferência
+de que a reversão pegou não é `git status` nem `diff` do fonte — é a **saída da suíte
+recompilada**. É a §10.9 de novo, na sua forma mais traiçoeira: verificar com o comando
+quase certo, contra o artefato errado.
+
+**Corolário sobre relato:** se o número que você acabou de colar contradiz o número que
+você acabou de escrever, o defeito pode estar na medição, não no trabalho. Refaça a
+medição antes de corrigir o trabalho — e diga qual das duas estava errada.
+
+---
+
+## O inventário da fase não é exaustivo: confira o repo vizinho antes de acreditar nele
+
+O F1 da `custodia` (2026-09-07) trazia um inventário cuidadoso de **seis** afirmações que o
+porte tinha herdado do molde e que a ADR-10 desmentia, com arquivo e linha em cada uma. Eu
+despachei os seis. A **sétima** eu achei sozinho, abrindo o repo vizinho para outra coisa:
+o `infra/grafana/README.md` afirmava que o `../tesouro-direto-api` já tinha um contact
+point `telegram-custodia` e uma rota `service = custodia`. As duas eram falsas — o terceiro
+contact point de lá era o do `operacoes`.
+
+Nenhum grep dentro do próprio repo acharia: a afirmação estava aqui, o desmentido estava
+**lá**. Um inventário construído lendo um repo só tem esse ponto cego por construção, e
+quanto mais cuidadoso ele é, mais convincente é o ponto cego — eu quase tratei "os seis"
+como a lista fechada porque a lista vinha com números de linha conferidos.
+
+**Regra:** afirmação sobre o estado de OUTRO repositório se confere **naquele
+repositório**, uma a uma, antes de aceitar o inventário como completo. E quando ela for
+falsa, pergunte antes de apagar: às vezes a correção certa é **tornar a afirmação
+verdadeira** em vez de removê-la — aqui as regras de alerta já carregavam
+`labels: {service: custodia}` e o próprio texto já tinha declarado esse label um contrato,
+então apagar o parágrafo deixaria o label sem contraparte e o alerta sairia rotulado como
+de outro serviço.
+
+**E o modo de falha vale registrado, porque não é silêncio:** sem a rota filha o alerta
+**ainda chega** — o Alertmanager cai para a rota raiz quando nenhuma filha casa. Chega pelo
+contact point errado, com o prefixo de outro serviço. Quem for caçar "alerta sumido" não
+vai achar nada sumido.
