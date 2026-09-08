@@ -1104,3 +1104,48 @@ sobrescrevendo, e em que momento**. Se for código de composição, o override �
 — e um override decorativo é pior que nenhum, porque descreve um cenário que não
 acontece. Escreva no assert o que o teste prova **e** o que ele não prova; separar as
 duas coisas é o que impede a §10.22 de renascer dentro da própria correção que a combate.
+
+---
+
+### 10.38. O `MemPerc` do `docker stats` conta page cache — a pergunta é `anon` × `file`, e PSI
+
+Container perto de 100% do teto de memória **não é**, por si só, container perto do OOM.
+O `docker stats` reporta `memory.current` menos `inactive_file`, então **cache de arquivo
+ativo entra na conta** — e o kernel enche o cgroup de cache de propósito, porque ele é
+devolvido sob pressão. Antes de subir um teto ou declarar incidente, abra o cgroup.
+
+**Por quê:** medido no F1 da `custodia` (2026-09-07), ao acrescentar o quarto alvo de
+scrape. O `tesouro-direto-alloy` saltou de **90 MiB** para **247,8 MiB de um teto de 256**
+— 96,8% — e estabilizou lá, subindo devagar. Parecia vazamento causado pelo alvo novo. O
+cgroup desmentiu:
+
+```
+anon  75 MB      <- heap e pilha; isto é o que não se reclama
+file 190 MB      <- page cache, dos quais 182 MB active_file
+go_memstats_heap_inuse_bytes  62 MB
+memory.events: max 51, oom 0, oom_kill 0
+memory.pressure: some avg10=0.00 avg60=0.00 avg300=0.00
+```
+
+Ou seja: 75 MB de memória real num teto de 256, o resto é cache — o Alloy faz `tail` do
+`nginx access.log` e do `kern.log`, e ler arquivo enche cache. Os `max 51` provam que o
+cgroup bateu no teto e o kernel **reclamou**, que é o mecanismo funcionando; `oom_kill 0`
+prova que ninguém morreu. E o número que decide é o **PSI**: `some`/`full` zerados em
+avg10, avg60 e avg300 significam **zero stall por memória**.
+
+O `90 MiB` medido antes do restart e o `247 MiB` de depois são o mesmo processo em regimes
+de cache diferentes — não uma regressão entre eles.
+
+**Guarda, na ordem:**
+1. `memory.stat` → `anon` é o orçamento de verdade; compare **esse** com `memory.max`;
+2. `memory.events` → `oom_kill` é o que importa; `max` alto sem `oom_kill` é reclaim
+   saudável;
+3. `memory.pressure` → `full avg60` sustentado acima de zero é o sinal de dor real;
+4. só então `docker stats`, e sabendo que ele mistura as duas coisas.
+
+**Corolário para o inventário de recursos:** número de memória anotado em documento
+envelhece **pior** que os outros, porque muda com o regime de cache e com o teto. O
+`LEIA-ME-KIT` deste kit registrava "`tesouro-direto-alloy` em 169 MiB de um teto de 192 —
+88%"; hoje o teto é 256 e a fração é dominada por cache. A lição daquele registro (serviço
+novo muda o orçamento do vizinho, §10.14) continua valendo inteira — **o número não**.
+Ao citar consumo de memória, escreva `anon`, a data e o teto vigente, ou não cite.

@@ -245,7 +245,15 @@ executado, é infraestrutura comum — não é o seu código.
 Medido na VPS antes de qualquer deploy do `operacoes`, em dois comandos por SSH: `nproc`
 = **1**; memória total 1967 MB com 1035 disponíveis; `tesouro-direto-alloy` em **169 MiB
 de um teto de 192 MiB — 88%**, e ele é justamente quem recebe carga quando um serviço
-novo ganha alvo de scrape. Também medido: `hub-precos-app` roda **sem limite nenhum**
+novo ganha alvo de scrape.
+**Correção de 2026-09-07, ao abrir a `custodia`, e ela é sobre o NÚMERO, não sobre a
+lição:** aquele teto hoje é **256 MiB**, e a fração é enganosa porque o `docker stats`
+conta *page cache*. Ao acrescentar o quarto alvo de scrape, o alloy foi para **247,8 MiB
+de 256 — 96,8%** e estabilizou; o cgroup mostrou `anon` de **75 MB** contra 190 MB de
+cache, `oom_kill 0` e PSI zerado em avg10/60/300. Não havia risco. A lição de que serviço
+novo muda o orçamento do vizinho continua inteira — o que envelheceu foi o número, e é por
+isso que a `PADROES.md` §10.38 manda escrever `anon`, a data e o teto vigente, ou não
+citar. Também medido: `hub-precos-app` roda **sem limite nenhum**
 (`HostConfig.Memory=0`), então o GC dele enxerga os 1,9 GB do host e não um cgroup — é a
 §10.12 do `PADROES` acontecendo agora, não em retrospecto. E a soma dos tetos de CPU já
 configurados chega a **2,7 núcleos num host de 1** — confirma a §10.13: teto rígido ali
