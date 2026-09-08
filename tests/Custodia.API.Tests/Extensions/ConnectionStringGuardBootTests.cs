@@ -17,14 +17,17 @@ public sealed class ConnectionStringGuardBootTests
         Assert.Contains("ConnectionStrings:DefaultConnection", exception.Message, StringComparison.Ordinal);
         Assert.False(
             (object)exception is NpgsqlException,
-            "InvalidOperationException aqui é a ConnectionStringGuard abortando antes do EF tocar o banco. " +
-            "Se este teste algum dia capturar um NpgsqlException, a guarda foi retirada do Program.cs: " +
-            "AddInfrastructure lê ConnectionStrings:DefaultConnection de builder.Configuration ANTES do " +
-            "builder.Build(), então o override que este fixture injeta via ConfigureAppConfiguration nunca " +
-            "chega ao NpgsqlDataSource — só chega à ConnectionStringGuard, que lê app.Configuration DEPOIS " +
-            "do Build(). Sem a guarda, o boot segue com a string do appsettings.json " +
-            "(Host=localhost;Port=5435;Database=custodia) e morre tentando conectar de verdade, com um " +
-            "NpgsqlException cujo conteúdo varia conforme haja ou não um Postgres na porta 5435 da máquina.");
+            "O QUE ESTE TESTE PROVA: que em Production o boot aborta com InvalidOperationException citando a " +
+            "chave de configuração, e não com um erro de conexão — ou seja, que a ConnectionStringGuard está " +
+            "LIGADA no Program.cs e roda antes de o EF tocar o banco. Retirar a chamada da guarda deixa este " +
+            "teste vermelho com NpgsqlException, e é esse o diagnóstico a procurar. " +
+            "O QUE ESTE TESTE NÃO PROVA, e a distinção é o motivo de ele existir: nada sobre QUAL string o " +
+            "EF usaria sem a guarda. O override deste fixture é redundante — o appsettings.json já não tem " +
+            "credencial, então a guarda reprovaria mesmo sem ele, e o teste passa igual com o fixture vazio. " +
+            "Medido à parte, e por isso não afirmado aqui: AddInfrastructure lê a connection string de " +
+            "builder.Configuration ANTES do builder.Build(), então o override nunca alcança o " +
+            "NpgsqlDataSource; sem a guarda o boot morre com a string do appsettings.json, e a mensagem " +
+            "concreta varia conforme haja ou não um Postgres na porta 5435 da máquina.");
     }
 
     [Fact]

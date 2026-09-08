@@ -101,11 +101,11 @@ public sealed class ApiKeyStrictEqualityTests(ApiTestFactory factory)
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact]
-    public async Task Get_WithConfiguredApiKeyMissingOneCharacterInTheMiddle_ShouldReturn401()
+    [Theory]
+    [MemberData(nameof(EveryIndexOfConfiguredApiKey))]
+    public async Task Get_WithOneCharacterRemovedAtEachIndexOfConfiguredApiKey_ShouldReturn401(int indexToRemove)
     {
-        var middleIndex = ApiTestFactory.ValidApiKey.Length / 2;
-        var shortenedKey = ApiTestFactory.ValidApiKey.Remove(middleIndex, 1);
+        var shortenedKey = ApiTestFactory.ValidApiKey.Remove(indexToRemove, 1);
         Assert.Equal(ApiTestFactory.ValidApiKey.Length - 1, shortenedKey.Length);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, ProtectedPath);
