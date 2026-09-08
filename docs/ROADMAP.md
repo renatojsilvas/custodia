@@ -350,7 +350,7 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
 ## Fila
 
-- [ ] **F1** — esqueleto deployado e observável, e a limpeza do que o porte herdou.
+- [x] **F1** — esqueleto deployado e observável, e a limpeza do que o porte herdou.
   **Dependência externa nova: nenhuma.**
 
   Solução `Custodia.API` / `Custodia.Application` / `Custodia.Domain` /
@@ -769,6 +769,55 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   ninguém "resolver" o bootstrap com uma conexão ao banco do Hub;
   (j) `grep -n 'curl -s ' .github/workflows/ci.yml` sem resultado no bloco do smoke test —
   as duas chamadas passaram a `-sS`.
+
+  <br>**FECHADO em 2026-09-08.** PR [#1](https://github.com/renatojsilvas/custodia/pull/1),
+  commits `40a94c3` (esqueleto e limpeza), `f6cc66b`, `d1a48f0` e `762d39c` (as três rodadas
+  de correção da revisão adversarial), `e4561b9` e `858b1db` (as lições). No repo vizinho:
+  `renatojsilvas/tesouro-direto`, commit `14f0406`.
+
+  **As cinco provas, com o que provou cada uma:**
+  1. run de push `e6c54c1` com `test` → `deploy` → `guarda-deploy` todos verdes, sem passo
+     à mão. O run anterior, do commit de scaffolding, ficou **vermelho de propósito** e é
+     um bônus: o `guarda-deploy` fez o trabalho da §10.17 ao vivo, marcando "NÃO chegou a
+     produção" em vez de um `skipped` cinza;
+  2. `/health/ready` = 200 pela VPS;
+  3. `up{job="custodia"} = 1`, instância `custodia-app:8080`;
+  4. dashboard `custodia`, 10 painéis, **na pasta `Custodia`** (`dfxmfeaxnxh4wf`) e não na
+     `TesouroDireto` — conferido pela API, que é o único jeito de pegar o modo de falha (a);
+  5. as duas regras disparadas pela **condição real** (`docker stop custodia-app`, não
+     limiar adulterado), roteadas para `telegram-custodia` e confirmadas no chat com o
+     prefixo certo. Serviço restaurado e healthy em seguida.
+
+  `./scripts/verificar-f1.sh`: **10 ok, 0 falhas, 1 pulado, exit 2** — o desfecho esperado.
+
+  **Três coisas que esta fase descobriu e que mudam o que vem depois:**
+  - **`PADROES.md` §10 foi de 35 para 38 itens**, mais um corolário na §10.8. O bloco de
+    prompt acima diz "35 itens" porque era verdade quando foi despachado; ele carrega a
+    própria guarda ("CONFIRA a contagem no arquivo"), e é ela que vale, não o número.
+  - **Uma sétima ocorrência do inventário da §10.20, fora da lista desta fase:** o
+    `infra/grafana/README.md` afirmava que o repo vizinho já tinha o contact point
+    `telegram-custodia` e a rota `service = custodia`. Eram falsas. Foram **tornadas
+    verdadeiras** lá em vez de apagadas aqui — o publicador confirmou criando o contact
+    point ("criado", não "atualizado"). A regra que sai disso está no `LEIA-ME-KIT`:
+    afirmação sobre outro repositório se confere **naquele** repositório.
+  - **O número de memória do vizinho que o kit registrava está velho.** O
+    `tesouro-direto-alloy` foi a 96,8% do teto ao ganhar o quarto alvo de scrape, e o
+    cgroup mostrou que 190 dos 247 MB eram page cache, com `oom_kill 0` e PSI zerado. A
+    lição da §10.14 continua inteira; o número, não (`PADROES.md` §10.38).
+
+  **Pendência que o F2 herda, e ela é bloqueante para o schema:** o `AppDbContext` mantém
+  `ApplyConfigurationsFromAssembly` de propósito (o `advisor` reprovou omiti-lo), mas
+  **não há teste que prove que a fiação continua ligada** — hoje seria vácuo, com zero
+  configurations. Ao criar a primeira `IEntityTypeConfiguration`, acrescente teste que
+  assere `configurations.Count > 0` (guarda §10.8) **e** que toda entidade configurada
+  aparece em `AppDbContext.Model.GetEntityTypes()`. Sem ele, a configuration não entra no
+  modelo, o `migrations add` gera um `Up()` vazio — idêntico à `InitialCreate` legítima
+  desta fase — e o `/health/ready` não pega (§10.18).
+  **Segunda pendência, não bloqueante:** ao criar o primeiro repositório ou `IUnitOfWork`,
+  reintroduzir o `ProjectReference` Infrastructure→Application e **migrar o controle
+  positivo da §10.8** em `DependencyTests` de `Application→Domain` para
+  `Infrastructure→Application`, apagando da mensagem do assert a frase que passa a ser
+  falsa. Esta falha em compilação, então é auto-corretiva — a de cima não é.
 
 - [ ] **F2** — topologia do broker **antes de qualquer consumidor**.
   **Dependência externa nova: broker `plataforma-rabbitmq` alcançável.**
