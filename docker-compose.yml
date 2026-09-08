@@ -11,10 +11,14 @@ services:
       # uma variavel com `:?` que ninguem le quebra o `docker compose config -q` do CI.
       #
       #   Hub__{BaseUrl,ApiKey}  -> quando existir o bootstrap REST da projecao de precos
-      #                             (ARQUITETURA §7.1) ou a resolucao nome->id do
-      #                             onboarding (§7.2). O Hub e servico externo (repo
-      #                             hub-precos) e nao sobe aqui; na rede "plataforma" o
-      #                             alias e "hub-precos-app", nao "app" (§10.1).
+      #                             (ARQUITETURA §7.1) e o `asof` do worker de recalculo
+      #                             (§7.4). NAO cobre resolucao nome->id do onboarding
+      #                             (§7.2): essa acontece em Operacoes, na borda
+      #                             (ADR-10/ADR-11) — a Custodia so recebe instrumento_id
+      #                             ja resolvido, cru, no evento trades.registered. O Hub
+      #                             e servico externo (repo hub-precos) e nao sobe aqui;
+      #                             na rede "plataforma" o alias e "hub-precos-app", nao
+      #                             "app" (§10.1).
       #   RabbitMq__*            -> quando existir o consumidor de eventos (§9 item 3).
       #                             O broker e da PLATAFORMA e nao sobe aqui. Localmente:
       #                               docker network create plataforma     (uma vez)

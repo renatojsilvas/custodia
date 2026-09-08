@@ -1,0 +1,84 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{37689245-9946-4358-B064-4B10CD7CF33F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.Domain", "src\Custodia.Domain\Custodia.Domain.csproj", "{543F9F26-6581-44F2-97A1-E32C9136C44F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.Application", "src\Custodia.Application\Custodia.Application.csproj", "{8035176E-6FD3-4DFC-BA2F-8780BE0DF471}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.Infrastructure", "src\Custodia.Infrastructure\Custodia.Infrastructure.csproj", "{A688AEC5-7355-4CB8-9BD3-4A71EDA111D0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.API", "src\Custodia.API\Custodia.API.csproj", "{48755B1C-AA36-4830-A44E-A6018236B9FF}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{90E6156C-9381-4320-8EA1-0A7A0CE83F0A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.Domain.Tests", "tests\Custodia.Domain.Tests\Custodia.Domain.Tests.csproj", "{C12FF876-1D32-40B7-A4B7-52778357FF0A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.Application.Tests", "tests\Custodia.Application.Tests\Custodia.Application.Tests.csproj", "{D6B17405-2FC0-47A4-9584-D3576DC66C9D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.Infrastructure.Tests", "tests\Custodia.Infrastructure.Tests\Custodia.Infrastructure.Tests.csproj", "{AA3755C8-F158-4076-814B-D4CEB280C7B0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.Architecture.Tests", "tests\Custodia.Architecture.Tests\Custodia.Architecture.Tests.csproj", "{746E7849-4CBD-409F-BE4B-2EF507FC78E1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodia.API.Tests", "tests\Custodia.API.Tests\Custodia.API.Tests.csproj", "{EE7BCF6E-D011-4B37-A9DC-61EEA51C13E0}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{543F9F26-6581-44F2-97A1-E32C9136C44F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{543F9F26-6581-44F2-97A1-E32C9136C44F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{543F9F26-6581-44F2-97A1-E32C9136C44F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{543F9F26-6581-44F2-97A1-E32C9136C44F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8035176E-6FD3-4DFC-BA2F-8780BE0DF471}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8035176E-6FD3-4DFC-BA2F-8780BE0DF471}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8035176E-6FD3-4DFC-BA2F-8780BE0DF471}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8035176E-6FD3-4DFC-BA2F-8780BE0DF471}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A688AEC5-7355-4CB8-9BD3-4A71EDA111D0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A688AEC5-7355-4CB8-9BD3-4A71EDA111D0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A688AEC5-7355-4CB8-9BD3-4A71EDA111D0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A688AEC5-7355-4CB8-9BD3-4A71EDA111D0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{48755B1C-AA36-4830-A44E-A6018236B9FF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{48755B1C-AA36-4830-A44E-A6018236B9FF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{48755B1C-AA36-4830-A44E-A6018236B9FF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{48755B1C-AA36-4830-A44E-A6018236B9FF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C12FF876-1D32-40B7-A4B7-52778357FF0A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C12FF876-1D32-40B7-A4B7-52778357FF0A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C12FF876-1D32-40B7-A4B7-52778357FF0A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C12FF876-1D32-40B7-A4B7-52778357FF0A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D6B17405-2FC0-47A4-9584-D3576DC66C9D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D6B17405-2FC0-47A4-9584-D3576DC66C9D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D6B17405-2FC0-47A4-9584-D3576DC66C9D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D6B17405-2FC0-47A4-9584-D3576DC66C9D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AA3755C8-F158-4076-814B-D4CEB280C7B0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AA3755C8-F158-4076-814B-D4CEB280C7B0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AA3755C8-F158-4076-814B-D4CEB280C7B0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AA3755C8-F158-4076-814B-D4CEB280C7B0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{746E7849-4CBD-409F-BE4B-2EF507FC78E1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{746E7849-4CBD-409F-BE4B-2EF507FC78E1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{746E7849-4CBD-409F-BE4B-2EF507FC78E1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{746E7849-4CBD-409F-BE4B-2EF507FC78E1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EE7BCF6E-D011-4B37-A9DC-61EEA51C13E0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EE7BCF6E-D011-4B37-A9DC-61EEA51C13E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EE7BCF6E-D011-4B37-A9DC-61EEA51C13E0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EE7BCF6E-D011-4B37-A9DC-61EEA51C13E0}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{543F9F26-6581-44F2-97A1-E32C9136C44F} = {37689245-9946-4358-B064-4B10CD7CF33F}
+		{8035176E-6FD3-4DFC-BA2F-8780BE0DF471} = {37689245-9946-4358-B064-4B10CD7CF33F}
+		{A688AEC5-7355-4CB8-9BD3-4A71EDA111D0} = {37689245-9946-4358-B064-4B10CD7CF33F}
+		{48755B1C-AA36-4830-A44E-A6018236B9FF} = {37689245-9946-4358-B064-4B10CD7CF33F}
+		{C12FF876-1D32-40B7-A4B7-52778357FF0A} = {90E6156C-9381-4320-8EA1-0A7A0CE83F0A}
+		{D6B17405-2FC0-47A4-9584-D3576DC66C9D} = {90E6156C-9381-4320-8EA1-0A7A0CE83F0A}
+		{AA3755C8-F158-4076-814B-D4CEB280C7B0} = {90E6156C-9381-4320-8EA1-0A7A0CE83F0A}
+		{746E7849-4CBD-409F-BE4B-2EF507FC78E1} = {90E6156C-9381-4320-8EA1-0A7A0CE83F0A}
+		{EE7BCF6E-D011-4B37-A9DC-61EEA51C13E0} = {90E6156C-9381-4320-8EA1-0A7A0CE83F0A}
+	EndGlobalSection
+EndGlobal

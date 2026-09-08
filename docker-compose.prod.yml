@@ -22,8 +22,12 @@ services:
     #                                      entra na rede "plataforma" e fala com o alias
     #                                      "plataforma-rabbitmq".
     #   Hub__{BaseUrl,ApiKey}           -> entra quando o bootstrap REST da projecao de
-    #                                      precos existir (§7.1) ou a resolucao
-    #                                      nome->id do onboarding (§7.2).
+    #                                      precos existir (§7.1) e o `asof` do worker de
+    #                                      recalculo (§7.4). NAO cobre resolucao nome->id
+    #                                      do onboarding (§7.2): essa acontece em
+    #                                      Operacoes, na borda (ADR-10/ADR-11) — a
+    #                                      Custodia so recebe instrumento_id ja
+    #                                      resolvido, cru, no evento trades.registered.
     #
     # Ao acrescentar qualquer uma, siga a guarda de boot do PADROES §6: fora dos
     # ambientes isentos, segredo ausente DERRUBA O BOOT — nunca significa "sem
