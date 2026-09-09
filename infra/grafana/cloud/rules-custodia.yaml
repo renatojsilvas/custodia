@@ -105,3 +105,98 @@ groups:
           severity: critical
           service: custodia
         isPaused: false
+      - uid: custodia-topologia-ausente
+        title: Custodia — Topologia ausente (fila custodia.prices)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __DS_PROM__
+            model:
+              expr: absent(rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"})
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        dashboardUid: ""
+        panelId: 0
+        noDataState: OK
+        execErrState: Alerting
+        for: 3m
+        annotations:
+          summary: A série da fila custodia.prices sumiu — ou a fila foi apagada, ou o scrape do broker parou. As duas exigem ação, e a mensagem NÃO distingue qual é
+          description: >-
+            Esta regra JÁ É um absent(): quando a fila custodia.prices existe (estado
+            normal), a série rabbitmq_detailed_queue_messages_ready{queue="custodia.prices"}
+            é retornada pelo Prometheus e absent() devolve vetor VAZIO — do ponto de vista
+            do Grafana, a query A não tem dado, porque o "sem dado" e o "ausente" se
+            sobrepõem aqui. noDataState=OK de propósito: esse "sem dado" É o estado são,
+            não uma anomalia — copiar Alerting das duas regras acima sem pensar faria este
+            alerta disparar o tempo todo durante operação normal, o oposto do que ele
+            existe para fazer. Quando a fila SOME de verdade, absent() passa a devolver um
+            ponto com valor 1 (Prometheus tem dado a entregar), e é aí que a condição C
+            (gt 0) avalia Alerting — a ausência já carrega o próprio sinal, sem precisar de
+            noDataState para isso. execErrState=Alerting continua, diferente do caso
+            acima: falha de EXECUÇÃO da query (datasource fora do ar, sintaxe quebrada) é
+            anomalia de verdade, independente de a fila existir ou não. A métrica é
+            rabbitmq_detailed_queue_messages_ready (não rabbitmq_queue_messages_ready) por
+            desvio deliberado do alloy raspar /metrics/detailed?family=queue_coarse_metrics
+            do plataforma-rabbitmq — ver o comentário em
+            ../tesouro-direto-api/infra/alloy/config.alloy (prometheus.scrape "rabbitmq")
+            para o porquê (o /metrics default não tem label queue e faria este absent()
+            disparar todo dia para sempre; o /metrics/per-object teria o label mas custa
+            ~730 séries que crescem com conexão/canal de terceiro). LACUNA DECLARADA: a
+            fila existir não prova que os quatro bindings (prices.#, corpactions.#,
+            eod.ready, trades.registered) existem — o incidente real (perda do volume do
+            broker) leva fila e bindings juntos, e a ausência da série cobre esse caso; a
+            remoção cirúrgica de um binding com a fila intacta fica coberta pela
+            verificação bloqueante do passo de deploy (management API, onde binding é
+            conferível), não por este alerta. SEGUNDA LACUNA DECLARADA, e ela muda o que
+            você faz ao ser acordado: absent() devolve 1 tanto quando a fila é APAGADA
+            quanto quando o SCRAPE PARA (alloy fora, o target plataforma-rabbitmq removido
+            do config.alloy — que vive em OUTRO repo —, ou o endpoint de métricas do
+            broker engasgando). Nesses casos a fila existe e este alerta grita mesmo
+            assim. Então o PRIMEIRO passo do diagnóstico é desambiguar, e não reexecutar
+            o deploy: consulte up{job="plataforma-rabbitmq"} no Grafana Cloud — se for 0
+            ou ausente, o problema é de COLETA e a topologia provavelmente está intacta.
+            Se for 1, o alvo respondeu — mas isso NÃO prova que a família
+            queue_coarse_metrics foi raspada: se alguém editar o config.alloy (que vive em
+            OUTRO repo) e perder o parâmetro family, o endpoint responde 200, up fica 1, a
+            série some, e concluir "a fila sumiu" seria errado. Confirme com
+            GET /api/queues/%2F/custodia.prices na management API antes de concluir. TERCEIRA LACUNA: com lookback
+            de 5m mais o for de 3m, a detecção de "fila apagada" leva até ~8 minutos, e
+            nessa janela trades.registered é descartado em silêncio — inerente à detecção
+            por ausência de série, e escrito aqui para não ser descoberto durante um
+            incidente. REJEITADO NOMINALMENTE: contagem de
+            bindings do exchange prices — o rabbitmq_prometheus expõe séries por fila e
+            contagens globais, mas NÃO expõe contagem de bindings por exchange (a regra
+            nasceria sobre série inexistente, disparando para sempre), e essa contagem
+            muda quando outro serviço binda uma fila nova na mesma exchange (seria alerta
+            nosso disparando por mudança alheia). É ESTA REGRA QUE AUTORIZA o ::warning::
+            do passo de deploy no caso "broker inacessível depois do laço de espera": sem
+            ela, aquele desfecho tem que virar reprova (exit 1) — quem for apagar esta
+            regra precisa reabrir essa decisão no passo de deploy primeiro. Ao
+            diagnosticar: confira primeiro se o container plataforma-rabbitmq está de pé
+            (docker ps na VPS do hub-precos), depois se o alvo job="plataforma-rabbitmq"
+            aparece saudável na UI do tesouro-direto-alloy (127.0.0.1:12345), e por fim
+            GET /api/queues/%2F/custodia.prices na management API do broker para confirmar
+            se a fila em si existe antes de reexecutar o passo de deploy da custodia.
+        labels:
+          severity: critical
+          service: custodia
+        isPaused: false

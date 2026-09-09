@@ -238,8 +238,11 @@ a metade **comportamental** vai para o **F4** (consumidor).
   porque a alternativa é perder. **E o confirm negado PERSISTENTE tem desfecho próprio, sem
   o qual esta regra reproduz os dois desfechos que este arquivo rejeita.** Com uma fila, um
   consumidor, prefetch 1 e consumo serial, o `nack(requeue: true)` reentrega **na hora**;
-  se a causa do confirm negado não for transitória — o caso previsto é a `custodia.retry`
-  ter nascido com `x-overflow: reject-publish` (saída (i) do F2) e estar cheia —, o
+  se a causa do confirm negado não for transitória — **por qualquer causa**; note que o
+  exemplo motivador original (a `custodia.retry` cheia com `x-overflow: reject-publish`)
+  **deixou de existir**, porque o F2 escolheu a saída (ii) e a fila nasceu `classic`, sem
+  `x-overflow` e sem `x-max-length`, e portanto sem como encher por reject-publish. **O
+  ramo continua obrigatório**: o que caiu foi o exemplo, não a classe —, o
   resultado seria `nack → reentrega → publish → reject → nack` sem atraso nenhum, que é o
   **laço quente** da §10.13, e o `x-delivery-limit` queimaria em milissegundos levando a
   mensagem para a `custodia.prices.dlq`, que é o "DLQ na primeira tentativa" **rejeitado
@@ -819,7 +822,7 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   `Infrastructure→Application`, apagando da mensagem do assert a frase que passa a ser
   falsa. Esta falha em compilação, então é auto-corretiva — a de cima não é.
 
-- [ ] **F2** — topologia do broker **antes de qualquer consumidor**.
+- [x] **F2** — topologia do broker **antes de qualquer consumidor**. **FECHADA em 2026-09-09** — ver a nota de fecho no fim desta fase.
   **Dependência externa nova: broker `plataforma-rabbitmq` alcançável.**
 
   Um passo de deploy **idempotente** que declara, pela management API, o exchange `prices`
@@ -831,9 +834,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   a Decisão A executável. E a verificação bloqueante do resultado, com controle positivo
   **e** negativo (§10.8: a checagem tem que saber dizer "não").
 
-  **Por que esta é a fase 2 e não a sexta.** Operações publica `trades.registered` em
-  produção desde 2026-09-06. Cada dia entre o F1 e o F2 é um dia de trades potencialmente
-  perdidos **para sempre** — e não há caminho de recuperação por contrato. Cada dia depois
+  **Por que esta é a fase 2 e não a sexta.** O relay do Operações está no ar desde
+  2026-09-06 e pode publicar `trades.registered` a qualquer instante. Cada dia entre o F1
+  e o F2 é um dia de trades potencialmente perdidos **para sempre** — e não há caminho de
+  recuperação por contrato. *"Potencialmente" é literal, e a distinção foi medida no
+  fecho do F2: até 2026-09-08 a `outbox` do `operacoes` tinha **0 linhas** e a tabela
+  `operacoes` **0 registros**, e o relay dele **marca** `publicado_em` em vez de apagar a
+  linha — então nada tinha sido publicado, e a janela fechou **antes** do primeiro trade.
+  A fase é preventiva, não remediadora. Não leia "exposto" como "perdido": ver o
+  `LEIA-ME-KIT`, corolário de "Perder o volume do broker".* Cada dia depois
   do F2 é um dia de mensagens acumuladas numa fila durável, esperando o consumidor do F4.
   A fila **acumula de propósito**: isso é a entrega, não efeito colateral.
 
@@ -874,7 +883,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     management API quem publica para onde, e esta fase existe justamente para que a
     topologia seja **conferível**.
   - **A fila de retry com atraso, e é ela que sustenta a Decisão A.** `custodia.retry`
-    (quorum, durable, **sem consumidor**) com `x-message-ttl` e
+    (**`classic` durable** — ver a decisão medida no fim deste item —, **sem consumidor**)
+    com `x-message-ttl` e
     `x-dead-letter-exchange = custodia.retry.dlx` (fanout) → de volta para
     `custodia.prices`. O consumidor republica o órfão **pelo exchange `custodia.retry.in`**
     (nunca direto na fila) e confirma a mensagem original,
@@ -919,8 +929,14 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   decidido antes; fica rejeitado porque purge com backlog real na fila é a mesma perda que
   a fase impede, e o binding de `trades.registered` já é provado por comparação de conjunto
   com controle negativo.* **E a prova é de DELTA, nunca de valor absoluto:** anota-se
-  `messages_ready` antes, exige-se `depois == antes + 1`, retira-se a mensagem específica e
-  exige-se `final == antes`. Exigir `messages_ready == 0` antes de publicar — como dizia o
+  `messages_ready` antes, exige-se `depois >= antes + 1`, retira-se a mensagem específica e
+  exige-se que a contagem volte a **não incluir** a nossa mensagem. **É `>=`, e não `==`,
+  e a versão anterior deste parágrafo escrevia `==`:** um `trades.registered` real
+  chegando entre as duas leituras leva a contagem a `antes + 2`, a igualdade nunca
+  acontece, e o deploy reprova — o mesmo falso negativo que o parágrafo seguinte rejeita
+  ao proibir `messages_ready == 0`, pela mesma causa. A prova de que o binding roteou não
+  depende da igualdade: o publish pela management API devolve `routed`, que é evidência
+  direta e imune a tráfego de terceiro. Exigir `messages_ready == 0` antes de publicar — como dizia o
   rascunho anterior — reprovaria o deploy assim que o primeiro `trades.registered` real
   chegasse, e esta fase diz com todas as letras que **a fila acumula de propósito**; o
   próprio Pronto manda rodar o deploy duas vezes seguidas, e na segunda já pode haver
@@ -974,15 +990,19 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
   1. **Medir** se o `plataforma-rabbitmq` já é raspado pelo alloy (`LEIA-ME-KIT`,
      "Especular em vez de medir"). Se for, a regra `custodia-topologia-ausente` entra em
-     `rules-custodia.yaml` **nesta fase**, ancorada em
-     `absent(rabbitmq_queue_messages_ready{queue="custodia.prices"})`.
+     `rules-custodia.yaml` **nesta fase**, ancorada na série por fila que o endpoint
+     escolhido de fato expõe — **medido no F2: é
+     `absent(rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"})`**,
+     do `/metrics/detailed?family=queue_coarse_metrics`. Ver a decisão medida abaixo.
   2. Se **não** for raspado, o F2 **torna-o raspado**: acrescenta o alvo em
      `../tesouro-direto-api/infra/alloy/config.alloy`, do mesmo jeito que o F1 acrescentou
      o da custódia. **E a §10.9 se aplica à SÉRIE, não ao endpoint:** conferir com o
      comando literal que o endpoint de métricas responde prova que o plugin está
      habilitado, e **não** prova que a série que a regra vai usar existe. O comando literal
-     a rodar é o que busca **`rabbitmq_queue_messages_ready{queue="custodia.prices"}` no
-     corpo da resposta**, com a fila já declarada. Sem esse passo, a regra nasce sobre uma
+     a rodar é o que busca **a série por fila no corpo da resposta**, com a fila já
+     declarada — e foi ele que derrubou a grafia que este arquivo trazia: no `/metrics`
+     default a série vem **agregada, sem o label `queue`** (medido no F2), então o seletor
+     original nunca casaria. Sem esse passo, a regra nasce sobre uma
      série que nunca existiu, e o Pronto por `noDataState` a aprova — ver a armadilha
      abaixo.
   3. Se o endpoint de métricas do broker não existir, ou existir **sem a série** acima, e
@@ -993,8 +1013,16 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
   **O sinal escolhido, e o que ele NÃO cobre — escrito porque a versão anterior desta fase
   escolheu um sinal que não existe.** A regra é `absent()` sobre
-  `rabbitmq_queue_messages_ready{queue="custodia.prices"}`, isto é, sobre a **existência da
-  fila**, que o `rabbitmq_prometheus` expõe de verdade, por fila. *Rejeitado:* **contagem
+  `rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"}`, isto é,
+  sobre a **existência da fila**, que o `rabbitmq_prometheus` expõe de verdade, por fila.
+  **A grafia foi corrigida no F2, por medição, e o nome importa:** a série com o label
+  `queue` só existe em `/metrics/detailed?family=queue_coarse_metrics` (**31 séries ativas
+  no job**, medidas na nuvem com as quatro filas declaradas — não são as 12 *linhas* que o
+  corpo do endpoint traz com uma fila de sonda; grandezas diferentes, §10.42) e em
+  `/metrics/per-object` (~730 séries, e crescendo com conexão/canal de terceiros); no
+  `/metrics` default ela vem agregada, **sem** o label, e o seletor que este arquivo
+  trazia antes nunca casaria — disparando todo dia, para sempre, que é o defeito que o
+  parágrafo seguinte rejeita nominalmente por outro caminho. *Rejeitado:* **contagem
   de bindings do `prices`** — como dizia a versão anterior. Dois defeitos, e o primeiro é
   fatal: (i) o plugin expõe séries **por fila** e contagens globais, e **não** expõe
   contagem de bindings **por exchange**; a regra nasceria sobre uma série inexistente,
@@ -1053,7 +1081,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     exchange `custodia.parking`   (NOSSO, FANOUT durable) -> fila `custodia.parked`
     exchange `custodia.retry.in`  (NOSSO, FANOUT durable) -> fila `custodia.retry`
     exchange `custodia.retry.dlx` (NOSSO, FANOUT durable) -> fila `custodia.prices`
-    fila     `custodia.retry`    (quorum, durable, SEM CONSUMIDOR) com
+    fila     `custodia.retry`    (CLASSIC durable — a saida (ii) foi a escolhida, ver o
+                                  fecho do F2 —, SEM CONSUMIDOR) com
                                   x-message-ttl = 30000 e
                                   x-dead-letter-exchange = custodia.retry.dlx
 
@@ -1110,8 +1139,10 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
       que e falso.
 
   NAO IMPLEMENTE CONSUMIDOR. Nada de basic.consume, nada de codigo .NET de consumo,
-  nada de RabbitMq__* no compose. A fila ACUMULA de proposito ate o F4 — o operacoes ja
-  publica trades.registered em PRODUCAO desde 2026-09-06, e evento em exchange topic sem
+  nada de RabbitMq__* no compose. A fila ACUMULA de proposito ate o F4 — o relay do
+  operacoes esta NO AR desde 2026-09-06 e pode publicar trades.registered a qualquer
+  instante (medido em 2026-09-08: a outbox dele tinha 0 linhas, entao nada tinha sido
+  publicado AINDA — nao confunda "exposto" com "perdido"), e evento em exchange topic sem
   binding casando e descartado EM SILENCIO com o produtor marcando sucesso.
 
   A verificacao no deploy substitui o que o CI perdeu de proposito (leia o comentario no
@@ -1146,21 +1177,26 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   real desde o instante em que o binding existe — exigir zero reprovaria o deploy assim
   que o primeiro trade chegasse, e o proprio Pronto manda rodar o deploy duas vezes. A
   prova de uma fila que acumula e de DELTA: registre `antes`, publique, exija
-  `depois == antes + 1`, retire a mensagem especifica, exija `final == antes`.
+  `depois >= antes + 1` (CRESCIMENTO, nunca igualdade: trade real chegando na janela leva
+  a `antes + 2` e reprovaria o deploy), retire a mensagem especifica, exija que a contagem
+  volte a nao incluir a nossa mensagem.
 
   ALERTA DE TOPOLOGIA — INCONDICIONAL NESTA FASE, e e ele que autoriza o ::warning::
   acima. MECA primeiro se o plataforma-rabbitmq ja e raspado pelo alloy; nao especule.
     (1) se for  -> a regra `custodia-topologia-ausente` entra AGORA em
                    rules-custodia.yaml, ancorada em
-                   absent(rabbitmq_queue_messages_ready{queue="custodia.prices"});
+                   absent(rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"})
+                   — grafia CORRIGIDA no F2 por medicao: no /metrics default a serie vem
+                   agregada, SEM o label `queue`, e o seletor antigo nunca casaria;
     (2) se nao for -> o F2 TORNA-O RASPADO: acrescente o alvo em
                    ../tesouro-direto-api/infra/alloy/config.alloy, do mesmo jeito que o
                    F1 acrescentou o da custodia. E A 10.9 SE APLICA A SERIE, NAO AO
                    ENDPOINT: conferir que o endpoint de metricas responde prova que o
                    plugin esta habilitado e NAO prova que a serie da sua regra existe.
                    O comando literal a rodar e o que procura
-                   `rabbitmq_queue_messages_ready{queue="custodia.prices"}` NO CORPO da
-                   resposta, com a fila ja declarada;
+                   a serie POR FILA NO CORPO da resposta, com a fila ja declarada — foi
+                   esse comando que derrubou a grafia antiga (o endpoint que a expoe com o
+                   label `queue` e /metrics/detailed?family=queue_coarse_metrics);
     (3) se o endpoint nao existir, ou existir SEM ESSA SERIE, e nao puder ser habilitado
                    (container de OUTRO repo)
                 -> nao ha regra possivel, e entao o passo passa a REPROVAR tambem no
@@ -1216,22 +1252,53 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   `custodia.prices.dlq`, a `custodia.parked` e a `custodia.retry` existem, ligadas aos
   exchanges **nossos**, e a `custodia.retry` traz `x-message-ttl` e
   `x-dead-letter-exchange` batendo com os decididos.
-  (**Estrita**) a MESMA checagem **reprova** quando alimentada com um binding inventado, e
-  reprova quando um binding real é removido à mão — controle negativo **e** positivo, sem
-  os quais a asserção passa também quando o mecanismo de detecção quebrou (§10.8). Mais:
+  (**Estrita**) a MESMA checagem **reprova** quando a lista esperada contém uma chave que
+  o broker não tem — controle negativo **e** positivo, sem os quais a asserção passa também
+  quando o mecanismo de detecção quebrou (§10.8). *A redação anterior pedia "reprova quando
+  um binding real é removido à mão", e isso é **inalcançável por desenho**: o script declara
+  os oito bindings ANTES de verificar, então um binding removido à mão é recriado e a
+  verificação passa — e é bom que passe, porque é isso que idempotência significa. A
+  substituição não é um teste parecido, é o **mesmo ramo com a mesma entrada relativa**: a
+  comparação é de conjuntos ordenados, e injetar uma chave na lista ESPERADA produz
+  exatamente a assimetria (esperado ⊃ atual) que a remoção de um binding real produziria.
+  Exercitável sem tocar em binding de produção, por `CUSTODIA_TOPOLOGIA_TESTE_NEGATIVO`.*
+  **E há uma segunda asserção bloqueante, que a redação anterior não previa porque ela
+  nasceu na revisão adversarial: a de que nenhuma POLICY do broker aplica configuração por
+  cima das nossas filas.** O controle positivo dela não é variável de ambiente — é
+  **plantar a policy no broker**, porque asserção de ausência sobre estado de terceiro só
+  se prova pelo mecanismo real (§10.40). Planta-se na `custodia.parked` (terminal e vazia,
+  **nunca** na `custodia.prices`), nos dois sabores — policy e **operator** policy, que
+  têm endpoints de remoção diferentes e é a segunda a mais provável num broker alheio —,
+  confere-se que reprova nomeando a fonte certa, e apaga-se as duas. Mais:
   (a) **prova de que o fanout não engole nada** — publicar no `custodia.dlx` com uma
   routing key arbitrária que nenhum binding casaria (`chave.que.ninguem.binda`) e provar
   que a mensagem **aparece** na `custodia.prices.dlq`; mesmo controle para
   `custodia.parking` → `custodia.parked`. Sem isso o F4 dead-letra para um buraco, e o
   Pronto "existem, ligadas" fica verde com a mensagem sendo descartada em silêncio;
-  (b) **o retry fecha o ciclo, não é buraco:** uma mensagem publicada no
-  `custodia.retry.in` com routing key `prices.smoke` sai da `custodia.retry` **depois do
-  TTL** e chega na `custodia.prices` — e é retirada de lá com `basic.get`+ack da mensagem
-  específica ao fim da prova (`prices.smoke` de propósito: se a limpeza falhar, a
-  mensagem estaciona no F4 em vez de virar linha de livro);
+  (b) **o retry fecha o ciclo, não é buraco.** *A técnica mudou no fecho da fase, por
+  medição, e o texto anterior — "sai da `custodia.retry` e chega na `custodia.prices`,
+  observado pela contagem das duas" — descrevia uma prova que é **flaky e vácua ao mesmo
+  tempo**: passa com o `custodia.retry.dlx` desligado (sair não é chegar) e reprova
+  deploy sadio quando a defasagem de `messages_ready` come a janela do TTL.* O veredito é
+  por **marcador**, numa **fila-sonda temporária** bindada ao `custodia.retry.dlx`: como
+  ele é `fanout`, a mensagem chega à `custodia.prices` **e** à sonda, e a sonda só tem
+  tráfego nosso — `basic.get` determinístico, sem disputar cabeça de fila com mensagem
+  real e sem gastar tentativa de entrega de ninguém. A sonda nasce com `x-expires`, é
+  apagada ao fim, e órfãs de execução morta são varridas no início da verificação seguinte
+  (por prefixo exato) — sem isso elas reprovariam o deploy seguinte, porque a sonda entra
+  no conjunto que a verificação de bindings confere. A chegada na `custodia.prices` passa
+  a ser **inferida** — sonda + `fanout` + conjunto exato de bindings + ausência de policy
+  envenenando —, e a retirada de lá é condicional, pelo mesmo motivo da alínea (c);
   (c) a prova de fumaça por **DELTA**, nunca por valor absoluto: `messages_ready` anotado
-  **antes**, `depois == antes + 1` após publicar `prices.smoke`, `final == antes` após o
-  `basic.get`+ack. Exigir `messages_ready == 0` seria reprovar o deploy assim que o
+  **antes**, `depois >= antes + 1` após publicar `prices.smoke` (crescimento, não
+  igualdade — ver a correção medida acima), a contagem sem a nossa mensagem após o
+  `basic.get`+ack. **E ela é CONDICIONAL: só roda com a fila vazia.** Com backlog — o
+  estado normal a partir do primeiro trade — ela é pulada, porque (i) a limpeza seria
+  impossível, já que a nossa mensagem não estaria na cabeça, e cada deploy deixaria lixo
+  crescendo; e (ii) ela seria **vácua**, porque com uma fila de terceiro bindada em
+  `prices` e tráfego na janela o delta cresce mesmo com o nosso binding removido. Nesse
+  caso o roteamento daquele deploy é provado pela comparação de conjunto dos bindings,
+  que é estrita nas duas direções, e o log diz qual caminho foi usado. Exigir `messages_ready == 0` seria reprovar o deploy assim que o
   primeiro `trades.registered` real chegasse — e esta fase existe para que ele chegue;
   (d) o deploy roda **duas vezes seguidas** com o mesmo resultado — idempotência provada,
   não suposta;
@@ -1244,16 +1311,39 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   dispara `hub-relay-falha-persistente` no plantão de outro serviço, que é precisamente o
   "reprovar/estragar o alheio por causa de um serviço que não é seu" que esta fase invoca
   para justificar o `::warning::`. **Decidido: a prova é em duas partes, nenhuma
-  destrutiva.** (i) O passo de deploy é rodado uma vez apontado para um **host
-  inalcançável** (endereço de management API inexistente, por variável, numa execução
-  manual): prova que o laço de espera roda, que o desfecho é `::warning::` e não `exit 1`,
-  e que o deploy segue verde. (ii) O alerta de topologia é provado em **duas metades, e a
+  destrutiva.** (i) O **script de topologia** é rodado uma vez apontado para um **IP
+  inalcançável** — `RABBITMQ_MANAGEMENT_HOST=192.0.2.1` (TEST-NET-1, não roteável), numa
+  execução manual: prova que o laço de espera roda e que o script sai com **11**.
+  *Use IP, não nome: o script distingue os dois de propósito, e um NOME que não resolve
+  sai **17** em ~8 s, sem rodar o laço — numa rede docker, nome que não resolve significa
+  que o alvo não está naquela rede, o que é configuração NOSSA e acionável aqui. Medido
+  em 2026-09-09: IP → **11**, com `curl (28) timed out`; nome → **17**, com
+  `curl (6) Could not resolve host`. Um procedimento escrito com nome prova a coisa errada
+  e faz quem o repetir concluir que o mapeamento quebrou. **E reduza o laço na execução
+  manual** (`CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES`/`_SLEEP`): com os defaults, o caso do IP
+  custa ~9-10 minutos, porque nenhuma das duas saídas rápidas dispara e as 36 tentativas
+  rodam com `--max-time 10` cada. Os comandos literais estão em
+  `infra/rabbitmq/README.md`, "Rodar à mão".* *Seja preciso
+  sobre o que isso prova e o que não prova: o `::warning::` e o "deploy segue verde" não
+  são do script, são do `case` do `.github/workflows/ci.yml`, que mapeia 11 — e só 11 —
+  para avisar e seguir. A variável **não** é encaminhada pelo `ssh-action`, de propósito:
+  uma alavanca de teste no `envs:` do deploy é uma alavanca para o deploy falar com o
+  broker errado em silêncio. Então esta alínea se fecha com as duas metades separadas: o
+  exit code, medido; e o mapeamento, lido no `case`.* (ii) O alerta de topologia é provado em **duas metades, e a
   primeira é CONTROLE POSITIVO, sem o qual a segunda passa por vacuidade**: primeiro, com a
   `custodia.prices` declarada e o broker no ar, a série
-  `rabbitmq_queue_messages_ready{queue="custodia.prices"}` **está presente** — conferida na
+  `rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"}` **está
+  presente** — conferida na
   consulta do Grafana Cloud, não no arquivo de regra — e a regra avalia em **OK**; só então
-  a segunda metade, `noDataState` configurado para disparar, é aceita como prova do estado
-  "broker fora". *Sem o controle positivo, uma regra construída sobre uma série que **nunca
+  a segunda metade: a MESMA expressão `absent()`, consultada com um seletor de fila
+  **inexistente** (`queue="custodia.prices.que.nao.existe"`), devolve **1** — o que prova,
+  sem derrubar nada, que a expressão sabe dizer "ausente". *A redação anterior pedia
+  "`noDataState` configurado para disparar", e isso está **errado e induz ao defeito que
+  esta fase rejeita duas vezes**: a regra JÁ É um `absent()`, então com a fila existindo a
+  query devolve vetor vazio, que o Grafana lê como "sem dado" — o estado SÃO. Pôr
+  `Alerting` ali liga um alerta permanente em operação normal. O `noDataState` correto é
+  **`OK`**, e a fase o entrega assim de propósito; quem some é a fila, e aí o `absent()`
+  devolve 1 e a condição dispara sem passar pelo `noDataState`.* *Sem o controle positivo, uma regra construída sobre uma série que **nunca
   existiu** satisfaz a prova perfeitamente — e depois dispara todo dia, para sempre. Era
   esse o buraco da versão anterior deste Pronto, e ele casava com a escolha de sinal
   (contagem de bindings) que a fase agora rejeita nominalmente.* *Rejeitado:*
@@ -1261,6 +1351,58 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   §10.8 já é satisfeita pelo controle negativo acima. Se **nenhuma** das duas partes for
   executável, a linha 2 da tabela de desfecho **não está autorizada** e o passo passa a
   reprovar também no caso "broker inacessível".
+
+  ---
+
+  ### Nota de fecho do F2 — 2026-09-09
+
+  **A topologia existe em produção**, declarada de forma idempotente pelo passo de deploy e
+  verificada por leitura de volta. Provado contra o `plataforma-rabbitmq` real, não simulado:
+  `custodia.prices` quorum com `delivery_limit` **efetivo** 20 e DLX própria; os quatro
+  bindings da §5; `custodia.prices.dlq` e `custodia.parked` com `delivery_limit` efetivo
+  `"unlimited"`; `custodia.retry` classic com TTL 30 s, sem `x-overflow` e sem `x-max-length`;
+  e os quatro exchanges nossos conferidos como `fanout durable`.
+
+  **A fase foi PREVENTIVA, não remediadora — e isso é uma correção de algo que eu afirmei.**
+  Ao abrir, medi o vhost sem fila nenhuma e a conexão `operacoes-relay` aberta, e concluí que
+  trades estavam sendo descartados naquele minuto. Um comando desmentiu: a `outbox` do
+  `operacoes` tinha **0 linhas** e o relay dele **marca** `publicado_em` em vez de apagar.
+  Nada tinha sido publicado. A janela estava aberta e ninguém tinha caído nela. Não confunda
+  "exposto" com "perdido" (`LEIA-ME-KIT`, corolário de "Perder o volume do broker").
+
+  **As três decisões, com a razão que as sustenta:**
+
+  1. **`custodia.retry` nasce `classic`** (saída (ii)), e a razão é **estratégia de DLX** —
+     nunca "quorum não suporta TTL", que é falso. A fila é 100% tráfego de dead-letter; o
+     default de quorum é `at-most-once`, que pode descartar durante o dead-letter; e a saída
+     segura **não é conferível na declaração**: medido, a management API do 4.3.5 aceita
+     `at-least-once` **com e sem** o `reject-publish` que ele exige. Ler o argumento de volta
+     prova o que pedimos, não o que o broker faz.
+  2. **`x-delivery-limit` explícito**: 20 na fila principal (o default medido também é 20 —
+     a asserção sozinha não discrimina, e quem carrega a prova são as terminais) e `-1` nas
+     terminais, que são fim de linha e onde o default descartaria em silêncio.
+  3. **O alerta ancora em `rabbitmq_detailed_queue_messages_ready`**, não na grafia que este
+     arquivo trazia: no `/metrics` default a série vem agregada, **sem o label `queue`**, e o
+     seletor original nunca casaria — `absent()` dispararia todo dia, para sempre.
+
+  **O acoplamento novo, declarado:** a checagem de policy usa allow-list **vazia**, então
+  qualquer chave que o dono do broker aplique sobre as nossas filas reprova o nosso deploy.
+  Deliberado, e há casos legítimos que vão dispará-lo (`consumer-timeout`, `queue-version`).
+  A saída é acrescentar a chave a uma allow-list explícita com motivo escrito, e está no
+  `infra/rabbitmq/README.md`, "A válvula que não existe".
+
+  **O que esta fase custou, e é a lição que vale mais que ela:** seis rodadas de revisão. O
+  `revisor` adversarial só entrou na **quarta** — e achou, sozinho, que uma *policy* do broker
+  desliga as duas garantias centrais com o deploy verde, defeito que **três** auditorias de
+  conformidade aprovaram. A quinta rodada mostrou que a correção dele tinha fechado o exemplo
+  e não a classe (faltava `expires`, que apaga a fila inteira). Rodar o adversarial só no fim,
+  sobre a versão já três vezes revisada, é caro: ele deveria ver a primeira entrega.
+
+  **Fica aberto, e não é dívida escondida:** o Pronto (d) — "o deploy roda duas vezes" — fecha
+  no primeiro push desta branch; o que rodou três vezes foi o **script**, à mão. E os secrets
+  `RABBITMQ_USER`/`RABBITMQ_PASSWORD` têm que estar cadastrados **antes** do push, senão a
+  guarda `-z` reprova e o `guarda-deploy` marca o commit como não deployado.
+
 
 - [ ] **F3** — o schema do livro: as constraints que tornam o dado irreparável impossível
   de gravar. **Dependência externa nova: Postgres com schema (a instância já existe).**
@@ -2655,9 +2797,8 @@ para ela.
        original — aqui o requeue é o certo, porque a alternativa é perder. **E o confirm
        negado PERSISTENTE tem ramo próprio, senão esta regra produz os dois desfechos que a
        Decisão A rejeita:** com prefetch 1 e consumo serial, o `nack(requeue: true)`
-       reentrega **na hora**, e se a causa não for transitória — o caso previsto é a
-       `custodia.retry` com `x-overflow: reject-publish` cheia (saída (i) do F2), cujo
-       reject **é** um confirm negado — o resultado é `nack → reentrega → publish → reject
+       reentrega **na hora**, e se a causa não for transitória — **confirm negado
+       persistente, por qualquer causa** — o resultado é `nack → reentrega → publish → reject
        → nack` sem atraso: laço quente num host de um núcleo (§10.13) e `x-delivery-limit`
        queimado em milissegundos, levando à DLQ que este roadmap declara sem história de
        dreno. Regra: **teto de tentativas de republish para a mesma entrega**; estourado, a
@@ -2781,6 +2922,21 @@ para ela.
     - **COMPLETUDE** = as `N` foram examinadas, `residual_motivo = 0` e
       `n_motivo ≥ 1` → sucesso, **e a passagem publica o residual por motivo** (é essa a
       origem da contagem, não um gauge de processo).
+
+    **DÍVIDA HERDADA DO F2, e ela mexe com esta contagem — leia antes de implementar o
+    drenador.** As filas terminais (`custodia.prices.dlq`, `custodia.parked`) podem trazer
+    até **uma mensagem `custodia-f2-*` por execução ABORTADA** do passo de topologia do F2:
+    a prova de fanout publica uma sonda e a remove, mas se a execução morrer entre as duas,
+    a sonda fica, e a execução seguinte absorve **uma** por vez. Em regime estável não
+    cresce — mas depois de qualquer aborto a fila não volta a zero sozinha. O que isso faz
+    aqui: essas mensagens **não têm motivo** e o payload não é JSON de contrato nenhum, então
+    uma `custodia.parked` que contenha só elas faz `n_motivo = 0` e a passagem completa
+    devolve **falha por um motivo que não existe**. O drenador tem que reconhecê-las pelo
+    prefixo `custodia-f2-` e descontá-las de `N` — não tratá-las como mensagem estacionada.
+    Removê-las é `basic.get` + ack conferindo o prefixo, **nunca** purge. *A `custodia.prices`
+    tem o resíduo análogo (`custodia-f2-retry-*`, ~1 por deploy quando há backlog), e vale a
+    mesma regra no consumidor: `prices.smoke` com payload não-JSON é sonda do deploy, não
+    evento.*
     - **PARCIAL** = as `N` foram examinadas e `residual_motivo > 0` → **falha**, para
       **qualquer** valor de `n_motivo`. É o caso da mensagem daquele motivo que o handler
       examinou e **não** conseguiu processar, e ele cobre também o extremo em que **todas**
@@ -3164,9 +3320,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
          aqui o requeue e o certo, porque a alternativa e perder.
          E O CONFIRM NEGADO PERSISTENTE TEM RAMO PROPRIO, SENAO ESTA REGRA PRODUZ OS DOIS
          DESFECHOS QUE A DECISAO A REJEITA. Com prefetch 1 e consumo serial, o
-         nack(requeue: true) reentrega NA HORA; se a causa nao for transitoria — e o caso
-         previsto e a custodia.retry ter nascido com x-overflow: reject-publish no F2 e
-         estar CHEIA, cujo reject E um confirm negado — o resultado e
+         nack(requeue: true) reentrega NA HORA; se a causa nao for transitoria — o caso
+         previsto e CONFIRM NEGADO PERSISTENTE, por qualquer causa — o resultado e
          nack -> reentrega -> publish -> reject -> nack SEM ATRASO NENHUM: LACO QUENTE
          com prefetch 1 num host de UM nucleo (PADROES 10.13), e o x-delivery-limit
          queima em milissegundos levando a mensagem para a DLQ, que e o "DLQ na primeira

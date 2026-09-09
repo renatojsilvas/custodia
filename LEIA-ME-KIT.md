@@ -782,6 +782,28 @@ divergindo do que o broker aceitou), e apenas avise no que é de terceiro (broke
 cobrem). Antes de pôr um `exit 1` num passo de deploy, pergunte: "se isto falhar, a culpa é
 deste repositório?". Se não for, o `exit 1` está mentindo sobre o que aconteceu.
 
+**EXCEÇÃO NOMEADA, e ela não enfraquece a regra — afia a pergunta.** No F2 da `custodia`
+apareceram DOIS casos em que a culpa **não** é deste repositório e o desfecho é reprovar
+mesmo assim: o exchange `prices` presente com propriedades divergentes (exit 13) e uma
+policy do dono do broker aplicando configuração por cima das nossas filas (exit 19). Os
+dois dizem, na própria mensagem, "a correção é no repo do `hub-precos`, não aqui".
+
+A pergunta certa não é só **de quem é a culpa** — é **o que sobrevive a seguir em
+frente**:
+
+- broker **inacessível** → seguir é seguro: nada foi declarado errado, o container sobe
+  válido, e o alerta de topologia cobre a janela. `::warning::`.
+- invariante **quebrado** (o exchange não é o que o produtor espera; uma policy ligou o
+  teto ou o TTL que esta fase existe para manter desligados) → seguir é deployar **sobre
+  uma premissa falsa**, e o serviço passaria a consumir de uma topologia que ninguém
+  verificou. Reprova.
+
+**Regra afiada:** *"se isto falhar, a culpa é deste repositório?"* decide entre avisar e
+reprovar **só quando o estado permanece íntegro**. Quando o que falhou foi um invariante,
+reprove independentemente de quem tenha causado — e diga na mensagem onde está a correção,
+porque aí o `exit 1` não está mentindo: ele está dizendo "não deployei sobre isto", que é
+verdade. O que não se pode é reprovar e mandar o operador procurar no repo errado.
+
 ## O executor propõe a correção no lugar errado, e ela passa por ser mecânica
 
 Um executor resolveu um estouro do diagnóstico `ManyServiceProvidersCreatedWarning` do EF
@@ -871,6 +893,26 @@ bindings esperados, ou sobre `custodia.prices` existir.
 agendamento e alcance do Postgres — com a outbox vazia o ciclo fecha com sucesso sem abrir
 conexão. Isso eu tinha escrito no comentário do workflow ao portar o teste; escrever o limite
 não é agir sobre ele. Métrica de ciclo não é métrica de efeito.
+
+**E o MESMO erro se repetiu no F2 da `custodia` (2026-09-08), com o mesmo broker, comigo
+lendo este texto no mesmo dia.** Ao abrir a fase eu medi duas coisas verdadeiras — o vhost `/`
+sem **fila nenhuma**, e a conexão `operacoes-relay` **aberta** — e concluí, no relato ao dono,
+no commit e em dois READMEs, que "`trades.registered` está sendo descartado em silêncio
+**agora**". A inferência é sedutora e a conclusão é **falsa**: um comando desmentiu, o mesmo
+tipo de comando de sempre — a `outbox` do `operacoes` tem **0 linhas** e a tabela `operacoes`
+tem **0 registros**, e o relay dele **marca** `publicado_em` em vez de apagar a linha. Nada
+tinha sido publicado. A janela estava aberta e ninguém tinha caído nela.
+
+Note a simetria com o parágrafo de cima: lá a conclusão errada foi "o relay **nunca**
+publicou" a partir da ausência do exchange; aqui foi "o relay está publicando **agora**" a
+partir da conexão aberta. **Conexão aberta não é tráfego, e ausência de topologia não é
+prova de perda** — as duas vezes a premissa que decidia estava numa tabela que ninguém abriu.
+
+**Regra:** antes de escrever no commit, no PR ou no relato que houve **perda**, abra a
+tabela que registra o que foi publicado. "Estava exposto" e "foi perdido" são afirmações
+diferentes, e a segunda é a que faz o dono agir. Errar para o lado do alarme não é o lado
+seguro: ele **desloca prioridade**, e a fase seguinte herda um número inventado. O achado
+honesto — "preventiva, não remediadora" — não enfraquece a urgência da fase em nada.
 
 ## Guarda que sumiu junto com um tag flutuante, e o run avisava
 
@@ -1120,3 +1162,55 @@ de outro serviço.
 **ainda chega** — o Alertmanager cai para a rota raiz quando nenhuma filha casa. Chega pelo
 contact point errado, com o prefixo de outro serviço. Quem for caçar "alerta sumido" não
 vai achar nada sumido.
+
+## Toda rodada de correção gerou o defeito seguinte — e o padrão tem uma forma
+
+No F2 da `custodia` (2026-09-08) foram **três** rodadas de revisão, e nas três a correção
+do achado grave produziu um defeito novo, sempre da **mesma família** do que ela acabara de
+fechar:
+
+1. O executor, testando contra um broker real, achou que `[ -n "$X" ] && echo …` como
+   **última instrução de função** devolve 1 quando a condição é falsa, e sob `set -e` isso
+   matava o script no primeiro uso. Consertou com `if/fi` + `return 0`.
+2. A rodada seguinte, corrigindo outra coisa, introduziu `X=$(f)` seguido de `rc=$?` em
+   **seis** sítios. É o mesmo `set -e` com outra sintaxe: o script morre na atribuição, e
+   os doze ramos de tratamento viram código morto (§10.39). Ninguém olhou para a família
+   depois de fechar o caso.
+3. Eu, corrigindo uma afirmação minha que era falsa, escrevi no commit "corrigidos junto os
+   textos que repetiam a afirmação" e nomeei **dois** arquivos. Eram cinco — e o pior deles
+   era o comentário que usava a afirmação falsa como **justificativa da decisão**, além de
+   uma cópia dentro do *bloco de prompt* do próprio roadmap, que é o texto que o executor
+   da fase seguinte lê como instrução.
+
+**O que isso ensina, além de "rode as duas revisões de novo":**
+
+- **Achado é instância; o que se fecha é a CLASSE.** Depois de corrigir, faça a varredura da
+  forma, não do caso: se o defeito era `set -e` numa construção, procure as outras
+  construções que interagem com `set -e`. A revisão que pegou o (2) o pegou por leitura,
+  não por teste — porque **ramo de erro que nunca foi exercitado não é tratamento**.
+- **Inventário de "onde mais isso aparece" é ele próprio um achado a verificar.** O meu (3)
+  tinha número de linha, parecia completo, e estava errado por 60%. `grep` pela frase, não
+  pela memória do que você editou.
+- **A revisão precisa estar apontada para os textos do CONDUTOR.** Nas três rodadas o
+  guardião achou defeito meu, e nas três eram do tipo caro: alíneas do critério de Pronto
+  que, executadas ao pé da letra, mandavam fazer a coisa errada — uma delas pedia
+  `noDataState` "configurado para disparar" numa regra `absent()`, o que ligaria um alerta
+  permanente em operação normal, que é o defeito que a mesma fase rejeita nominalmente duas
+  vezes.
+- **Critério de Pronto também é código, e envelhece igual.** Outra alínea pedia "reprova
+  quando um binding real é removido à mão" — **inalcançável por desenho**, porque o script
+  declara antes de verificar e o binding é recriado. Ao escrever um Pronto, pergunte se ele
+  é executável contra a implementação que você mesmo pediu; se não for, ou ele muda, ou a
+  implementação ganha um modo que o torne executável. O que não pode é ficar lá parecendo
+  provado.
+
+## "Exposto" e "perdido" são afirmações diferentes, e só a segunda faz o dono agir
+
+Registrado no corolário de "Perder o volume do broker" acima, mas vale como regra de
+**relato**, não só de diagnóstico: eu abri o F2 dizendo ao dono, e escrevendo no commit, que
+`trades.registered` estava sendo descartado **naquele minuto**. Era falso — a `outbox` do
+produtor tinha 0 linhas. A fase era preventiva.
+
+Errar para o lado do alarme parece o lado seguro e não é: ele **desloca prioridade**, e o
+número inventado é herdado pela fase seguinte como se fosse medido. Antes de escrever
+"perdemos", abra a tabela que registra o que foi publicado.

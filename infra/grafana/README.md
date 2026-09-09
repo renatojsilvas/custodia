@@ -119,7 +119,7 @@ diferença real deste serviço):
 
 ## Regras de alerta (`cloud/rules-custodia.yaml`)
 
-Duas regras, grupo `custodia-alertas`, pasta `Custodia`:
+Três regras, grupo `custodia-alertas`, pasta `Custodia`:
 
 - **Custódia — App down** (`custodia-app-down`): `up{job="custodia"} == 0`,
   `for: 2m`, `noDataState: Alerting`. Mesma forma de `td-app-down` (repo
@@ -134,15 +134,38 @@ Duas regras, grupo `custodia-alertas`, pasta `Custodia`:
   healthcheck do próprio `docker-compose.prod.yml` (curl em `/health/ready` a cada
   30s), não o scrape do Alloy (que roda a cada 30s também, mas por um caminho
   diferente). `noDataState: Alerting` pelo mesmo motivo da regra acima.
+- **Custódia — Topologia ausente** (`custodia-topologia-ausente`, F2):
+  `absent(rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"})`,
+  `for: 3m`, **`noDataState: OK`** — e aqui a divergência das duas regras acima é
+  deliberada. Esta regra JÁ É um `absent()`: quando a fila existe (estado são), a série
+  é retornada e o `absent()` devolve vetor **vazio**, que para o Grafana é "sem dado".
+  Copiar `Alerting` faria o alerta disparar durante operação normal. Quando a fila some,
+  o `absent()` passa a devolver `1` e a condição avalia `Alerting` — a ausência carrega o
+  próprio sinal. `execErrState: Alerting` continua, porque falha de execução da query é
+  anomalia de verdade. `for: 3m` é mais que 2× o intervalo de scrape (30s), para um
+  scrape perdido não virar alerta de topologia.
+  O nome da métrica é `rabbitmq_detailed_queue_messages_ready` (não
+  `rabbitmq_queue_messages_ready`) porque o alloy raspa
+  `/metrics/detailed?family=queue_coarse_metrics` do `plataforma-rabbitmq`: no `/metrics`
+  default a série vem agregada, **sem** o label `queue`, e o seletor nunca casaria.
+  **Lacuna declarada:** a fila existir não prova que os quatro bindings existem — quem
+  cobre a remoção cirúrgica de um binding é a verificação bloqueante do deploy
+  (`infra/rabbitmq/declare-topology.sh`), onde binding é conferível pela management API.
+  **É esta regra que autoriza o `::warning::`** do passo de deploy quando o broker está
+  inacessível: sem ela, aquele desfecho tem que virar reprova.
 
 Este grupo chegou a ter mais duas regras — backlog da outbox envelhecido e relay
 falhando persistentemente, sobre `custodia_outbox_*`/`custodia_relay_*` — herdadas por
 cópia do molde `operacoes`. Foram removidas: a Custódia consome eventos, não os
 publica (ADR-10; ver `CLAUDE.md`), não tem outbox nem relay, e aquelas séries nunca
-teriam produtor aqui. O substituto real de observabilidade de consumo — profundidade e
-idade da fila `custodia.prices`, DLQ e parking — está agendado no F2/F4 do
-`docs/ROADMAP.md`; a regra correspondente entra no mesmo diff que a métrica, junto com
-o painel equivalente do dashboard.
+teriam produtor aqui. O substituto real de observabilidade de consumo veio em duas
+partes, e só a primeira existe hoje: a **existência** da topologia entrou no F2, na
+regra `custodia-topologia-ausente` acima, no mesmo diff que a métrica (o alvo de scrape
+`plataforma-rabbitmq` em `../tesouro-direto-api/infra/alloy/config.alloy`). A
+**profundidade e a idade** da `custodia.prices`, da DLQ e do parking continuam agendadas
+para o **F4**, com o consumidor — de propósito: nesta fase a fila cresce por desenho, e
+alerta de profundidade aqui viraria ruído no Telegram. O painel equivalente do dashboard
+acompanha a segunda parte, não esta.
 
 Sem `contactpoints.yaml` nem `policies.yaml` neste repo, pelo mesmo motivo do Hub e do
 Operações: quem define o roteamento do Telegram é o repo de referência. Lá existe um
@@ -153,7 +176,7 @@ diferindo só no `message`, que prefixa a origem (🟢 TESOURO DIRETO / 🔵 HUB
 `telegram-custodia`; a raiz e as rotas do Hub e do Operações continuam byte a byte
 iguais a antes.
 
-**O label `service: custodia` das duas regras acima virou contrato** — é ele que a
+**O label `service: custodia` das três regras acima virou contrato** — é ele que a
 rota filha casa no repo de referência. Quem remover ou renomear esse label aqui quebra
 o roteamento do lado de lá, sem erro visível na hora — o YAML continua válido, o
 `apply-cloud.sh` continua aplicando com sucesso, só o Telegram passa a rotular errado.

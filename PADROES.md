@@ -1149,3 +1149,196 @@ envelhece **pior** que os outros, porque muda com o regime de cache e com o teto
 88%"; hoje o teto é 256 e a fração é dominada por cache. A lição daquele registro (serviço
 novo muda o orçamento do vizinho, §10.14) continua valendo inteira — **o número não**.
 Ao citar consumo de memória, escreva `anon`, a data e o teto vigente, ou não cite.
+
+---
+
+### 10.39. Sob `set -e`, `X=$(cmd)` mata o script na atribuição — e o `rc=$?` da linha seguinte é código morto
+
+Para capturar o status de uma substituição de comando com `errexit` ligado, use a forma em
+lista AND-OR:
+
+```bash
+X=$(f) && rc=0 || rc=$?          # certo
+X=$(f); rc=$?                    # o script morre em X=$(f); rc=$? nunca executa
+local X=$(f); rc=$?              # PIOR: rc sai sempre 0, o erro passa por sucesso
+```
+
+**Por quê:** `X=$(cmd)` é comando simples, e o status dele é o da substituição — o errexit
+dispara **nela**. Medido:
+
+```
+$ bash -c 'set -euo pipefail; f() { echo saida; return 1; }; echo antes; v=$(f); rc=$?; echo "nao chega aqui"'
+antes
+$ echo $?
+1
+```
+
+A forma com `local` é a armadilha oposta e é mais perigosa, porque falha para o lado
+errado: o status passa a ser o do **builtin `local`**, que é 0, então o erro é engolido e
+o `rc` capturado mente. Uma troca "cosmética" de `local X` + `X=$(f)` para `local X=$(f)`
+converte morte silenciosa em **sucesso silencioso**.
+
+**O que isso custou:** no F2 da `custodia`, seis chamadas de um laço de espera tinham
+`rc=$?` na linha seguinte. Os doze ramos de tratamento (`-eq 2` e `-ne 0`) eram
+**inalcançáveis**: os `exit` específicos de cada prova nunca aconteciam, a mensagem
+`PARADA POR LIMITE` nunca era impressa — a distinção completude × limite da §10.31 existia
+no texto e não em execução —, e o script saía com 1, caindo num ramo genérico que mandava
+o operador procurar a causa errada. E o defeito **nasceu de uma rodada de correção**, na
+mesma família de um defeito que a rodada anterior tinha acabado de fechar
+(`[ -n "$X" ] && echo` como última instrução de função devolvendo 1).
+
+**Guarda:** todo ramo de erro precisa de **controle positivo** (§10.8) — se você escreveu
+um `exit` para um caso, provoque esse caso uma vez e veja o código sair. Ramo de erro que
+nunca foi exercitado não é tratamento, é comentário executável. A revisão que pegou este
+defeito o pegou lendo; quem o teria pegado antes era um teste que quebrasse a topologia de
+propósito.
+
+---
+
+### 10.40. Ler o argumento de volta prova o que você PEDIU, não o que o servidor FEZ
+
+Ao verificar configuração aplicada num serviço externo, releia o **campo efetivo**, não o
+eco do parâmetro que você enviou.
+
+**Por quê:** os dois vêm na mesma resposta e parecem a mesma prova. No F2 da `custodia`,
+declarar uma quorum queue com `x-delivery-limit: -1` devolve, no mesmo JSON:
+
+```
+"arguments": { "x-delivery-limit": -1 }      <- ECO do que pedimos
+"delivery_limit": "unlimited"                <- o que o broker APLICOU
+```
+
+Só o segundo é evidência. E o valor **não é o que você enviou**: comparar contra `-1`
+reprova, porque o efetivo é a string `"unlimited"`. Sem a leitura do campo efetivo, uma
+asserção verde convive com o argumento sendo ignorado — que é a vacuidade da §10.8, agora
+do lado de fora do processo.
+
+**Corolário: uma asserção cujo valor esperado coincide com o DEFAULT não discrimina nada.**
+Na mesma fase, `delivery_limit == 20` na fila principal passa com e sem o nosso argumento
+aplicado, porque 20 **é** o default do `rabbitmq:4`. Ela não é errada — é apenas não
+informativa sozinha, e quem carrega a prova são as filas onde o valor esperado difere do
+default. Ao escrever a asserção, pergunte: *"ela ficaria vermelha se ninguém tivesse
+declarado nada?"*.
+
+**Corolário que custou três auditorias: o efetivo nem sempre é um campo ao lado do eco —
+às vezes é um OBJETO, e é lá que mora o que o DONO do serviço impôs por fora.** O exemplo
+acima tem `delivery_limit` (efetivo) ao lado de `x-delivery-limit` (eco), no mesmo nível.
+Para `max-length`, `overflow` e `message-ttl` **não existe** campo de topo equivalente: o
+estado real mora num objeto mesclado, `effective_policy_definition`, alimentado pelas
+**policies** do broker. E policy é o caminho **normal** de operação — não sabotagem —,
+especialmente quando o objeto é declarado por nós num serviço de **outro time**.
+
+Três coisas se seguem, e as três faltavam quando este item foi escrito:
+
+1. **"Não achei campo efetivo" não autoriza voltar ao eco.** Procure o objeto.
+2. **Asserção de AUSÊNCIA sobre o eco é vácua por construção**, não apenas pouco
+   informativa: ela imprime "ausente (confere)" com a propriedade **ligada**. E o controle
+   positivo dela tem que ser produzido **no servidor**, pelo mesmo mecanismo fora-de-banda
+   — plantar a policy —, porque mutar o nosso próprio PUT não reproduz o caso (§10.8:
+   mutação que não altera o sinal que o teste lê é mutação que não aconteceu).
+3. **Releia o efetivo em TODA execução, e NOMEIE a fonte da divergência.** O dono pode
+   mudar o comportamento depois da declaração, sem tocar nela. E o desfecho é "reprova, e
+   a correção é no repo do dono" — nomear errado manda o operador para onde o defeito não
+   está. Medido no F2 da `custodia` (2026-09-09): uma **operator policy** aparece no
+   `effective_policy_definition` normalmente, mas o campo `policy` vem `null` e o nome
+   está em `operator_policy` — reportar só o primeiro faz o operador procurar uma policy
+   chamada "AUSENTE". Os dois têm endpoints de remoção diferentes.
+
+**E a lista de chaves se fecha por CLASSE, não por exemplo — o que na prática significa
+inverter a lista.** No mesmo incidente a lista nasceu com as três chaves que motivaram a
+fase; faltava `expires`, que é pior que todas (ele **apaga a fila inteira**, com backlog e
+bindings juntos, e a precondição "fila sem consumidor" ficava permanentemente satisfeita
+porque o consumidor só chega na fase seguinte). Acrescentar `expires` **não fechou nada**:
+uma lista de proibidas com um item a mais continua sendo uma lista de exemplos, e a chave
+seguinte — inclusive uma que o fornecedor acrescente num minor — passa igual.
+
+O fecho é a **allow-list**: enumere o que é legítimo, e reprove todo o resto. Quando a
+resposta certa for "nada é legítimo", a lista permitida é **vazia**, e isso é a forma mais
+forte da guarda, não a mais preguiçosa.
+
+**Guarda:** olhe a sua lista e pergunte — *"esta é a lista do que eu PROIBO, ou do que eu
+PERMITO?"*. Se for a primeira, uma chave nova do fornecedor entra em silêncio, e você vai
+descobrir pelo incidente. Vale para chave de configuração, campo de payload, código de
+erro tratado e tipo de evento consumido.
+
+**Corolário sobre aceitação: servidor aceitar o parâmetro não é servidor honrar o
+parâmetro.** A management API do RabbitMQ 4.3.5 devolve HTTP 201 para
+`x-dead-letter-strategy: at-least-once` **com e sem** o `x-overflow: reject-publish` que
+essa estratégia exige — e, sem ele, degrada para `at-most-once` em silêncio. Quando o
+efeito de uma configuração **não** é conferível por leitura de volta, isso é argumento
+para **não escolhê-la**, e não para confiar nela: foi por isso que a `custodia.retry`
+nasceu `classic`.
+
+---
+
+### 10.41. Prova de delta em recurso com produtor de terceiros é de CRESCIMENTO, nunca de igualdade
+
+Ao provar que uma operação teve efeito contando algo (linhas, mensagens, itens), exija
+`depois >= antes + N`. Exigir `depois == antes + N` reprova sempre que um terceiro
+escrever na mesma janela — e o terceiro escrevendo é o **estado normal**, não a exceção.
+
+**Por quê:** no F2 da `custodia` a prova de fumaça exigia `messages_ready == antes + 1`
+numa fila que a fase inteira existe para fazer **acumular** tráfego de produção. Um evento
+real chegando entre as duas leituras leva a contagem a `antes + 2`, a igualdade nunca
+acontece, e o deploy reprova **exatamente quando a fase deu certo**. É a mesma família de
+"reprovar o próprio deploy por causa de um serviço que não é seu" (`LEIA-ME-KIT`), num eixo
+diferente: aqui não é a falha do vizinho que reprova, é o **sucesso** dele.
+
+E o defeito veio do texto normativo: o roadmap da fase escrevia `depois == antes + 1` no
+parágrafo seguinte àquele que proibia `messages_ready == 0` pelo mesmo motivo. A letra
+contradizia o argumento, e o executor seguiu a letra.
+
+**Onde a igualdade continua certa:** quando `>=` seria **vácuo**. Provar que uma fila
+**esvaziou** é `== antes`, porque `>= antes` é trivialmente verdadeiro. Nesses pontos, a
+igualdade só pode bloquear se **duas** condições valerem, e a versão anterior deste item
+enunciava só a primeira:
+
+1. **não há produtor de terceiros** no recurso; e
+2. **o contador que você lê é instantâneo**.
+
+A (2) foi aprendida depois, e derrubou o exemplo que este item usava como canônico. O
+`messages_ready` do RabbitMQ tem defasagem **medida** de ~10 s contra um
+`collect_statistics_interval` de 60 s: mesmo numa fila de atraso sem consumidor e sem
+outro publicador — onde a (1) vale plenamente —, a igualdade é refém do **observador**, e
+uma leitura atrasada reprova um deploy sadio. No F2 da `custodia` essa asserção foi
+rebaixada a **reforço que só avisa**, e o veredito da prova passou a ser outro sinal (um
+marcador lido de volta de uma fila-sonda), não a contagem.
+
+**Guarda:** antes de deixar uma igualdade bloquear, pergunte as duas — *"quem mais escreve
+nesse contador?"* e *"esse contador é o estado, ou é uma amostra do estado?"*. A segunda é
+a que não parece uma pergunta até custar um deploy vermelho.
+
+---
+
+### 10.42. Métrica agregada e métrica por objeto têm o MESMO nome e labels diferentes — a §10.9 se aplica à SÉRIE, não ao endpoint
+
+Antes de escrever uma regra de alerta sobre uma série, confirme com comando literal que a
+série **com os labels do seu seletor** aparece no corpo da resposta do endpoint que o
+coletor vai raspar. Conferir que o endpoint responde 200 prova que o plugin está
+habilitado; **não** prova que a sua série existe.
+
+**Por quê:** o `rabbitmq_prometheus` expõe `rabbitmq_queue_messages_ready` em **três**
+endpoints, e eles não são a mesma coisa:
+
+| endpoint | série | custo |
+|---|---|---|
+| `/metrics` (default) | `rabbitmq_queue_messages_ready` — **agregada, sem label `queue`** | — |
+| `/metrics/per-object` | `rabbitmq_queue_messages_ready{vhost,queue}` | ~730 séries, cresce com conexão/canal |
+| `/metrics/detailed?family=queue_coarse_metrics` | `rabbitmq_detailed_queue_messages_ready{vhost,queue}` — **outro nome** | ~31 séries ativas |
+
+Uma regra `absent(rabbitmq_queue_messages_ready{queue="X"})` escrita contra o endpoint
+default casa **zero séries para sempre** e dispara todos os dias — o alerta permanente para
+o qual ninguém olha mais, que é o oposto de vigilância. E a versão por objeto, que preserva
+o nome, faz o seu orçamento de séries depender do **churn de conexão de terceiros**.
+
+**Guarda:** o comando literal a rodar é `grep` pelo seletor inteiro no corpo da resposta,
+com o objeto já existindo. E confira também o caso **vazio**: uma série que só aparece
+quando há dado transformaria `absent()` em alarme toda vez que o recurso esvaziasse.
+(Medido no F2 da `custodia`: a série aparece com valor `0` na fila vazia — é emitida por
+existência do objeto. Isso precisa ser medido, não suposto.)
+
+**Corolário de inventário:** "12 séries" e "31 séries" foram os dois números que esta mesma
+fase escreveu para o mesmo alvo. O primeiro era **linhas no corpo do endpoint** com um
+objeto de sonda; o segundo, **séries ativas do job** na nuvem, incluindo as meta-séries de
+scrape (`up`, `scrape_*`). Só o segundo conta contra o teto do plano. Ao registrar custo de
+cardinalidade, diga **qual** grandeza você mediu, onde, e com quantos objetos.

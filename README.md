@@ -31,8 +31,8 @@ escrita nesta plataforma — é definitivo, não "ainda não chegou" — e rota 
 
 Sobe banco e API conectados entre si, sem precisar de SDK .NET local. O serviço
 `custodia` entra desde já na rede compartilhada `plataforma` (`external: true` no
-`docker-compose.yml`, mesmo sem broker configurado nesta fase — ver "Mensageria"
-abaixo) — se ela ainda não existir no seu Docker, crie uma vez antes do primeiro `up`:
+`docker-compose.yml`, mesmo sem a APLICAÇÃO falar com o broker nesta fase — quem fala
+com ele é o passo de deploy, ver "Mensageria" abaixo) — se ela ainda não existir no seu Docker, crie uma vez antes do primeiro `up`:
 
 ```bash
 docker network create plataforma 2>/dev/null || true   # uma vez; ignora se já existe
@@ -212,9 +212,35 @@ excluindo `Migrations/`, `bin/` e `obj/`) — não há gate configurado dentro d
 **A Custódia não publica nenhum evento de contrato da §5.1** (`trades.registered`,
 `prices.*`, `corpactions.*` são publicados por Operações e pelo Hub, nunca por aqui) e
 não tem outbox nem relay. Isso não quer dizer "não publica, ponto": o único tráfego
-AMQP que ela emite é infraestrutura interna dela mesma — as filas `custodia.retry`,
-`custodia.parked` e `custodia.prices.dlq`, previstas para o F2/F4 de
-`docs/ROADMAP.md`, junto com o consumidor de eventos que ainda não existe nesta fase.
+AMQP que ela emite é infraestrutura interna dela mesma, e **ela publica em exchange,
+nunca direto em fila**: o órfão vai para o exchange `custodia.retry.in` (que entrega na
+`custodia.retry`) e a mensagem estacionada vai para o `custodia.parking` (que entrega na
+`custodia.parked`). Publicar na fila pelo nome — pela default exchange — está
+**rejeitado nominalmente** no `docs/ROADMAP.md`: torna invisível na management API quem
+publica para onde, e a topologia existe justamente para ser conferível. Na
+`custodia.prices.dlq` **nenhuma aplicação publica**: quem a alimenta é o próprio broker,
+por dead-letter — o único publish direto nela é a prova de fanout do passo de deploy,
+retirada ao fim da própria prova. Tudo isso pertence ao consumidor de eventos, que ainda não existe nesta
+fase.
+
+**A topologia já existe, e a aplicação continua sem tocá-la (F2).** Quem declara a fila
+`custodia.prices`, os quatro bindings da §5 (`prices.#`, `corpactions.#`, `eod.ready`,
+`trades.registered`) e a infraestrutura de DLQ/parking/retry é
+`infra/rabbitmq/declare-topology.sh`, invocado pelo job de deploy — de forma idempotente
+e com verificação bloqueante. A razão de ser da ordem é literal: evento publicado num
+exchange topic **sem binding casando é descartado em silêncio**, com o produtor marcando
+sucesso. O relay do Operações está no ar desde 2026-09-06 e mantém conexão aberta com o
+broker; até 2026-09-08 a `outbox` dele tinha 0 linhas — e o relay dele **marca**
+`publicado_em` em vez de apagar a linha, então isso é prova de que nada tinha sido
+publicado ainda (na convenção oposta, apagar ao publicar, "outbox vazia" significaria
+justamente o contrário) — a topologia entrou **antes** do primeiro trade, que é o ponto. **A fila acumula
+de propósito** a partir daqui, esperando o consumidor do F4 — não purgue a
+`custodia.prices`.
+
+Esse script é o único consumidor dos secrets `RABBITMQ_USER` e `RABBITMQ_PASSWORD`
+(credencial do broker). Por serem usados só pelo script de deploy, eles entram em
+**duas** listas — o `envs:` do `ssh-action` e o `env:` do mesmo step — e **não** nos
+composes, nem no `.env` da VPS, nem nas dummies do config gate (`PADROES.md` §10.33).
 
 O broker `plataforma-rabbitmq` é compartilhado com outros serviços, não sobe neste
 `docker-compose.yml`. Para rodar localmente com o `dotnet run` e ter o broker
