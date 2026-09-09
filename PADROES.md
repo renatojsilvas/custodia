@@ -1308,9 +1308,6 @@ marcador lido de volta de uma fila-sonda), não a contagem.
 nesse contador?"* e *"esse contador é o estado, ou é uma amostra do estado?"*. A segunda é
 a que não parece uma pergunta até custar um deploy vermelho.
 
-**Guarda:** ao escrever a asserção, pergunte quem mais escreve nesse contador. Se a
-resposta não for "ninguém", `==` é um floco esperando a hora.
-
 ---
 
 ### 10.42. Métrica agregada e métrica por objeto têm o MESMO nome e labels diferentes — a §10.9 se aplica à SÉRIE, não ao endpoint

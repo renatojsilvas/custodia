@@ -251,8 +251,14 @@ jobs:
             # `plataforma-rabbitmq` e servico do hub-precos, nao deste repositorio, e um
             # `exit 1` aqui faria o job `guarda-deploy` (PADROES §10.17) afirmar "este
             # commit NAO chegou a producao" com o container custodia-app healthy de
-            # verdade. QUALQUER outro exit code e NOSSO e acionavel aqui, e reprova o
-            # deploy — mas nem todo "nosso" tem a MESMA causa, e o `case` abaixo tem
+            # verdade. QUALQUER outro exit code REPROVA — mas NEM TODOS SAO NOSSOS: o 13
+            # (exchange `prices` divergente) e o 19 (policy de terceiro) reprovam APESAR
+            # de a correcao estar no repo do dono do broker. Isso nao contradiz o
+            # LEIA-ME-KIT: a pergunta "a culpa e deste repositorio?" decide entre avisar e
+            # reprovar SO enquanto o estado permanece integro. Broker inacessivel deixa
+            # tudo integro — segue. Invariante quebrado faria o deploy prosseguir sobre
+            # uma premissa FALSA — reprova, e a mensagem diz onde esta a correcao.
+            # E nem todo caso tem a MESMA acao corretiva, entao o `case` abaixo tem
             # ramos proprios para os que precisam de uma acao diferente de "reexecute":
             # 17 (EXIT_FERRAMENTA) e falha da NOSSA ferramenta de deploy (imagem do
             # curl/jq, rede docker local, daemon, ou DNS que nao resolve) — reexecutar

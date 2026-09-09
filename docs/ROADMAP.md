@@ -822,7 +822,7 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   `Infrastructure→Application`, apagando da mensagem do assert a frase que passa a ser
   falsa. Esta falha em compilação, então é auto-corretiva — a de cima não é.
 
-- [ ] **F2** — topologia do broker **antes de qualquer consumidor**.
+- [x] **F2** — topologia do broker **antes de qualquer consumidor**. **FECHADA em 2026-09-09** — ver a nota de fecho no fim desta fase.
   **Dependência externa nova: broker `plataforma-rabbitmq` alcançável.**
 
   Um passo de deploy **idempotente** que declara, pela management API, o exchange `prices`
@@ -1351,6 +1351,58 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   §10.8 já é satisfeita pelo controle negativo acima. Se **nenhuma** das duas partes for
   executável, a linha 2 da tabela de desfecho **não está autorizada** e o passo passa a
   reprovar também no caso "broker inacessível".
+
+  ---
+
+  ### Nota de fecho do F2 — 2026-09-09
+
+  **A topologia existe em produção**, declarada de forma idempotente pelo passo de deploy e
+  verificada por leitura de volta. Provado contra o `plataforma-rabbitmq` real, não simulado:
+  `custodia.prices` quorum com `delivery_limit` **efetivo** 20 e DLX própria; os quatro
+  bindings da §5; `custodia.prices.dlq` e `custodia.parked` com `delivery_limit` efetivo
+  `"unlimited"`; `custodia.retry` classic com TTL 30 s, sem `x-overflow` e sem `x-max-length`;
+  e os quatro exchanges nossos conferidos como `fanout durable`.
+
+  **A fase foi PREVENTIVA, não remediadora — e isso é uma correção de algo que eu afirmei.**
+  Ao abrir, medi o vhost sem fila nenhuma e a conexão `operacoes-relay` aberta, e concluí que
+  trades estavam sendo descartados naquele minuto. Um comando desmentiu: a `outbox` do
+  `operacoes` tinha **0 linhas** e o relay dele **marca** `publicado_em` em vez de apagar.
+  Nada tinha sido publicado. A janela estava aberta e ninguém tinha caído nela. Não confunda
+  "exposto" com "perdido" (`LEIA-ME-KIT`, corolário de "Perder o volume do broker").
+
+  **As três decisões, com a razão que as sustenta:**
+
+  1. **`custodia.retry` nasce `classic`** (saída (ii)), e a razão é **estratégia de DLX** —
+     nunca "quorum não suporta TTL", que é falso. A fila é 100% tráfego de dead-letter; o
+     default de quorum é `at-most-once`, que pode descartar durante o dead-letter; e a saída
+     segura **não é conferível na declaração**: medido, a management API do 4.3.5 aceita
+     `at-least-once` **com e sem** o `reject-publish` que ele exige. Ler o argumento de volta
+     prova o que pedimos, não o que o broker faz.
+  2. **`x-delivery-limit` explícito**: 20 na fila principal (o default medido também é 20 —
+     a asserção sozinha não discrimina, e quem carrega a prova são as terminais) e `-1` nas
+     terminais, que são fim de linha e onde o default descartaria em silêncio.
+  3. **O alerta ancora em `rabbitmq_detailed_queue_messages_ready`**, não na grafia que este
+     arquivo trazia: no `/metrics` default a série vem agregada, **sem o label `queue`**, e o
+     seletor original nunca casaria — `absent()` dispararia todo dia, para sempre.
+
+  **O acoplamento novo, declarado:** a checagem de policy usa allow-list **vazia**, então
+  qualquer chave que o dono do broker aplique sobre as nossas filas reprova o nosso deploy.
+  Deliberado, e há casos legítimos que vão dispará-lo (`consumer-timeout`, `queue-version`).
+  A saída é acrescentar a chave a uma allow-list explícita com motivo escrito, e está no
+  `infra/rabbitmq/README.md`, "A válvula que não existe".
+
+  **O que esta fase custou, e é a lição que vale mais que ela:** seis rodadas de revisão. O
+  `revisor` adversarial só entrou na **quarta** — e achou, sozinho, que uma *policy* do broker
+  desliga as duas garantias centrais com o deploy verde, defeito que **três** auditorias de
+  conformidade aprovaram. A quinta rodada mostrou que a correção dele tinha fechado o exemplo
+  e não a classe (faltava `expires`, que apaga a fila inteira). Rodar o adversarial só no fim,
+  sobre a versão já três vezes revisada, é caro: ele deveria ver a primeira entrega.
+
+  **Fica aberto, e não é dívida escondida:** o Pronto (d) — "o deploy roda duas vezes" — fecha
+  no primeiro push desta branch; o que rodou três vezes foi o **script**, à mão. E os secrets
+  `RABBITMQ_USER`/`RABBITMQ_PASSWORD` têm que estar cadastrados **antes** do push, senão a
+  guarda `-z` reprova e o `guarda-deploy` marca o commit como não deployado.
+
 
 - [ ] **F3** — o schema do livro: as constraints que tornam o dado irreparável impossível
   de gravar. **Dependência externa nova: Postgres com schema (a instância já existe).**
@@ -2870,6 +2922,21 @@ para ela.
     - **COMPLETUDE** = as `N` foram examinadas, `residual_motivo = 0` e
       `n_motivo ≥ 1` → sucesso, **e a passagem publica o residual por motivo** (é essa a
       origem da contagem, não um gauge de processo).
+
+    **DÍVIDA HERDADA DO F2, e ela mexe com esta contagem — leia antes de implementar o
+    drenador.** As filas terminais (`custodia.prices.dlq`, `custodia.parked`) podem trazer
+    até **uma mensagem `custodia-f2-*` por execução ABORTADA** do passo de topologia do F2:
+    a prova de fanout publica uma sonda e a remove, mas se a execução morrer entre as duas,
+    a sonda fica, e a execução seguinte absorve **uma** por vez. Em regime estável não
+    cresce — mas depois de qualquer aborto a fila não volta a zero sozinha. O que isso faz
+    aqui: essas mensagens **não têm motivo** e o payload não é JSON de contrato nenhum, então
+    uma `custodia.parked` que contenha só elas faz `n_motivo = 0` e a passagem completa
+    devolve **falha por um motivo que não existe**. O drenador tem que reconhecê-las pelo
+    prefixo `custodia-f2-` e descontá-las de `N` — não tratá-las como mensagem estacionada.
+    Removê-las é `basic.get` + ack conferindo o prefixo, **nunca** purge. *A `custodia.prices`
+    tem o resíduo análogo (`custodia-f2-retry-*`, ~1 por deploy quando há backlog), e vale a
+    mesma regra no consumidor: `prices.smoke` com payload não-JSON é sonda do deploy, não
+    evento.*
     - **PARCIAL** = as `N` foram examinadas e `residual_motivo > 0` → **falha**, para
       **qualquer** valor de `n_motivo`. É o caso da mensagem daquele motivo que o handler
       examinou e **não** conseguiu processar, e ele cobre também o extremo em que **todas**

@@ -782,6 +782,28 @@ divergindo do que o broker aceitou), e apenas avise no que é de terceiro (broke
 cobrem). Antes de pôr um `exit 1` num passo de deploy, pergunte: "se isto falhar, a culpa é
 deste repositório?". Se não for, o `exit 1` está mentindo sobre o que aconteceu.
 
+**EXCEÇÃO NOMEADA, e ela não enfraquece a regra — afia a pergunta.** No F2 da `custodia`
+apareceram DOIS casos em que a culpa **não** é deste repositório e o desfecho é reprovar
+mesmo assim: o exchange `prices` presente com propriedades divergentes (exit 13) e uma
+policy do dono do broker aplicando configuração por cima das nossas filas (exit 19). Os
+dois dizem, na própria mensagem, "a correção é no repo do `hub-precos`, não aqui".
+
+A pergunta certa não é só **de quem é a culpa** — é **o que sobrevive a seguir em
+frente**:
+
+- broker **inacessível** → seguir é seguro: nada foi declarado errado, o container sobe
+  válido, e o alerta de topologia cobre a janela. `::warning::`.
+- invariante **quebrado** (o exchange não é o que o produtor espera; uma policy ligou o
+  teto ou o TTL que esta fase existe para manter desligados) → seguir é deployar **sobre
+  uma premissa falsa**, e o serviço passaria a consumir de uma topologia que ninguém
+  verificou. Reprova.
+
+**Regra afiada:** *"se isto falhar, a culpa é deste repositório?"* decide entre avisar e
+reprovar **só quando o estado permanece íntegro**. Quando o que falhou foi um invariante,
+reprove independentemente de quem tenha causado — e diga na mensagem onde está a correção,
+porque aí o `exit 1` não está mentindo: ele está dizendo "não deployei sobre isto", que é
+verdade. O que não se pode é reprovar e mandar o operador procurar no repo errado.
+
 ## O executor propõe a correção no lugar errado, e ela passa por ser mecânica
 
 Um executor resolveu um estouro do diagnóstico `ManyServiceProvidersCreatedWarning` do EF

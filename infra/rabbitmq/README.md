@@ -112,11 +112,37 @@ Duas consequências que andam juntas e que quem mexer num lado precisa ver no ou
 | prova de fumaça / fanout / retry falhando | 14, 15, 16 | **reprova** — um código por prova, para o log dizer qual |
 | **a nossa ferramenta não rodou, ou o alvo não está na rede** (imagem não pôde ser puxada, rede docker ausente, daemon fora, falha do container do `jq`, ou `RABBITMQ_MANAGEMENT_HOST`/`CUSTODIA_RABBITMQ_NETWORK` apontando para nome que não resolve) | 17 | **reprova** — a culpa é deste repositório, não do broker |
 | **a limpeza removeu da fila algo que NÃO era a nossa prova** | 18 | **reprova, e NÃO reexecute o deploy** — é o único código que significa dano já consumado; reexecutar roda o mesmo caminho destrutivo. Investigação manual primeiro |
+| **uma policy ou operator policy de terceiro aplica QUALQUER chave** sobre uma das nossas quatro filas | 19 | **reprova** — a correção é no repo **dono do broker** (`hub-precos`), não aqui; reexecutar repete o 19 enquanto a policy existir. Ver "A válvula que não existe", abaixo |
 
 O `::warning::` da linha 2 só é legítimo **porque existe** a regra
 `custodia-topologia-ausente` (`infra/grafana/cloud/rules-custodia.yaml`) cobrindo a
 janela até o próximo deploy. **Sem essa regra publicada na nuvem, a linha 2 vira
 reprova** — quem for removê-la tem que reabrir a decisão no passo de deploy primeiro.
+
+## A válvula que não existe (leia antes do primeiro `EXIT=19`)
+
+A checagem de policy usa **allow-list vazia**: *qualquer* chave que uma policy ou operator
+policy aplique sobre as nossas quatro filas reprova o deploy. É deliberado — o
+comportamento delas tem que ser exatamente o que declaramos —, mas cria um acoplamento
+que antes não existia: **uma ação de operação no broker do vizinho reprova o nosso
+deploy.**
+
+Três casos legítimos e prováveis, nomeados para você não descobrir na sexta à noite:
+`consumer-timeout` (subir o timeout de ack, ação corriqueira, cluster-wide);
+`queue-version` / `queue-leader-locator` (migração de classic v1→v2, colocação de líder);
+e chaves legadas que no 4.x são no-op (`queue-mode: lazy`, `max-in-memory-*`) quando
+alguém porta policies antigas. **Nenhuma delas descarta mensagem** — e mesmo assim
+reprovam.
+
+**Não há variável de escape, de propósito** — pela mesma razão que
+`RABBITMQ_MANAGEMENT_HOST` não é encaminhada pelo `ssh-action`: uma alavanca de
+contorno no deploy é uma alavanca para desligar a guarda em silêncio no dia em que ela
+incomodar. A saída é uma só, e é barata: acrescentar a chave a uma **allow-list explícita
+no script, com o motivo escrito**, e deployar. Nunca de volta para uma lista de
+proibidas (`PADROES.md` §10.40).
+
+O custo de errar aqui é um deploy vermelho, não perda silenciosa — e é essa assimetria
+que sustenta a escolha.
 
 ## Credencial
 
@@ -151,10 +177,20 @@ junto do ponto onde agem:
   que guarda o backlog. Medido em 2026-09-09, os dois casos:
 
   ```bash
-  # policy comum -> EXIT=12 (hoje 19), nomeando /api/policies/...
-  curl -sS -u "$U:$P" -H 'content-type: application/json' -X PUT     --data-raw '{"pattern":"custodia.parked","apply-to":"queues","priority":9,"definition":{"expires":600000}}'     http://plataforma-rabbitmq:15672/api/policies/%2F/prova-expires
+  # Da VPS. `plataforma-rabbitmq` é ALIAS DE REDE DOCKER: não resolve do host — por isso
+  # o curl sai de um container NA REDE, como tudo o mais neste passo (§10.3).
+  U=...; P=...
+  C() { docker run --rm --network plataforma curlimages/curl:8.11.0 "$@"; }
+
+  # policy comum -> EXIT=19, nomeando /api/policies/...
+  C -sS -u "$U:$P" -H 'content-type: application/json' -X PUT \
+    --data-raw '{"pattern":"custodia.parked","apply-to":"queues","priority":9,"definition":{"expires":600000}}' \
+    http://plataforma-rabbitmq:15672/api/policies/%2F/prova-expires
+
   # operator policy -> mesma reprova, nomeando /api/operator-policies/...
-  curl -sS -u "$U:$P" -H 'content-type: application/json' -X PUT     --data-raw '{"pattern":"custodia.parked","apply-to":"queues","priority":9,"definition":{"max-length":7}}'     http://plataforma-rabbitmq:15672/api/operator-policies/%2F/prova-op
+  C -sS -u "$U:$P" -H 'content-type: application/json' -X PUT \
+    --data-raw '{"pattern":"custodia.parked","apply-to":"queues","priority":9,"definition":{"max-length":7}}' \
+    http://plataforma-rabbitmq:15672/api/operator-policies/%2F/prova-op
   ```
 
   **Apague as duas ao terminar** (`DELETE` nos mesmos caminhos) e rode o script mais uma
@@ -172,6 +208,12 @@ junto do ponto onde agem:
   estes, não um equivalente):
 
   ```bash
+  # As duas credenciais são OBRIGATÓRIAS e as guardas `:?` rodam ANTES de tudo — sem
+  # elas os dois comandos saem 1 ("RABBITMQ_USER e obrigatorio"), nem 11 nem 17, e
+  # quem repetir conclui que o mapeamento quebrou: exatamente o erro que este bloco
+  # existe para impedir.
+  export RABBITMQ_USER=... RABBITMQ_PASSWORD=...
+
   # 11 — reduza o laço, senão com os defaults ele custa ~9-10 min:
   #      36 tentativas × (10 s de --max-time + 5 s de sleep)
   RABBITMQ_MANAGEMENT_HOST=192.0.2.1     CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES=3 CUSTODIA_RABBITMQ_AUTH_WAIT_SLEEP=2     ./infra/rabbitmq/declare-topology.sh; echo "EXIT=$?"
