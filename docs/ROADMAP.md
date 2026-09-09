@@ -238,8 +238,11 @@ a metade **comportamental** vai para o **F4** (consumidor).
   porque a alternativa é perder. **E o confirm negado PERSISTENTE tem desfecho próprio, sem
   o qual esta regra reproduz os dois desfechos que este arquivo rejeita.** Com uma fila, um
   consumidor, prefetch 1 e consumo serial, o `nack(requeue: true)` reentrega **na hora**;
-  se a causa do confirm negado não for transitória — o caso previsto é a `custodia.retry`
-  ter nascido com `x-overflow: reject-publish` (saída (i) do F2) e estar cheia —, o
+  se a causa do confirm negado não for transitória — **por qualquer causa**; note que o
+  exemplo motivador original (a `custodia.retry` cheia com `x-overflow: reject-publish`)
+  **deixou de existir**, porque o F2 escolheu a saída (ii) e a fila nasceu `classic`, sem
+  `x-overflow` e sem `x-max-length`, e portanto sem como encher por reject-publish. **O
+  ramo continua obrigatório**: o que caiu foi o exemplo, não a classe —, o
   resultado seria `nack → reentrega → publish → reject → nack` sem atraso nenhum, que é o
   **laço quente** da §10.13, e o `x-delivery-limit` queimaria em milissegundos levando a
   mensagem para a `custodia.prices.dlq`, que é o "DLQ na primeira tentativa" **rejeitado
@@ -2680,9 +2683,8 @@ para ela.
        original — aqui o requeue é o certo, porque a alternativa é perder. **E o confirm
        negado PERSISTENTE tem ramo próprio, senão esta regra produz os dois desfechos que a
        Decisão A rejeita:** com prefetch 1 e consumo serial, o `nack(requeue: true)`
-       reentrega **na hora**, e se a causa não for transitória — o caso previsto é a
-       `custodia.retry` com `x-overflow: reject-publish` cheia (saída (i) do F2), cujo
-       reject **é** um confirm negado — o resultado é `nack → reentrega → publish → reject
+       reentrega **na hora**, e se a causa não for transitória — **confirm negado
+       persistente, por qualquer causa** — o resultado é `nack → reentrega → publish → reject
        → nack` sem atraso: laço quente num host de um núcleo (§10.13) e `x-delivery-limit`
        queimado em milissegundos, levando à DLQ que este roadmap declara sem história de
        dreno. Regra: **teto de tentativas de republish para a mesma entrega**; estourado, a
@@ -3189,9 +3191,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
          aqui o requeue e o certo, porque a alternativa e perder.
          E O CONFIRM NEGADO PERSISTENTE TEM RAMO PROPRIO, SENAO ESTA REGRA PRODUZ OS DOIS
          DESFECHOS QUE A DECISAO A REJEITA. Com prefetch 1 e consumo serial, o
-         nack(requeue: true) reentrega NA HORA; se a causa nao for transitoria — e o caso
-         previsto e a custodia.retry ter nascido com x-overflow: reject-publish no F2 e
-         estar CHEIA, cujo reject E um confirm negado — o resultado e
+         nack(requeue: true) reentrega NA HORA; se a causa nao for transitoria — o caso
+         previsto e CONFIRM NEGADO PERSISTENTE, por qualquer causa — o resultado e
          nack -> reentrega -> publish -> reject -> nack SEM ATRASO NENHUM: LACO QUENTE
          com prefetch 1 num host de UM nucleo (PADROES 10.13), e o x-delivery-limit
          queima em milissegundos levando a mensagem para a DLQ, que e o "DLQ na primeira

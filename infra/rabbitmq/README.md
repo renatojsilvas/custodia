@@ -26,8 +26,17 @@ consumidor do F4. Isso é a entrega, não efeito colateral — e é por isso que
   real). A limpeza de mensagem de prova é `basic.get` + ack **da mensagem específica**;
 - **nunca** se publica com routing key `trades.registered` numa prova (iria para o livro
   append-only no F4 e ficaria lá para sempre). A prova usa `prices.smoke`;
-- as provas de delta são de **crescimento** (`>= antes + 1`), nunca de igualdade nem de
-  valor absoluto: tráfego real chegando na janela do teste não pode reprovar o deploy.
+- as provas de **roteamento** são de crescimento (`>= antes + 1`) e reprovam: é o que
+  prova que o binding entregou, e tráfego real chegando na janela não pode derrubá-las.
+  Já as duas verificações de **saída** — a `custodia.retry` ter esvaziado, e a mensagem
+  de prova ter deixado a `custodia.prices` — são de **igualdade por necessidade**, porque
+  `>=` ali seria vácuo (`>= antes` é trivialmente verdadeiro). A da `custodia.retry` é
+  bloqueante (aquela fila não tem outro publicador nesta fase, então a igualdade é
+  determinística); a da `custodia.prices` é **informativa**: divergir gera AVISO e nunca
+  reprova, porque ali um `trades.registered` real pode ter chegado na janela;
+- nenhuma prova é de **valor absoluto**: exigir `messages_ready == 0` reprovaria o deploy
+  no instante em que o primeiro trade real chegasse, e esta fase existe para que ele
+  chegue.
 
 ## O que ele declara
 
@@ -56,8 +65,10 @@ tudo descartaria a mensagem morta em silêncio dentro da nossa própria infraest
 |---|---|---|
 | `401` na management API | 10 | **reprova**, rápido, sem repetir — é o secret **deste** repo |
 | broker inacessível **depois** do laço de espera | 11 | `::warning::` e **segue** |
-| fila/binding ausente, prova falhando, falha da nossa ferramenta | 12–16 | **reprova** |
+| fila ou binding ausente depois da declaração | 12 | **reprova** — a declaração é nossa |
 | exchange `prices` presente com propriedades divergentes | 13 | **reprova e não redeclara** |
+| prova de fumaça / fanout / retry falhando | 14, 15, 16 | **reprova** — um código por prova, para o log dizer qual |
+| **a nossa ferramenta não rodou** (imagem não pôde ser puxada, rede docker ausente, daemon fora) | 17 | **reprova** — a culpa é deste repositório, não do broker |
 
 O `::warning::` da linha 2 só é legítimo **porque existe** a regra
 `custodia-topologia-ausente` (`infra/grafana/cloud/rules-custodia.yaml`) cobrindo a
@@ -82,14 +93,16 @@ transforma falha de conexão em saída vazia e apaga a diferença entre "não co
 RABBITMQ_USER=... RABBITMQ_PASSWORD=... ./infra/rabbitmq/declare-topology.sh
 ```
 
-Duas variáveis de ambiente existem para **provar** o script, e as duas estão
-documentadas no cabeçalho dele:
+Duas variáveis de ambiente existem para **provar** o script, documentadas dentro dele,
+junto do ponto onde agem:
 
 - `CUSTODIA_TOPOLOGIA_TESTE_NEGATIVO=<chave que ninguém binda>` — injeta uma routing key
   inexistente na lista **esperada**, contra um broker correto, e prova que a comparação
   de conjuntos sabe dizer "não" (§10.8: asserção sem controle negativo passa também
   quando o mecanismo de detecção quebrou);
-- `RABBITMQ_MANAGEMENT_HOST=<endereço inexistente>` — prova que o laço de espera roda,
-  que o desfecho é `::warning::` e não `exit 1`, e que o deploy segue verde. **É assim
-  que se prova esse caminho** — derrubar o broker de propósito dispararia
+- `RABBITMQ_MANAGEMENT_HOST=<endereço inexistente>` — prova que o laço de espera roda e
+  que o script sai com **11**, que é o único código que o `.github/workflows/ci.yml`
+  mapeia para `::warning::` em vez de `exit 1`. Rodar o script à mão prova o exit code;
+  quem transforma isso em `::warning::` com o deploy verde é o `case` do workflow.
+  **É assim que se prova esse caminho** — derrubar o broker de propósito dispararia
   `hub-relay-falha-persistente` no plantão do `hub-precos`, que é serviço de outro repo.

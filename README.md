@@ -212,9 +212,15 @@ excluindo `Migrations/`, `bin/` e `obj/`) — não há gate configurado dentro d
 **A Custódia não publica nenhum evento de contrato da §5.1** (`trades.registered`,
 `prices.*`, `corpactions.*` são publicados por Operações e pelo Hub, nunca por aqui) e
 não tem outbox nem relay. Isso não quer dizer "não publica, ponto": o único tráfego
-AMQP que ela emite é infraestrutura interna dela mesma — as filas `custodia.retry`,
-`custodia.parked` e `custodia.prices.dlq`, junto com o consumidor de eventos que ainda
-não existe nesta fase.
+AMQP que ela emite é infraestrutura interna dela mesma, e **ela publica em exchange,
+nunca direto em fila**: o órfão vai para o exchange `custodia.retry.in` (que entrega na
+`custodia.retry`) e a mensagem estacionada vai para o `custodia.parking` (que entrega na
+`custodia.parked`). Publicar na fila pelo nome — pela default exchange — está
+**rejeitado nominalmente** no `docs/ROADMAP.md`: torna invisível na management API quem
+publica para onde, e a topologia existe justamente para ser conferível. A
+`custodia.prices.dlq` **ninguém publica**: quem a alimenta é o próprio broker, por
+dead-letter. Tudo isso pertence ao consumidor de eventos, que ainda não existe nesta
+fase.
 
 **A topologia já existe, e a aplicação continua sem tocá-la (F2).** Quem declara a fila
 `custodia.prices`, os quatro bindings da §5 (`prices.#`, `corpactions.#`, `eod.ready`,
