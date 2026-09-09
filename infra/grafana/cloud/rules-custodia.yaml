@@ -139,7 +139,7 @@ groups:
         execErrState: Alerting
         for: 3m
         annotations:
-          summary: A fila custodia.prices não existe no broker — dead-man's switch de topologia entre o F2 e o F4
+          summary: A série da fila custodia.prices sumiu — ou a fila foi apagada, ou o scrape do broker parou. As duas exigem ação, e a mensagem NÃO distingue qual é
           description: >-
             Esta regra JÁ É um absent(): quando a fila custodia.prices existe (estado
             normal), a série rabbitmq_detailed_queue_messages_ready{queue="custodia.prices"}
@@ -166,7 +166,19 @@ groups:
             broker) leva fila e bindings juntos, e a ausência da série cobre esse caso; a
             remoção cirúrgica de um binding com a fila intacta fica coberta pela
             verificação bloqueante do passo de deploy (management API, onde binding é
-            conferível), não por este alerta. REJEITADO NOMINALMENTE: contagem de
+            conferível), não por este alerta. SEGUNDA LACUNA DECLARADA, e ela muda o que
+            você faz ao ser acordado: absent() devolve 1 tanto quando a fila é APAGADA
+            quanto quando o SCRAPE PARA (alloy fora, o target plataforma-rabbitmq removido
+            do config.alloy — que vive em OUTRO repo —, ou o endpoint de métricas do
+            broker engasgando). Nesses casos a fila existe e este alerta grita mesmo
+            assim. Então o PRIMEIRO passo do diagnóstico é desambiguar, e não reexecutar
+            o deploy: consulte up{job="plataforma-rabbitmq"} no Grafana Cloud — se for 0
+            ou ausente, o problema é de COLETA e a topologia provavelmente está intacta;
+            só se ele for 1 é que a fila sumiu de verdade. TERCEIRA LACUNA: com lookback
+            de 5m mais o for de 3m, a detecção de "fila apagada" leva até ~8 minutos, e
+            nessa janela trades.registered é descartado em silêncio — inerente à detecção
+            por ausência de série, e escrito aqui para não ser descoberto durante um
+            incidente. REJEITADO NOMINALMENTE: contagem de
             bindings do exchange prices — o rabbitmq_prometheus expõe séries por fila e
             contagens globais, mas NÃO expõe contagem de bindings por exchange (a regra
             nasceria sobre série inexistente, disparando para sempre), e essa contagem

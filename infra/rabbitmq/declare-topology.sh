@@ -51,10 +51,12 @@
 #
 # DESFECHOS ASSIMETRICOS (LEIA-ME-KIT, "Reprovar o proprio deploy por causa de um
 # servico que nao e seu"; PADROES §10.15):
-#   'docker run' nao executou o container (nossa   -> EXIT_FERRAMENTA (reprova — NAO
-#   ferramenta: imagem, rede docker local, daemon)     e diagnostico de broker nenhum;
-#                                                       ver EXIT_TOPOLOGIA_AUSENTE
-#                                                       abaixo, que e outro caso)
+#   'docker run' (curl OU jq) nao executou (nossa  -> EXIT_FERRAMENTA (reprova — NAO
+#   ferramenta: imagem, rede docker local, daemon);     e diagnostico de broker nenhum;
+#   OU DNS de RABBITMQ_MANAGEMENT_HOST nao resolve      ver EXIT_TOPOLOGIA_AUSENTE
+#   na rede docker (curl exit 6) — config NOSSA,        abaixo, que e outro caso.
+#   nao melhora com espera, sai rapido feito o 401       DNS: sai rapido, sem
+#                                                       esperar o laco inteiro)
 #   401 na management API                          -> EXIT_AUTH_401 (reprova, rapido)
 #   broker inacessivel APOS o laco de espera        -> EXIT_BROKER_INACESSIVEL (so o
 #                                                       CHAMADOR deste script decide se
@@ -131,6 +133,13 @@ CUSTODIA_RETRY_TTL_MS="${CUSTODIA_RETRY_TTL_MS:-30000}"
 CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES="${CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES:-18}"
 CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP="${CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP:-5}"
 
+# Prefixo da fila-sonda temporaria de `retry_cycle_test` — CONSTANTE COMPARTILHADA
+# entre a criacao do nome (retry_cycle_test) e a varredura de orfas
+# (sweep_orphan_sondas), para as duas nunca divergirem. Termina em "." de
+# proposito: o sufixo real e "$$.$(date +%s)" (PID e epoch), entao o prefixo
+# sozinho nunca casa por acaso com nenhum outro nome deste script.
+CUSTODIA_RETRY_SONDA_PREFIXO="custodia.f2.retry.sonda."
+
 BASE_URL="http://${RABBITMQ_MANAGEMENT_HOST}:${RABBITMQ_MANAGEMENT_PORT}"
 
 EXIT_AUTH_401=10
@@ -144,8 +153,19 @@ EXIT_RETRY_FALHOU=16
 # EXIT_TOPOLOGIA_AUSENTE (12): 12 diz "autenticou, mas fila/binding ausente" — o
 # diagnostico ERRADO para um caso em que nem chegou a autenticar. Mesmo raciocinio
 # de dar codigo proprio a cada prova de fumaca/fanout/retry, para nao esconder qual
-# delas falhou.
+# delas falhou. TAMBEM usado quando o DNS de RABBITMQ_MANAGEMENT_HOST nao resolve
+# na rede docker (curl exit 6) — e config NOSSA (host/rede errados), nao do
+# broker, e nao melhora com espera, igual ao 401 — e quando o container do `jq`
+# falha ao executar (imagem errada), pela mesma razao do container do `curl`.
 EXIT_FERRAMENTA=17
+# Removemos uma mensagem que nao era nossa: `safe_take_probe` confere o payload
+# ANTES do ack (espiada), mas ha uma janela de ~1s entre essa espiada e o ack
+# destrutivo em que a cabeca pode mudar (outro consumidor — ex.: operador na
+# management UI durante o deploy). Reconferir o payload NA RESPOSTA do proprio
+# ack e a unica forma de nao afirmar "removi a nossa prova" quando removemos
+# outra coisa. Codigo proprio porque isto NAO e "topologia ausente" nem
+# "prova falhou" — e um efeito colateral destrutivo que ja aconteceu.
+EXIT_LIMPEZA_INSEGURA=18
 
 docker pull -q "$CUSTODIA_RABBITMQ_CURL_IMAGE" >/dev/null 2>&1 || true
 docker pull -q "$CUSTODIA_RABBITMQ_JQ_IMAGE" >/dev/null 2>&1 || true
@@ -213,18 +233,47 @@ mgmt_request() {
   fi
   return 0
 }
-mgmt_get()  { mgmt_request GET  "$1" ; }
-mgmt_put()  { mgmt_request PUT  "$1" "$2" ; }
-mgmt_post() { mgmt_request POST "$1" "$2" ; }
+mgmt_get()    { mgmt_request GET    "$1" ; }
+mgmt_put()    { mgmt_request PUT    "$1" "$2" ; }
+mgmt_post()   { mgmt_request POST   "$1" "$2" ; }
+mgmt_delete() { mgmt_request DELETE "$1" ; }
 
 # `jqn`: constroi JSON (modo -n, sem stdin) dentro de um container — usado para montar
 # corpos de requisicao sem concatenar strings a mao (evita erro de escaping de aspas).
-jqn() { docker run --rm "$CUSTODIA_RABBITMQ_JQ_IMAGE" -nc "$@" ; }
+# GUARDA: sem o `set +e`/checagem de `rc`, uma imagem de jq invalida
+# (CUSTODIA_RABBITMQ_JQ_IMAGE errada) faria o `docker run` falhar com o exit code
+# CRU do docker (ex.: 125), que `set -e` propagaria direto para fora do script —
+# reprova, mas com o codigo ERRADO: o cabecalho e a mensagem do ci.yml prometem
+# que falha de ferramenta tem codigo PROPRIO (EXIT_FERRAMENTA=17), e essa promessa
+# so cobria o container do curl (mgmt_request) ate aqui.
+jqn() {
+  local out rc
+  set +e
+  out=$(docker run --rm "$CUSTODIA_RABBITMQ_JQ_IMAGE" -nc "$@")
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "ERRO: 'docker run' (jq, construcao de JSON) falhou (exit ${rc}) — FALHA DA" >&2
+    echo "      NOSSA FERRAMENTA (imagem '${CUSTODIA_RABBITMQ_JQ_IMAGE}')." >&2
+    exit "$EXIT_FERRAMENTA"
+  fi
+  printf '%s' "$out"
+}
 # `jqf`: le um JSON existente (via stdin) e aplica um filtro — usado para extrair
-# campos das respostas da management API.
+# campos das respostas da management API. MESMA guarda de `jqn` acima.
 jqf() {
   local input="$1"; shift
-  printf '%s' "$input" | docker run --rm -i "$CUSTODIA_RABBITMQ_JQ_IMAGE" -r "$@"
+  local out rc
+  set +e
+  out=$(printf '%s' "$input" | docker run --rm -i "$CUSTODIA_RABBITMQ_JQ_IMAGE" -r "$@")
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "ERRO: 'docker run' (jq, leitura de JSON) falhou (exit ${rc}) — FALHA DA NOSSA" >&2
+    echo "      FERRAMENTA (imagem '${CUSTODIA_RABBITMQ_JQ_IMAGE}')." >&2
+    exit "$EXIT_FERRAMENTA"
+  fi
+  printf '%s' "$out"
 }
 
 wait_for_auth() {
@@ -268,6 +317,30 @@ wait_for_auth() {
       echo "      verificacao (exit do 'docker run': ${docker_rc}) — FALHA DA NOSSA" >&2
       echo "      FERRAMENTA (imagem '${CUSTODIA_RABBITMQ_CURL_IMAGE}', rede docker" >&2
       echo "      '${CUSTODIA_RABBITMQ_NETWORK}', ou o daemon local), NAO do broker." >&2
+      echo "      Detalhe: ${err_txt:-<sem stderr>}" >&2
+      exit "$EXIT_FERRAMENTA"
+    fi
+
+    # DNS que NAO RESOLVE e um caso a parte, e NAO pode terminar em
+    # EXIT_BROKER_INACESSIVEL (11, ::warning::+segue): numa rede docker, "nao
+    # resolve o nome" significa que RABBITMQ_MANAGEMENT_HOST (ou
+    # CUSTODIA_RABBITMQ_NETWORK) esta ERRADO — fato de CONFIGURACAO NOSSA, nao do
+    # broker, e repetir o laco inteiro (ate 3 min) nao vai mudar isso. O
+    # discriminador e o exit code DOCUMENTADO do proprio curl — CURLE_COULDNT_
+    # RESOLVE_HOST e sempre 6, estavel entre versoes e locales (ao contrario de
+    # fazer grep no texto de erro, que muda). O agravante que torna isto GRAVE, nao
+    # cosmetico: o controle compensatorio (::warning:: + regra
+    # custodia-topologia-ausente) vigia se a FILA existe — se um deploy anterior ja
+    # criou a fila, ela continua existindo, a regra fica OK, e este erro de
+    # configuracao pode passar despercebido, com o ci.yml verde, por MESES.
+    # connect-refused (7) e timeout (28) continuam repetindo e terminando em 11 —
+    # so a falha que NAO MELHORA COM ESPERA sai rapido aqui, exatamente como o 401.
+    if [ "$docker_rc" -eq 6 ]; then
+      echo "ERRO: DNS nao resolveu '${RABBITMQ_MANAGEMENT_HOST}' na rede docker" >&2
+      echo "      '${CUSTODIA_RABBITMQ_NETWORK}' (curl exit 6 = CURLE_COULDNT_RESOLVE_HOST)." >&2
+      echo "      Isto e CONFIGURACAO NOSSA (RABBITMQ_MANAGEMENT_HOST ou" >&2
+      echo "      CUSTODIA_RABBITMQ_NETWORK errados) — acionavel aqui, e nao melhora" >&2
+      echo "      com espera, entao nao repetimos o laco inteiro." >&2
       echo "      Detalhe: ${err_txt:-<sem stderr>}" >&2
       exit "$EXIT_FERRAMENTA"
     fi
@@ -398,7 +471,9 @@ fetch_queue_soft() {
 fetch_queue() {
   local name="$1"
   if ! fetch_queue_soft "$name"; then
-    echo "ERRO: fila '${name}' nao existe ou nao respondeu (HTTP ${MGMT_STATUS}) — a declaracao e nossa." >&2
+    echo "ERRO: fila '${name}' nao existe ou nao respondeu (HTTP ${MGMT_STATUS}) — a declaracao e" >&2
+    echo "      nossa, ou o broker caiu NO MEIO da declaracao — veja o stderr do curl acima" >&2
+    echo "      (MGMT_STDERR/AVISO anteriores) antes de assumir que a fila nunca existiu." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   fi
 }
@@ -415,10 +490,14 @@ assert_type_durable() {
   echo "    ${name}: type=${tipo} durable=${durable} (confere)"
 }
 
+# `has($a)`, NAO `.arguments[$a] // "AUSENTE"`: em jq, `//` trata `false` E `null`
+# como "nao-valor" e cai no lado direito — um argumento presente com o valor
+# `false` (ou `null`) leria como AUSENTE. Nenhum dos nossos argumentos hoje usa
+# esses valores, mas `has()` fecha a classe inteira em vez de confiar nisso.
 assert_arg() {
   local ctx="$1" body="$2" argname="$3" expected="$4"
   local atual
-  atual=$(jqf "$body" --arg a "$argname" '.arguments[$a] // "AUSENTE"')
+  atual=$(jqf "$body" --arg a "$argname" 'if (.arguments|has($a)) then .arguments[$a] else "AUSENTE" end')
   if [ "$atual" != "$expected" ]; then
     echo "ERRO: ${ctx}: argumento '${argname}' = '${atual}', esperado '${expected}'." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
@@ -452,7 +531,9 @@ verify_exchange_type() {
   local name="$1" expected_type="$2"
   mgmt_get "/api/exchanges/%2F/${name}"
   if [ "$MGMT_STATUS" != "200" ]; then
-    echo "ERRO: exchange '${name}' nao existe ou nao respondeu (HTTP ${MGMT_STATUS}) — a declaracao e nossa." >&2
+    echo "ERRO: exchange '${name}' nao existe ou nao respondeu (HTTP ${MGMT_STATUS}) — a declaracao e" >&2
+    echo "      nossa, ou o broker caiu NO MEIO da declaracao — veja o stderr do curl acima" >&2
+    echo "      (MGMT_STDERR/AVISO anteriores) antes de assumir que o exchange nunca existiu." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   fi
   local tipo durable
@@ -468,12 +549,90 @@ verify_exchange_type() {
 assert_arg_absent() {
   local ctx="$1" body="$2" argname="$3"
   local atual
-  atual=$(jqf "$body" --arg a "$argname" '.arguments[$a] // "AUSENTE"')
+  atual=$(jqf "$body" --arg a "$argname" 'if (.arguments|has($a)) then .arguments[$a] else "AUSENTE" end')
   if [ "$atual" != "AUSENTE" ]; then
     echo "ERRO: ${ctx}: argumento '${argname}' presente com valor '${atual}', mas a decisao desta fase e NAO declarar este argumento." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   fi
   echo "    ${ctx}: ${argname} ausente (confere)"
+}
+
+# PADROES §10.40: uma POLICY do broker aplica `max-length`, `max-length-bytes`,
+# `message-ttl` e `overflow` SEM TOCAR em `.arguments` — e policy e o caminho
+# NORMAL de operacao num broker que e do hub-precos, nao nosso. `assert_arg_absent`
+# le `.arguments` (o que NOS declaramos) e fica CEGO para isso: uma policy pode
+# ligar exatamente as duas garantias que esta fase existe para manter desligadas
+# (teto com reject-publish envenenando o relay de terceiros — ARQUITETURA/cabecalho
+# deste arquivo — ou TTL descartando em silencio) sem que o script perceba, porque
+# o broker aplica a policy POR CIMA da declaracao, sem alterar o que foi declarado.
+# O estado resultante ja esta no MESMO corpo que `fetch_queue` devolve, em
+# `.effective_policy_definition` — so faltava olhar para la, que e o que
+# `assert_arg_effective` ja faz para `delivery_limit`, aplicado aqui aos quatro
+# campos que uma policy pode ligar. EFEITO COLATERAL A NAO CONFUNDIR: a
+# `custodia.retry` TEM `message-ttl` por ARGUMENTO nosso (declarado por nos, nao
+# por policy) — esta checagem olha `effective_policy_definition`, nao `.arguments`,
+# entao ela nao acusa o nosso proprio TTL.
+assert_no_poisoning_policy() {
+  local ctx="$1" body="$2"
+  local achadas
+  achadas=$(jqf "$body" '(.effective_policy_definition // {}) as $d | ["max-length","max-length-bytes","message-ttl","overflow"] | map(select(. as $k | $d | has($k))) | join(", ")')
+  if [ -n "$achadas" ]; then
+    local policy_nome
+    policy_nome=$(jqf "$body" '.policy // "AUSENTE"')
+    echo "ERRO: ${ctx}: uma POLICY do broker ('${policy_nome}') aplica [${achadas}]" >&2
+    echo "      por cima da declaracao (via effective_policy_definition), sem tocar" >&2
+    echo "      em .arguments. Isto liga exatamente as garantias que esta fase" >&2
+    echo "      existe para manter desligadas nesta fila (teto com reject-publish" >&2
+    echo "      envenenando trafego de terceiro, ou TTL descartando em silencio)." >&2
+    echo "      A CORRECAO E NO REPO DONO DO BROKER (hub-precos), removendo ou" >&2
+    echo "      ajustando a policy '${policy_nome}' — nao aqui." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
+  fi
+}
+
+# CHAMADA NO INICIO DA FASE DE VERIFICACAO, antes de qualquer `verify_binding_exists`
+# (ver o comentario de `retry_cycle_test` sobre por que os dois arquivos/pontos tem
+# que ser mantidos juntos). `retry_cycle_test` binda uma fila-sonda TEMPORARIA em
+# `custodia.retry.dlx` e a apaga explicitamente no fim — mas se aquela execucao
+# morrer NO MEIO (entre bindar e apagar), a sonda fica ORFA, ainda bindada. Como o
+# R3 tornou `verify_binding_exists` uma comparacao de CONJUNTO EXATO (correcao que
+# NAO se relaxa), uma sonda orfa faz `custodia.retry.dlx` ter DOIS destinos em vez
+# de um, e o deploy SEGUINTE reprovaria por LIXO NOSSO — com uma mensagem que
+# aponta para "binding diverge do esperado", diagnostico ENGANOSO (a causa real e
+# uma execucao anterior morta, nao a topologia). O `x-expires` da sonda cura
+# sozinho, mas so depois de 120s: qualquer deploy dentro dessa janela falharia sem
+# causa real. Esta varredura torna a execucao AUTO-CURAVEL em vez de refem do
+# crash anterior, e devolve ao `x-expires` o papel que o comentario dele sempre
+# disse que era o certo: REDE DE SEGURANCA, nao mecanismo principal.
+#
+# DUAS GUARDAS: (1) apaga SO o que casa o PREFIXO EXATO da sonda
+# (CUSTODIA_RETRY_SONDA_PREFIXO, a MESMA constante que retry_cycle_test usa para
+# nomea-la — nunca um padrao mais amplo: `custodia.prices` esta a um glob de
+# distancia, e apagar fila errada neste script e o pior dano possivel); (2) LOGA
+# cada sonda orfa apagada, com o NOME — varredura silenciosa esconde que a
+# execucao anterior morreu no meio, que e informacao que o operador quer.
+sweep_orphan_sondas() {
+  mgmt_get "/api/queues/%2F"
+  if [ "$MGMT_STATUS" != "200" ]; then
+    echo "ERRO: nao consegui listar as filas do vhost para varrer sondas orfas do" >&2
+    echo "      ciclo de retry (HTTP ${MGMT_STATUS})." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
+  fi
+  local orfas
+  orfas=$(jqf "$MGMT_BODY" --arg p "$CUSTODIA_RETRY_SONDA_PREFIXO" \
+    '[.[] | select(.name | startswith($p)) | .name] | .[]')
+  if [ -z "$orfas" ]; then
+    return 0
+  fi
+  local nome
+  while IFS= read -r nome; do
+    [ -n "$nome" ] || continue
+    echo "AVISO: sonda ORFA do ciclo de retry encontrada e removida: '${nome}'" >&2
+    echo "       (prefixo '${CUSTODIA_RETRY_SONDA_PREFIXO}') — uma execucao anterior" >&2
+    echo "       morreu entre bindar e apagar a sonda; o x-expires so a apagaria em" >&2
+    echo "       ate 120s. Esta varredura evita reprovar o deploy por lixo nosso." >&2
+    mgmt_delete "/api/queues/%2F/${nome}" || true
+  done <<< "$orfas"
 }
 
 verify_prices_bindings() {
@@ -517,6 +676,17 @@ verify_prices_bindings() {
   echo "    bindings de 'prices' -> 'custodia.prices' conferem (4 routing keys: prices.#, corpactions.#, eod.ready, trades.registered)"
 }
 
+# COMPARACAO DE CONJUNTO, como a irma `verify_prices_bindings` — nao mera
+# existencia. Um `achou>0` (a versao anterior) passa verde com um binding EXTRA
+# na frente do esperado: MEDIDO pelo revisor — acrescentar
+# `custodia.dlx -> custodia.prices` (alem do `custodia.dlx -> custodia.prices.dlq`
+# correto) cria `custodia.prices --DLX--> custodia.dlx --> custodia.prices`, um
+# LACO QUENTE onde uma mensagem envenenada roda para sempre, queimando 20
+# tentativas de x-delivery-limit por volta — e o script aprovava (EXIT=0). E a
+# METADE PERMISSIVA do mesmo invariante que `verify_prices_bindings` ja prova nas
+# duas direcoes por CONJUNTO; aqui era so metade porque cada um dos quatro
+# exchanges nossos tem EXATAMENTE UM destino pretendido — o conjunto esperado e
+# sempre um singleton, e "nem a mais, nem a menos" fecha os dois lados.
 verify_binding_exists() {
   local exchange="$1" queue="$2"
   mgmt_get "/api/exchanges/%2F/${exchange}/bindings/source"
@@ -524,13 +694,20 @@ verify_binding_exists() {
     echo "ERRO: nao consegui ler os bindings de origem do exchange '${exchange}' (HTTP ${MGMT_STATUS})." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   fi
-  local achou
-  achou=$(jqf "$MGMT_BODY" --arg d "$queue" '[.[] | select(.destination==$d and .destination_type=="queue")] | length')
-  if [ "$achou" = "0" ]; then
-    echo "ERRO: binding '${exchange}' -> '${queue}' ausente." >&2
+  local atuais esperadas
+  atuais=$(jqf "$MGMT_BODY" '[.[] | select(.destination_type=="queue") | .destination] | sort | .[]')
+  esperadas=$(printf '%s\n' "$queue" | LC_ALL=C sort)
+  if [ "$atuais" != "$esperadas" ]; then
+    echo "ERRO: bindings de '${exchange}' divergem do esperado — o conjunto de destinos" >&2
+    echo "      tem que ser EXATAMENTE '${queue}', nem a mais nem a menos (comparacao" >&2
+    echo "      de CONJUNTO, mesma forma estrita de verify_prices_bindings)." >&2
+    echo "--- esperado ---" >&2
+    echo "$esperadas" >&2
+    echo "--- atual ---" >&2
+    echo "$atuais" >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   fi
-  echo "    binding '${exchange}' -> '${queue}' confere"
+  echo "    bindings de '${exchange}' conferem (destino unico: '${queue}')"
 }
 
 # `exit_code`: cada chamador tem seu proprio codigo de saida (fumaca/fanout/retry) —
@@ -597,6 +774,28 @@ safe_take_probe() {
     echo "AVISO: encontrei a mensagem de prova na cabeca de '${queue}' mas o ack falhou (HTTP ${MGMT_STATUS})." >&2
     return 1
   fi
+  # RECONFERE o payload NA RESPOSTA DO PROPRIO ACK — nao confia que a espiada
+  # acima ainda descreve a cabeca no instante do ack. Entre os dois POSTs (a
+  # espiada e este) ha DOIS `docker run` separados, ~1s cada, e nesse intervalo a
+  # cabeca PODE MUDAR se outro consumidor existir (hoje nao ha, mas
+  # `fanout_control_test` chama esta funcao, SEM esta guarda, tambem em
+  # `custodia.prices.dlq` e `custodia.parked` — filas que existem justamente para
+  # o OPERADOR drenar a mao, e um operador na management UI durante o deploy e
+  # exatamente essa janela; o F4 tambem poe um consumidor de verdade na
+  # `custodia.prices`, e este script continua rodando a cada deploy depois disso).
+  # Um `ack_requeue_false` remove O QUE ESTIVER LA, cego — sem esta reconferencia,
+  # o dano (mensagem REAL destruida) e SILENCIOSO. Falhar ALTO aqui e a unica forma
+  # de nao afirmar "removi a nossa prova" quando removemos outra coisa.
+  local removido_payload
+  removido_payload=$(jqf "$MGMT_BODY" '.[0].payload // "AUSENTE"')
+  if [ "$removido_payload" != "$marker" ]; then
+    echo "ERRO: removi de '${queue}' uma mensagem que NAO ERA a nossa prova (payload" >&2
+    echo "      removido: '${removido_payload}', esperado marcador '${marker}'). A" >&2
+    echo "      cabeca mudou entre a espiada (reject_requeue_true) e o ack" >&2
+    echo "      (ack_requeue_false) — algo mais consumiu desta fila durante o deploy." >&2
+    echo "      Isto JA ACONTECEU: uma mensagem real foi destruida por este script." >&2
+    exit "$EXIT_LIMPEZA_INSEGURA"
+  fi
   echo "    mensagem de prova removida de '${queue}' (basic.get + ack da mensagem especifica)"
   return 0
 }
@@ -637,7 +836,12 @@ maybe_take_probe_prices() {
     echo "      nesta fila FIFO, e espiar a cabeca gastaria uma tentativa de entrega" >&2
     echo "      (x-delivery-limit) de uma mensagem REAL sem nenhum beneficio (a" >&2
     echo "      limpeza abortaria de qualquer forma)." >&2
-    echo "      A mensagem de prova, inocua, fica na fila ate o F4 processa-la." >&2
+    echo "      A mensagem de prova fica na fila. ATE DUAS por deploy podem ficar" >&2
+    echo "      retidas quando ha backlog (esta, mais a do ciclo de retry, que" >&2
+    echo "      tambem chega em custodia.prices pelo fanout de custodia.retry.dlx)." >&2
+    echo "      NAO afirmamos que ela e inocua: 'prices.smoke' nao e payload de" >&2
+    echo "      contrato nenhum da §5.1, e cabe ao F4 decidir o que fazer ao" >&2
+    echo "      encontra-la, nao a esta fase." >&2
     return 1
   fi
   safe_take_probe "$queue" "$marker"
@@ -751,6 +955,27 @@ smoke_test_prices() {
   local antes
   antes=$(read_messages_ready "$queue" "$MGMT_BODY")
 
+  # COM BACKLOG, ESTA PROVA E VACUA — pule, nao publique. MEDIDO pelo revisor
+  # (B9): com uma fila de TERCEIRO tambem bindada em 'prices.#' e trafego real na
+  # janela, a prova passa MESMO com o binding 'prices.#' -> 'custodia.prices'
+  # REMOVIDO — o crescimento que ela mede e satisfeito por qualquer coisa que
+  # cresca a contagem, nao especificamente pelo NOSSO binding. E a limpeza seria
+  # IMPOSSIVEL (a cabeca ja nao e nossa — ver maybe_take_probe_prices), deixando
+  # lixo sem nenhuma prova em troca. Com fila vazia (antes==0) o comportamento
+  # desta funcao continua IGUAL ao de sempre; a mudanca so entra quando ha
+  # backlog. A prova de ROTEAMENTO deste deploy, nesse caso, e a comparacao de
+  # CONJUNTO dos bindings (verify_prices_bindings, ja rodada na fase de
+  # verificacao, ANTES desta funcao) — ela e estrita nas duas direcoes e le a
+  # mesma fonte de verdade (a management API), entao nada se perde ao pular a
+  # parte COMPORTAMENTAL da prova quando ela nao pode ser feita com seguranca.
+  if [ "$antes" != "0" ]; then
+    echo "    prova de fumaca (comportamental) PULADA de proposito: '${queue}' ja tem" >&2
+    echo "      ${antes} mensagem(ns) de backlog REAL — publicar e inspecionar" >&2
+    echo "      comportamento so agrega valor com a fila vazia (ver comentario acima)." >&2
+    echo "      O roteamento ja foi provado por conjunto em verify_prices_bindings." >&2
+    return 0
+  fi
+
   local marker="custodia-f2-smoke-$(date +%s)-$$"
   publish_probe "prices" "prices.smoke" "$marker" "$EXIT_SMOKE_FALHOU"
 
@@ -850,105 +1075,153 @@ fanout_control_test() {
 }
 
 # Prova que o retry fecha o ciclo (custodia.retry.in -> custodia.retry -> TTL ->
-# custodia.retry.dlx -> custodia.prices) EM DUAS METADES, a exigencia do Pronto (b) do
-# ROADMAP: a mensagem tem que SAIR da custodia.retry E CHEGAR na custodia.prices. A
-# versao anterior so provava a segunda metade monitorando o crescimento de
-# custodia.prices — verdadeiro TAMBEM com custodia.retry.dlx quebrado e um trade real
-# chegando por coincidencia (a metade PERMISSIVA, nao a estrita).
+# custodia.retry.dlx -> custodia.prices), a exigencia do Pronto (b) do ROADMAP: a
+# mensagem tem que SAIR da custodia.retry E CHEGAR na custodia.prices.
 #
-# A CORRECAO NAO ESPIA A CABECA DE NADA A MAIS (o custo da espiada continua sendo so o
-# de safe_take_probe, uma vez, no fim): `custodia.retry` NAO TEM CONSUMIDOR e NAO TEM
-# OUTRO PUBLICADOR alem deste script nesta fase (nasceu classic, sem
-# x-delivery-limit, e ninguem mais escreve nela) — TRAFEGO DE TERCEIRO NUNCA a
-# atravessa. Por isso a contagem DELA e um sinal DETERMINISTICO, sem ambiguidade
-# nenhuma, para as duas pontas do ciclo:
-#   1. sobe para antes+1 IMEDIATAMENTE apos o publish em custodia.retry.in (prova que
-#      o binding custodia.retry.in -> custodia.retry esta roteando);
-#   2. volta a "antes" depois do TTL (prova que a mensagem SAIU — TTL expirou e o
-#      broker dead-letrou).
-# So DEPOIS das duas confirmadas, o codigo confere que custodia.prices tambem cresceu
-# — reforco de que o dead-letter chegou la (custodia.retry.dlx -> custodia.prices) e
-# nao se perdeu no caminho. Este ultimo passo AINDA e a metade permissiva (mesmo
-# LIMITE HONESTO de antes: um trade real chegando no mesmo instante seria lido, por
-# engano, como "o retry chegou") — mas agora e reforco sobre uma prova ja
-# deterministica, nao a UNICA evidencia do ciclo.
+# TECNICA TROCADA (a anterior era FLAKY e, num caso, VACUA — as duas medidas pelo
+# revisor):
+#   VACUA (a checagem final era "custodia.prices cresceu"): com o binding
+#   `custodia.retry.dlx -> custodia.prices` REMOVIDO, a mensagem expira, e
+#   dead-letrada para um exchange SEM aquele binding, e o broker a descarta — mas
+#   as DUAS metades "DETERMINISTICAS" (custodia.retry sobe, depois esvazia) ainda
+#   passavam, porque elas so olham a PROPRIA custodia.retry, nunca a chegada. E
+#   com trafego real coincidente, a checagem final ("custodia.prices cresceu")
+#   tambem passava, com o texto "o dead-letter chegou" — FALSO, EXIT=0. Provar que
+#   a mensagem SAIU da custodia.retry nao prova que ela CHEGOU em algum lugar.
+#   FLAKY (a metade "custodia.retry sobe para antes+1"): e uma corrida entre o TTL
+#   e a defasagem do contador `messages_ready`. Em producao, o broker roda com
+#   collect_statistics_interval=60000 — O DOBRO do TTL de 30000ms — entao e
+#   plausivel que a PRIMEIRA emissao de estatisticas so aconteca DEPOIS que a
+#   mensagem ja tiver expirado e saido: medir a "decolagem" e estruturalmente
+#   flaky, nao um artefato de TTL curto de teste local.
+#
+# A CORRECAO: uma FILA-SONDA temporaria, bindada SO ao `custodia.retry.dlx`
+# (NUNCA a exchange de terceiro). Ele e FANOUT: quando o TTL expira, entrega a
+# TODAS as filas bindadas na MESMA operacao atomica do broker — a `custodia.prices`
+# real E a sonda. Isso resolve as duas falhas de uma vez:
+#   - SEM CORRIDA: nao precisamos observar o estado INTERMEDIARIO (a contagem
+#     subindo antes do TTL expirar) — so esperamos o TTL e conferimos o RESULTADO
+#     final por `basic.get`, uma operacao direta na fila, sem a defasagem de
+#     estatisticas que afeta `messages_ready`;
+#   - SEM VACUIDADE: a sonda so recebe TRAFEGO NOSSO (nada mais publica em
+#     `custodia.retry.in` nesta fase) — a prova e por MARCADOR (payload lido de
+#     volta), nao por uma contagem que trafego de terceiro tambem satisfaz;
+#   - SEM GASTAR tentativa de entrega da `custodia.prices` real: a sonda e nossa,
+#     isolada, e o `basic.get`+ack nela nao arrisca remover mensagem alheia.
+# `x-expires` na sonda e REDE DE SEGURANCA, nao o mecanismo PRINCIPAL de limpeza:
+# se o script morrer no meio (matando o DELETE explicito do fim), a sonda fica
+# ORFA, bindada a `custodia.retry.dlx`, e o `x-expires` so a apaga sozinha depois
+# de 120s de ociosidade. NESSA JANELA, a sonda ORFA PARTICIPA DO CONJUNTO que
+# `verify_binding_exists("custodia.retry.dlx", "custodia.prices")` confere —
+# desde o R3, essa checagem exige o conjunto EXATO {custodia.prices}, e uma sonda
+# orfa ainda bindada faz o conjunto ter DOIS destinos, reprovando por LIXO NOSSO
+# (com uma mensagem que aponta para "binding diverge do esperado", diagnostico
+# enganoso — a causa real e uma sonda morta, nao a topologia). Por isso o
+# mecanismo PRINCIPAL de limpeza e `sweep_orphan_sondas`, chamada no INICIO da
+# fase de verificacao em `main()`, ANTES de qualquer `verify_binding_exists` —
+# QUEM MEXER NUM DOS DOIS (o nome/prefixo da sonda aqui, ou a comparacao de
+# conjunto la) PRECISA VER O OUTRO. O `x-expires` continua existindo para o caso
+# raro de a propria varredura falhar (ex.: o script morrer ANTES de chegar la).
+#
+# A asserção "custodia.retry esvaziou de volta a antes" e MANTIDA como REFORCO
+# (NAO reprova sozinha: e exatamente a metade sujeita a corrida contra
+# collect_statistics_interval=60000, entao uma falha dela vira AVISO, nunca
+# EXIT_RETRY_FALHOU) — o VEREDITO da prova passa a ser o marcador na sonda.
 retry_cycle_test() {
   fetch_queue "custodia.retry"
   local retry_antes
   retry_antes=$(read_messages_ready "custodia.retry" "$MGMT_BODY")
 
-  fetch_queue "custodia.prices"
-  local prices_antes
-  prices_antes=$(read_messages_ready "custodia.prices" "$MGMT_BODY")
+  local sonda="${CUSTODIA_RETRY_SONDA_PREFIXO}$$.$(date +%s)"
+  local sonda_body
+  sonda_body=$(jqn --argjson expira 120000 '{durable:true, arguments:{"x-expires":$expira}}')
+  mgmt_put "/api/queues/%2F/${sonda}" "$sonda_body"
+  case "$MGMT_STATUS" in
+    201|204) : ;;
+    *)
+      echo "ERRO: falha ao declarar a fila-sonda '${sonda}' (HTTP ${MGMT_STATUS}): ${MGMT_BODY}" >&2
+      exit "$EXIT_RETRY_FALHOU"
+      ;;
+  esac
+  local bind_body
+  bind_body=$(jqn '{routing_key:""}')
+  mgmt_post "/api/bindings/%2F/e/custodia.retry.dlx/q/${sonda}" "$bind_body"
+  if [ "$MGMT_STATUS" != "201" ]; then
+    echo "ERRO: falha ao bindar a fila-sonda '${sonda}' a 'custodia.retry.dlx' (HTTP" >&2
+    echo "      ${MGMT_STATUS}): ${MGMT_BODY}" >&2
+    mgmt_delete "/api/queues/%2F/${sonda}" || true
+    exit "$EXIT_RETRY_FALHOU"
+  fi
 
   local marker="custodia-f2-retry-$(date +%s)-$$"
   publish_probe "custodia.retry.in" "prices.smoke" "$marker" "$EXIT_RETRY_FALHOU"
+  echo "    publiquei em 'custodia.retry.in' (routed=true ja confere que ha binding" \
+       "ativo para 'custodia.retry' — a prova ESTRUTURAL e exata de que e o UNICO" \
+       "destino vem de verify_binding_exists, ja rodada na fase de verificacao)"
 
-  local retry_esperado=$((retry_antes + 1))
-  local retry_subiu rc
-  # Ver o comentario em smoke_test_prices sobre por que e `A && B || C`, nunca
-  # `A; rc=$?` em linhas separadas, sob `set -e`.
-  retry_subiu=$(wait_for_messages_ready "custodia.retry" "$retry_esperado" ge) && rc=0 || rc=$?
-  if [ "$rc" -eq 2 ]; then
-    echo "ERRO: nao consegui LER 'custodia.retry' apos publicar em 'custodia.retry.in'" >&2
-    echo "      — a fila pode ter sido apagada ou o management caiu no meio da prova." >&2
-    exit "$EXIT_TOPOLOGIA_AUSENTE"
-  elif [ "$rc" -eq 3 ]; then
-    echo "ERRO: 'custodia.retry' respondeu 200 em toda tentativa, mas 'messages_ready'" >&2
-    echo "      nunca ficou numerico — o broker ainda nao emitiu a primeira estatistica" >&2
-    echo "      desta fila (producao roda com collect_statistics_interval=60000). Isto" >&2
-    echo "      NAO e falha de roteamento do binding." >&2
-    exit "$EXIT_TOPOLOGIA_AUSENTE"
-  elif [ "$rc" -ne 0 ]; then
-    echo "ERRO: PARADA POR LIMITE — publiquei em 'custodia.retry.in' e messages_ready de" >&2
-    echo "      'custodia.retry' nao cresceu a pelo menos ${retry_esperado} a tempo" >&2
-    echo "      (ficou em ${retry_subiu}). O binding 'custodia.retry.in' ->" >&2
-    echo "      'custodia.retry' nao esta roteando." >&2
+  local budget=$((CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES * CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP))
+  echo "    aguardando o TTL (${CUSTODIA_RETRY_TTL_MS}ms) com folga, ate ${budget}s, pela" \
+       "fila-sonda '${sonda}' (bindada so a custodia.retry.dlx) receber o marcador —" \
+       "PADROES §10.31: completude x limite"
+
+  local achou="nao" achado="" tentativa
+  for tentativa in $(seq 1 "$CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES"); do
+    local peek_body
+    peek_body=$(jqn --argjson count 1 --arg ackmode "reject_requeue_true" \
+      '{count:$count, ackmode:$ackmode, encoding:"auto", truncate:50000}')
+    mgmt_post "/api/queues/%2F/${sonda}/get" "$peek_body"
+    if [ "$MGMT_STATUS" = "200" ]; then
+      local n
+      n=$(jqf "$MGMT_BODY" 'length')
+      if [ "$n" != "0" ]; then
+        achado=$(jqf "$MGMT_BODY" '.[0].payload')
+        if [ "$achado" = "$marker" ]; then
+          achou="sim"
+          break
+        fi
+      fi
+    fi
+    sleep "$CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP"
+  done
+
+  # Limpeza da sonda: SEMPRE, passe ou falhe a prova — ela e inteiramente nossa e
+  # descartavel (DELETE remove a fila e qualquer conteudo junto). Best-effort: o
+  # `x-expires` acima ja e a rede de seguranca se isto falhar.
+  mgmt_delete "/api/queues/%2F/${sonda}" || true
+
+  if [ "$achou" != "sim" ]; then
+    echo "ERRO: PARADA POR LIMITE — a fila-sonda nao recebeu o marcador dentro de" >&2
+    echo "      ${budget}s apos o TTL declarado de ${CUSTODIA_RETRY_TTL_MS}ms (ultimo" >&2
+    echo "      payload visto: '${achado:-<fila vazia>}'). Ou o TTL nao expirou a" >&2
+    echo "      tempo, ou 'custodia.retry.dlx' nao esta entregando." >&2
     exit "$EXIT_RETRY_FALHOU"
   fi
-  echo "    PARADA POR COMPLETUDE — messages_ready de 'custodia.retry' subiu (${retry_antes} -> ${retry_subiu}, DETERMINISTICO: fila sem consumidor e sem outro publicador)"
+  echo "    PARADA POR COMPLETUDE — a fila-sonda recebeu o marcador: o dead-letter" \
+       "chegou de verdade (custodia.retry.dlx e FANOUT, entrega a TODAS as filas" \
+       "bindadas — inclusive custodia.prices, na MESMA operacao atomica do broker)"
 
-  echo "    aguardando o TTL (${CUSTODIA_RETRY_TTL_MS}ms) com folga, ate $((CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES * CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP))s, para 'custodia.retry' esvaziar (PADROES §10.31: completude x limite)"
-
-  local retry_final
-  retry_final=$(wait_for_messages_ready "custodia.retry" "$retry_antes" eq "$CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES" "$CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP") && rc=0 || rc=$?
-  if [ "$rc" -eq 2 ]; then
-    echo "ERRO: nao consegui LER 'custodia.retry' durante a espera do TTL." >&2
-    exit "$EXIT_TOPOLOGIA_AUSENTE"
-  elif [ "$rc" -eq 3 ]; then
-    echo "ERRO: 'custodia.retry' respondeu 200 em toda tentativa, mas 'messages_ready'" >&2
-    echo "      nunca ficou numerico durante a espera do TTL — estatistica nao emitida" >&2
-    echo "      (producao roda com collect_statistics_interval=60000). Isto NAO e falha" >&2
-    echo "      de dead-letter." >&2
-    exit "$EXIT_TOPOLOGIA_AUSENTE"
-  elif [ "$rc" -ne 0 ]; then
-    echo "ERRO: PARADA POR LIMITE — 'custodia.retry' nao esvaziou de volta a" >&2
-    echo "      ${retry_antes} apos $((CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES * CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP))s" >&2
-    echo "      (ficou em ${retry_final}; TTL declarado: ${CUSTODIA_RETRY_TTL_MS}ms). O TTL" >&2
-    echo "      nao expirou a tempo, ou nao esta dead-letrando." >&2
-    exit "$EXIT_RETRY_FALHOU"
+  # REFORCO, nao reprova: a mesma metade sujeita a corrida contra
+  # collect_statistics_interval=60000 que motivou trocar a tecnica. O veredito ja
+  # foi dado pela sonda; se a estatistica de custodia.retry ainda nao acompanhou,
+  # so avisamos.
+  local retry_final rc
+  retry_final=$(wait_for_messages_ready "custodia.retry" "$retry_antes" eq 5 3) && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "    reforco confere: 'custodia.retry' esvaziou de volta a ${retry_antes}"
+  else
+    echo "AVISO: reforco nao confirmado — 'custodia.retry' nao esta em ${retry_antes}" >&2
+    echo "       (ultimo valor: ${retry_final:-desconhecido}, rc=${rc}). NAO reprova:" >&2
+    echo "       o veredito desta prova e o marcador na sonda, ja confirmado acima." >&2
   fi
-  echo "    PARADA POR COMPLETUDE — 'custodia.retry' esvaziou de volta a ${retry_antes} (DETERMINISTICO: TTL expirou e dead-letrou)"
 
-  local prices_esperado=$((prices_antes + 1))
-  local prices_atual
-  prices_atual=$(wait_for_messages_ready "custodia.prices" "$prices_esperado" ge) && rc=0 || rc=$?
-  if [ "$rc" -eq 2 ]; then
-    echo "ERRO: nao consegui LER 'custodia.prices' apos 'custodia.retry' esvaziar." >&2
-    exit "$EXIT_TOPOLOGIA_AUSENTE"
-  elif [ "$rc" -eq 3 ]; then
-    echo "ERRO: 'custodia.prices' respondeu 200 em toda tentativa, mas 'messages_ready'" >&2
-    echo "      nunca ficou numerico — estatistica nao emitida (producao roda com" >&2
-    echo "      collect_statistics_interval=60000). Isto NAO e mensagem perdida." >&2
-    exit "$EXIT_TOPOLOGIA_AUSENTE"
-  elif [ "$rc" -ne 0 ]; then
-    echo "ERRO: 'custodia.retry' esvaziou mas 'custodia.prices' nao cresceu — a mensagem" >&2
-    echo "      foi perdida entre 'custodia.retry.dlx' e 'custodia.prices'." >&2
-    exit "$EXIT_RETRY_FALHOU"
-  fi
-  echo "    reforco — 'custodia.prices' cresceu (${prices_antes} -> ${prices_atual}): o dead-letter chegou (custodia.retry.dlx -> custodia.prices)"
-
-  maybe_take_probe_prices "custodia.prices" "$marker" "$prices_atual" || true
+  # A mensagem TAMBEM chegou na custodia.prices real (fanout entrega a TODAS as
+  # bindadas). Mesma regra de limpeza que ja existe para a prova de fumaca: so
+  # remove se a fila tiver EXATAMENTE 1 mensagem agora — com backlog, fica retida
+  # (ver o comentario de maybe_take_probe_prices sobre "ate duas por deploy").
+  fetch_queue "custodia.prices"
+  local prices_agora
+  prices_agora=$(read_messages_ready "custodia.prices" "$MGMT_BODY")
+  maybe_take_probe_prices "custodia.prices" "$marker" "$prices_agora" || true
 }
 
 main() {
@@ -976,6 +1249,7 @@ main() {
   declare_binding "custodia.retry.dlx" "custodia.prices" ""
 
   echo "== verificacao bloqueante (PADROES §10.8: leitura de volta, com controle negativo exercitavel via CUSTODIA_TOPOLOGIA_TESTE_NEGATIVO) =="
+  sweep_orphan_sondas
   verify_prices_bindings
 
   fetch_queue "custodia.prices"
@@ -992,16 +1266,19 @@ main() {
   assert_arg "custodia.prices" "$MGMT_BODY" "x-dead-letter-exchange" "custodia.dlx"
   assert_arg_absent "custodia.prices" "$MGMT_BODY" "x-max-length"
   assert_arg_absent "custodia.prices" "$MGMT_BODY" "x-message-ttl"
+  assert_no_poisoning_policy "custodia.prices" "$MGMT_BODY"
 
   fetch_queue "custodia.prices.dlq"
   assert_type_durable "custodia.prices.dlq" "$MGMT_BODY" "quorum"
   assert_arg "custodia.prices.dlq" "$MGMT_BODY" "x-delivery-limit" "-1"
   assert_arg_effective "custodia.prices.dlq" "$MGMT_BODY" "delivery_limit" "unlimited"
+  assert_no_poisoning_policy "custodia.prices.dlq" "$MGMT_BODY"
 
   fetch_queue "custodia.parked"
   assert_type_durable "custodia.parked" "$MGMT_BODY" "quorum"
   assert_arg "custodia.parked" "$MGMT_BODY" "x-delivery-limit" "-1"
   assert_arg_effective "custodia.parked" "$MGMT_BODY" "delivery_limit" "unlimited"
+  assert_no_poisoning_policy "custodia.parked" "$MGMT_BODY"
 
   fetch_queue "custodia.retry"
   assert_type_durable "custodia.retry" "$MGMT_BODY" "classic"
@@ -1013,6 +1290,7 @@ main() {
   # lida de volta, diferente da propriedade analoga da custodia.prices acima.
   assert_arg_absent "custodia.retry" "$MGMT_BODY" "x-max-length"
   assert_arg_absent "custodia.retry" "$MGMT_BODY" "x-overflow"
+  assert_no_poisoning_policy "custodia.retry" "$MGMT_BODY"
 
   verify_exchange_type "custodia.dlx" "fanout"
   verify_exchange_type "custodia.parking" "fanout"
