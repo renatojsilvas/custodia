@@ -135,7 +135,7 @@ terceiro.
 |---|---|
 | F1 | nenhuma (VPS, CI, Grafana Cloud — já existem) |
 | F2 | broker `plataforma-rabbitmq` alcançável (serviço do `hub-precos`) |
-| F3 | Postgres com schema (a instância já existe) — **e a decisão da PENDÊNCIA BLOQUEANTE do `caixa:BRL`, que é um campo opcional novo na §5.1 do `../plataforma-docs`, OUTRO repo** (ver a pendência dentro da V2) |
+| F3 | Postgres com schema (a instância já existe). *A dependência que existia — a decisão do `caixa:BRL`, que exigia campo novo na §5.1 do `../plataforma-docs` — **fechou em 2026-09-09**: o campo `origemRecurso` existe, e a regra do livro está na V6.* |
 | F4 | o `operacoes` publicando `trades.registered` — **já publica** |
 | F5 | nenhuma |
 | F6 | o Hub publicando `prices.*` e respondendo `GET /prices/asof` |
@@ -1406,8 +1406,11 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
 - [ ] **F3** — o schema do livro: as constraints que tornam o dado irreparável impossível
   de gravar. **Dependência externa nova: Postgres com schema (a instância já existe).**
-  **PENDÊNCIA BLOQUEANTE ABERTA: `caixa:BRL` nunca é debitado — leia a pendência dentro da V2
-  ANTES de despachar; ela depende de um campo novo na §5.1 do `../plataforma-docs`.**
+  **PENDÊNCIA FECHADA em 2026-09-09** — `caixa:BRL` nunca ser debitado dependia de um campo
+  novo na §5.1 do `../plataforma-docs`, e ele **existe**: `origemRecurso`
+  (`"externo" | "saldo_custodia"`), opcional, presente se e somente se
+  `operacao ∈ {aplicacao, aporte}`. Ver a pendência dentro da V2, que registra a decisão, as
+  duas alternativas rejeitadas e o que o livro passa a gravar. **O F3 está DESBLOQUEADO.**
 
   As **cinco** tabelas da §7.1 — o livro e as quatro projeções, e o "cinco" é sobre a §7.1,
   não sobre o schema inteiro do serviço — como migrations EF, snake_case, índices nomeados, no molde
@@ -1454,10 +1457,11 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   ---
 
   **O VOCABULÁRIO DO LIVRO — fechado aqui, repetido literalmente no F4, F5, F7 e F9.**
-  *Com uma exceção declarada, e ela é o motivo de a fase estar bloqueada: a **PENDÊNCIA
-  BLOQUEANTE do `caixa:BRL`** (dentro da V2) é a única peça deste vocabulário que ainda não
-  fechou, e "fechado aqui" só passa a ser verdade quando ela fechar. Não leia as cinco V como
-  completas enquanto o cabeçalho da fase trouxer o aviso.*
+  *A exceção que existia aqui — a **PENDÊNCIA do `caixa:BRL`** — **fechou em 2026-09-09**,
+  com o campo `origemRecurso` acrescentado à §5.1 do `../plataforma-docs`. As cinco V são
+  completas. O que a decisão acrescenta ao vocabulário está escrito na própria pendência,
+  dentro da V2, e é normativo como o resto: a **perna de caixa condicional** da `compra` e do
+  `aporte`.*
 
   Cinco decisões que se sustentam umas às outras. Corrigir uma sem as outras **recria** as
   demais, e por isso elas estão num bloco só, com um nome só para cada linha. **Fase que
@@ -1858,11 +1862,40 @@ para ela.
   constância é consequência do fixture que zera a posição, e tem de estar escrita **no
   fixture**.
 
-  ### PENDÊNCIA BLOQUEANTE DO F3 — `caixa:BRL` nunca é DEBITADO, e o vocabulário do livro não fecha sem decidir isto
+  ### V6 · A PERNA DE CAIXA — `caixa:BRL` passa a ser DEBITADO, e é o `origemRecurso` que diz quando
 
-  **Estado:** aberta. **Bloqueia:** o F3 (e, por dependência, tudo que lê caixa: F5, F7, F8).
-  **Quem decide:** o dono, e a correção é na §5.1 do `../plataforma-docs` — **outro repo**.
-  **O F3 NÃO fecha o vocabulário do livro sem isto.**
+  **Estado: FECHADA em 2026-09-09.** Era pendência bloqueante; a decisão do dono foi a saída
+  **(1)**, e o campo já está no contrato: `origemRecurso` na §5.1 do `../plataforma-docs`
+  (commit `392e37e`), `"externo" | "saldo_custodia"`, **opcional**, presente se e somente se
+  `operacao ∈ {aplicacao, aporte}`. Sem bump de `v`, pela regra de evolução da própria §5.1.
+
+  **A REGRA, e ela é normativa — o F4 grava exatamente isto:**
+
+  | `origemRecurso` | linhas que a `compra`/`aporte` grava |
+  |---|---|
+  | `"saldo_custodia"` | **duas**: a perna do título (como hoje) **e** `caixa:BRL` com `qtd_delta = −valorFinanceiro` |
+  | `"externo"` | **uma**: só a perna do título. O dinheiro veio de fora e nunca esteve no livro |
+  | **ausente** | **nenhuma** — a mensagem **estaciona** com motivo `origem_recurso_ausente` |
+
+  **Ausente NÃO é `"externo"`, e esta é a metade da decisão que mais custa se for lida
+  errado.** Tratar ausente como `"externo"` reintroduz o defeito **em silêncio**, que é o que
+  o campo existe para impedir, e numa tabela sem UPDATE. O motivo entra na lista fechada e
+  sem default de `x-custodia-motivo` do F4, ao lado de `estorno_divergente`.
+
+  *E isso é barato agora por um fato medido, não por otimismo: em 2026-09-09 a `outbox` do
+  `../operacoes` tinha **0 linhas** — nenhum `TradeRegistered` foi publicado em produção até
+  hoje. Não existe evento legado sem o campo, então não há período de transição a desenhar.
+  Se houvesse, a saída seria outra, e teria que estar escrita aqui.*
+
+  **O que Operações tem que fazer, e é pré-requisito do F4, não consequência dele:** passar a
+  publicar o campo. Enquanto ela não publicar, **todo** `aplicacao`/`aporte` estaciona — que é
+  o desfecho certo (ruidoso e reversível) em vez do errado (silencioso e gravado para
+  sempre), mas é uma dependência entre repos que precisa ser combinada antes de o F4 subir.
+
+  ---
+
+  **O registro do problema que a decisão resolveu, preservado porque a próxima pessoa vai
+  perguntar por que o campo existe:**
 
   **O fato, e ele é conferível por varredura deste arquivo:** nenhuma linha deste roadmap
   debita `caixa:BRL`. A única linha que o escreve é a `liquidação, perna 2`, sempre
@@ -1898,14 +1931,17 @@ para ela.
   recusa no `campoPosicao` (F6) e na distinção `sem_preco_ate_a_data` ×
   `instrumento_desconhecido`.
 
-  **A correção, quando o dono decidir:** campo **OPCIONAL** no `TradeRegistered` da §5.1
-  dizendo se a aplicação consumiu saldo em custódia. É a **mesma forma** do `estornaTradeId`,
+  **A correção, FEITA em 2026-09-09:** campo **OPCIONAL** no `TradeRegistered` da §5.1
+  dizendo se a aplicação consumiu saldo em custódia — `origemRecurso`, e ele cobre
+  **`aplicacao` E `aporte`**, porque o `aporte` é aplicação adicional no título (V2: "a
+  diferença contra `aplicacao` é SÓ O RÓTULO") e consome dinheiro do mesmo jeito; cobrir só
+  `aplicacao` deixaria metade do buraco aberto. É a **mesma forma** do `estornaTradeId`,
   que o F3 do `../operacoes` acrescentou à §5.1 **antes** do código que monta o payload, e que
   o roadmap de lá registra como **"pré-requisito, não consequência"**. Campo novo opcional é
   o que a própria §5.1 autoriza sem incrementar `v`.
 
-  **As duas saídas alternativas — se o dono decidir não mexer na §5.1 —, com o custo de cada
-  uma escrito, porque nenhuma é de graça:**
+  **As duas alternativas REJEITADAS, com o custo de cada uma — foi contra elas que a saída
+  (1) foi escolhida:**
 
   - **(a) perna simétrica:** `compra` e `aporte` debitam `caixa:BRL`. Fecha a conta da
     reaplicação e **mostra caixa NEGATIVO em toda aplicação com dinheiro novo** — porque não
@@ -2048,10 +2084,11 @@ para ela.
      ("extrato de posição batendo com a soma dos snapshots vigentes, **incluindo as linhas
      de caixa**") inalcançável, e o "soma dos instrumentos + caixa = patrimônio diário" da
      §7.5 sem parcela de caixa. *Esta consequência afirma só que **sem preço por definição
-     não existe linha de caixa no snapshot**, e isso vale sob qualquer desfecho da
-     **PENDÊNCIA BLOQUEANTE do `caixa:BRL`** (V2, acima). A **igualdade** da §7.5 citada aqui
-     é justamente o que aquela pendência deixa em aberto — não a leia como asserção fechada,
-     e é por isso que o F8 Pronto (g) não a afirma mais.*
+     não existe linha de caixa no snapshot**, e ela valia sob qualquer desfecho da decisão do
+     `caixa:BRL` — que **fechou** (V6). Com a perna de caixa condicional, a **igualdade** da
+     §7.5 volta a ser defensável para o cliente cuja carteira inteira nasceu depois do campo
+     `origemRecurso`; ela continua **não afirmada** pelo F8 Pronto (g), e essa reavaliação é
+     do F8, não desta fase.*
 
   Coerente com isso: em `posicao_corrente`, uma linha de `caixa:*` com **`quantidade > 0`**
   tem `preco_medio = 1,000000` e `custo_total = quantidade`.
@@ -2459,10 +2496,17 @@ para ela.
       verdade porque o exemplo ZERA a posicao. Escreva (3) no FIXTURE, nunca no
       invariante.
 
-      PENDENCIA BLOQUEANTE — caixa:BRL NUNCA E DEBITADO. NENHUMA linha deste roadmap
-      debita caixa:BRL: a unica que o escreve e a liquidacao perna 2, sempre +(Y-t-f).
-      Nao ha saque, nao ha a_pagar, e aplicacao -> compra grava UMA linha, no instrumento
-      do titulo, sem contrapartida. A CONTA: D0 compra 10@100 (patrimonio 1000); D1
+DECIDIDO EM 2026-09-09 (era pendencia bloqueante) — caixa:BRL PASSA A SER DEBITADO,
+      e quem diz quando e o campo `origemRecurso` da 5.1 ("externo" | "saldo_custodia",
+      opcional, presente sse operacao esta em {aplicacao, aporte}). A REGRA que voce
+      implementa: "saldo_custodia" grava DUAS linhas (a perna do titulo e caixa:BRL com
+      qtd_delta = -valorFinanceiro); "externo" grava UMA (so o titulo); AUSENTE nao grava
+      NADA e a mensagem estaciona com motivo `origem_recurso_ausente`. AUSENTE NAO E
+      "externo" — tratar como externo reintroduz o defeito em silencio, numa tabela sem
+      UPDATE. O problema que isso resolveu, preservado porque voce vai perguntar por que o
+      campo existe: a unica linha que escrevia caixa:BRL era a liquidacao perna 2, sempre
+      +(Y-t-f); nao havia saque, nao havia a_pagar, e aplicacao -> compra gravava UMA
+      linha, no instrumento do titulo, sem contrapartida. A CONTA: D0 compra 10@100 (patrimonio 1000); D1
       resgate 10 com Y=1000 e t=100 (patrimonio 900); D2 liquidacao (900 em caixa:BRL);
       D3 reaplica 9@100 -> o extrato diz 9x100 + 900 = 1800 e o cliente tem 900.
       SE VOCE ABRIU ESTA FASE E ESTA PENDENCIA AINDA ESTA ABERTA, PARE E PERGUNTE: o F3
@@ -2556,10 +2600,11 @@ para ela.
       (3) snapshots_posicao.preco e NOT NULL, entao sem isto NAO NASCERIA linha de
       snapshot de caixa nenhuma — o F5 escrituraria o limbo D->D+1 no livro e o F7 o
       apagaria do documento, e o extrato de posicao do F8 ficaria sem a parcela de caixa.
-      NAO LEIA a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5) como
-      assercao fechada: e exatamente ela que a PENDENCIA BLOQUEANTE do caixa:BRL, acima,
-      deixa em aberto. O que este item (3) afirma e so que SEM PRECO POR DEFINICAO NAO
-      EXISTE LINHA DE CAIXA NO SNAPSHOT, e isso vale sob qualquer desfecho da pendencia.
+NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
+      nesta fase: com a perna de caixa (V6) ela volta a ser defensavel para carteira nascida
+      depois do campo `origemRecurso`, mas reavaliar isso e do F8, nao daqui. O que este
+      item (3) afirma e so que SEM PRECO POR DEFINICAO NAO EXISTE LINHA DE CAIXA NO
+      SNAPSHOT, e isso vale de qualquer jeito.
       Em posicao_corrente, linha de caixa COM quantidade > 0 tem preco_medio = 1,000000 e
       custo_total = quantidade.
       A REGRA DE FRONTEIRA DA V1 PRECEDE ESTA, INCLUSIVE PARA caixa:* — NAO ESCREVA a
@@ -4942,8 +4987,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   documento, e o "soma dos instrumentos + caixa = patrimônio diário" da §7.5 ficaria sem a
   parcela de caixa — derrubando o Pronto do F8. *O que esta fase precisa é só isto: **a
   linha de caixa existe no snapshot**. A **igualdade** "soma dos instrumentos + caixa =
-  patrimônio" é o que a PENDÊNCIA BLOQUEANTE do `caixa:BRL` (F3, V2) deixa em aberto, e o F8
-  Pronto (g) já deixou de afirmá-la — não a reintroduza aqui como critério.*
+  patrimônio" era o que a pendência do `caixa:BRL` deixava em aberto; ela **fechou** (F3, V6)
+  e a igualdade volta a ser defensável, mas **reavaliá-la é do F8** — o Pronto (g) de lá
+  ainda não a afirma, e esta fase não a reintroduz como critério.*
 
   **ESTA É A FASE QUE MUDA O PERFIL DE RECURSO — MEDIR DE NOVO.** O teto de **192m** foi
   medido na VPS em 2026-09-07 para um perfil de API pequena **sem worker** (o próprio
@@ -5627,8 +5673,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     NASCERIA linha de caixa nenhuma: o F5 escritura o limbo D->D+1 no livro e esta fase o
     apagaria do documento, deixando o extrato de posicao do F8 sem a parcela de caixa. NAO
     USE a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5) como criterio:
-    e ela que a PENDENCIA BLOQUEANTE do caixa:BRL (F3, V2) deixa em aberto, e o F8 Pronto (g)
-    ja deixou de afirma-la. O que esta fase precisa e so que A LINHA DE CAIXA EXISTA no
+    era ela que a pendencia do caixa:BRL deixava em aberto; a pendencia FECHOU (F3, V6) e a
+    igualdade volta a ser defensavel, mas reavalia-la e do F8, cujo Pronto (g) ainda nao a
+    afirma. O que esta fase precisa e so que A LINHA DE CAIXA EXISTA no
     snapshot.
   - snapshots_posicao versionado: marca vigente=false e INSERE a nova com calculado_em.
     Versiona SO SE o valor DIFERE do vigente.
@@ -6290,8 +6337,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   registrado_em)` e **não** define desempate para `registrado_em` empatado; o `id` fecha essa
   ordem sem trocar nenhuma das duas chaves que ela prescreve. **Posição:** leitura de `snapshots_posicao WHERE vigente`,
   agregável por dia. *A §7.5 escreve essa agregação como "soma dos instrumentos + caixa =
-  patrimônio diário"; **enquanto a PENDÊNCIA BLOQUEANTE do `caixa:BRL` (F3, V2) estiver
-  aberta, essa igualdade NÃO é afirmada por esta fase** — o campo de total chama-se
+  patrimônio diário". *A pendência do `caixa:BRL` **fechou** (F3, V6) e a igualdade volta a
+  ser defensável — mas **esta fase continua não a afirmando**, e a reavaliação é uma decisão
+  a tomar aqui, com número na mão, não uma herança: o campo de total chama-se
   `somaDosValores` e o Pronto (g) diz exatamente o que ele afirma.* Erro em
   problem+json com `code`, leitura via **Dapper** com SQL explícito (leitura via EF é
   defeito, não estilo — §3), portas devolvendo `Result<T>`, `X-Api-Key` exigida,
@@ -6470,8 +6518,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   auditabilidade que faz o livro ser a verdade. Tributos e liquidacoes aparecem como
   LINHAS PROPRIAS.
   POSICAO: leitura de snapshots_posicao WHERE vigente, agregavel por dia. A 7.5 escreve
-  essa agregacao como "soma dos instrumentos + caixa = patrimonio diario", MAS NAO A AFIRME:
-  e ela que a PENDENCIA BLOQUEANTE do caixa:BRL (F3, V2) deixa em aberto. O campo de total
+  essa agregacao como "soma dos instrumentos + caixa = patrimonio diario", MAS NAO A AFIRME
+  sem decidir: era ela que a pendencia do caixa:BRL deixava em aberto, a pendencia FECHOU
+  (F3, V6) e a igualdade volta a ser defensavel — reavaliar isso e desta fase, com numero na
+  mao, e nao se herda por omissao. Ate decidir, o campo de total
   chama-se `somaDosValores` e e, literalmente, a soma dos `valor` das linhas devolvidas.
 
   O CONTRATO DOS DOIS ENDPOINTS ESTA DECIDIDO — implemente-o, nao o invente:
@@ -6636,8 +6686,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   soma dos `valor` das linhas que ela mesma devolveu**, conferido item a item. É a ponta em
   que a V4 do F3 e o snapshot de caixa do F7 são conferidos por quem lê.
   **Esta alínea DEIXOU DE AFIRMAR "soma dos instrumentos + caixa = patrimônio", e a troca é
-  deliberada:** enquanto a **PENDÊNCIA BLOQUEANTE do `caixa:BRL`** (F3, V2) estiver aberta,
-  aquela igualdade **fecharia VERDE com o número errado** — o extrato diria 1800 para um
+  deliberada.** *A pendência do `caixa:BRL` **fechou** no F3 (V6) e a igualdade volta a ser
+  defensável para carteira escriturada com a perna de caixa — mas a alínea continua como
+  está até alguém **decidir aqui**, com número na mão, porque enquanto a pendência esteve
+  aberta* aquela igualdade **fecharia VERDE com o número errado** — o extrato diria 1800 para um
   cliente que tem 900, no dia seguinte a uma reaplicação, que é o ciclo de vida normal do
   produto. Dos três estados possíveis (certo, errado e visível, errado e verde), o pior é o
   terceiro, e era esse que o critério anterior produzia. O que ficou é uma asserção de
@@ -6935,13 +6987,24 @@ Três coisas que este roadmap pede em toda fase, e que não são cerimônia:
    rastreado.
 
 6. **Antes de despachar uma fase, releia as PENDÊNCIAS dela — elas estão no cabeçalho da
-   fase e nas decisões, com o nome, o estado, quem decide e as opções.** Há **três** abertas
-   neste arquivo: `caixa:BRL` nunca ser debitado (**bloqueia o F3**, e a correção é um campo
-   novo na §5.1 do `../plataforma-docs`), a definição de `prazo` (**bloqueia o F5 e, por
-   herança, o F9**) e a reversão de corpaction (**aberta no F9**, não bloqueante até o Hub
-   publicar `corpactions.td`). Fechar uma delas é editar a fase dona **e** os critérios de
-   Pronto que a citam — o Pronto (g) do F8 diz, dentro dele, o que volta a valer quando a
-   primeira fechar.
+   fase e nas decisões, com o nome, o estado, quem decide e as opções.** Há **duas** abertas
+   neste arquivo: a definição de `prazo` (**bloqueia o F5 e, por herança, o F9**) e a
+   reversão de corpaction (**aberta no F9**, não bloqueante até o Hub publicar
+   `corpactions.td`).
+
+   *A terceira — `caixa:BRL` nunca ser debitado — **fechou em 2026-09-09** com o campo
+   `origemRecurso` na §5.1 do `../plataforma-docs`, e o que ela custou para fechar é o
+   procedimento que as outras duas vão exigir: **nove** pontos deste arquivo a citavam, e
+   três deles estavam DENTRO de blocos de prompt, que é o texto que o executor lê como
+   instrução. Fechar uma pendência é editar a fase dona **e** varrer o arquivo inteiro pelo
+   nome dela — `grep`, não memória. Um Pronto que ainda diga "enquanto a pendência estiver
+   aberta" depois de ela fechar é pior que antes: ele parece atual.*
+
+   **E fechar não é o mesmo que reabrir o que a pendência congelou.** O Pronto (g) do F8
+   deixou de afirmar "soma dos instrumentos + caixa = patrimônio" **por causa** desta
+   pendência; com ela fechada a igualdade volta a ser defensável, mas voltar a afirmá-la é
+   uma **decisão do F8, com número na mão** — não uma consequência automática. Está escrito
+   assim nos cinco pontos que a citavam.
 
 E duas do dado, que valem enquanto este livro for append-only:
 
