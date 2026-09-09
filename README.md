@@ -228,8 +228,10 @@ fase.
 `infra/rabbitmq/declare-topology.sh`, invocado pelo job de deploy — de forma idempotente
 e com verificação bloqueante. A razão de ser da ordem é literal: evento publicado num
 exchange topic **sem binding casando é descartado em silêncio**, com o produtor marcando
-sucesso, e Operações publica `trades.registered` em produção desde 2026-09-06. **A fila
-acumula de propósito** desde então, esperando o consumidor do F4 — não purgue a
+sucesso. O relay do Operações está no ar desde 2026-09-06 e mantém conexão aberta com o
+broker; até 2026-09-08 a `outbox` dele tinha 0 linhas, isto é, nada tinha sido publicado
+ainda — a topologia entrou **antes** do primeiro trade, que é o ponto. **A fila acumula
+de propósito** a partir daqui, esperando o consumidor do F4 — não purgue a
 `custodia.prices`.
 
 Esse script é o único consumidor dos secrets `RABBITMQ_USER` e `RABBITMQ_PASSWORD`

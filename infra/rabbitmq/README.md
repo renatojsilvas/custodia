@@ -9,11 +9,19 @@ script, junto da linha que ele explica — este README é o mapa, não a duplica
 ## Por que isto existe, e por que antes do consumidor
 
 Evento publicado num exchange topic **sem binding casando é descartado em silêncio**,
-com o publish confirmado e o produtor marcando sucesso. Operações publica
-`trades.registered` em produção desde 2026-09-06. Entre a recriação do broker e a
+com o publish confirmado e o produtor marcando sucesso. Entre a recriação do broker e a
 redeclaração da fila do consumidor existe uma janela em que tudo fica verde — deploy,
 healthcheck, outbox zerada — e os eventos evaporam (`LEIA-ME-KIT.md`, "Perder o volume
 do broker apaga fila e binding, e a outbox não protege contra isso").
+
+**O que estava aberto, medido em 2026-09-08 e não inferido:** o relay do `operacoes`
+tinha conexão ABERTA com o broker, e o vhost `/` não tinha **fila nenhuma**. Mas a
+`outbox` do `operacoes` tinha **0 linhas** e a tabela `operacoes` **0 registros** — o
+relay marca `publicado_em` e não apaga, então isso é prova de que **nenhum trade chegou
+a ser publicado**. A janela estava aberta e ninguém tinha caído nela: esta fase é
+**preventiva**, não remediadora. A distinção importa porque a conclusão oposta —
+"trades estão sendo perdidos agora" — é fácil de inferir da conexão aberta e é **falsa**;
+foi exatamente esse o erro que o `LEIA-ME-KIT` já registra sobre este mesmo broker.
 
 Topologia de consumidor é **estado do broker, não do código**, e não sobrevive ao
 volume. Por isso ela é declarada por um passo de deploy, e não pelo boot da aplicação:

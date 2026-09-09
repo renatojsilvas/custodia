@@ -872,6 +872,26 @@ agendamento e alcance do Postgres — com a outbox vazia o ciclo fecha com suces
 conexão. Isso eu tinha escrito no comentário do workflow ao portar o teste; escrever o limite
 não é agir sobre ele. Métrica de ciclo não é métrica de efeito.
 
+**E o MESMO erro se repetiu no F2 da `custodia` (2026-09-08), com o mesmo broker, comigo
+lendo este texto no mesmo dia.** Ao abrir a fase eu medi duas coisas verdadeiras — o vhost `/`
+sem **fila nenhuma**, e a conexão `operacoes-relay` **aberta** — e concluí, no relato ao dono,
+no commit e em dois READMEs, que "`trades.registered` está sendo descartado em silêncio
+**agora**". A inferência é sedutora e a conclusão é **falsa**: um comando desmentiu, o mesmo
+tipo de comando de sempre — a `outbox` do `operacoes` tem **0 linhas** e a tabela `operacoes`
+tem **0 registros**, e o relay dele **marca** `publicado_em` em vez de apagar a linha. Nada
+tinha sido publicado. A janela estava aberta e ninguém tinha caído nela.
+
+Note a simetria com o parágrafo de cima: lá a conclusão errada foi "o relay **nunca**
+publicou" a partir da ausência do exchange; aqui foi "o relay está publicando **agora**" a
+partir da conexão aberta. **Conexão aberta não é tráfego, e ausência de topologia não é
+prova de perda** — as duas vezes a premissa que decidia estava numa tabela que ninguém abriu.
+
+**Regra:** antes de escrever no commit, no PR ou no relato que houve **perda**, abra a
+tabela que registra o que foi publicado. "Estava exposto" e "foi perdido" são afirmações
+diferentes, e a segunda é a que faz o dono agir. Errar para o lado do alarme não é o lado
+seguro: ele **desloca prioridade**, e a fase seguinte herda um número inventado. O achado
+honesto — "preventiva, não remediadora" — não enfraquece a urgência da fase em nada.
+
 ## Guarda que sumiu junto com um tag flutuante, e o run avisava
 
 O deploy dos três repos usava `appleboy/ssh-action@v1` com `script_stop: true`. Esse input
