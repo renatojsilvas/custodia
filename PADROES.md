@@ -1244,11 +1244,22 @@ Três coisas se seguem, e as três faltavam quando este item foi escrito:
    está em `operator_policy` — reportar só o primeiro faz o operador procurar uma policy
    chamada "AUSENTE". Os dois têm endpoints de remoção diferentes.
 
-**E a lista de chaves se fecha por CLASSE, não por exemplo.** No mesmo incidente a lista
-nasceu com as três que motivaram a fase e faltava `expires`, que é pior que todas: ele
-**apaga a fila inteira**, com backlog e bindings juntos, e a precondição ("fila sem
-consumidor") ficava permanentemente satisfeita porque o consumidor só chega na fase
-seguinte.
+**E a lista de chaves se fecha por CLASSE, não por exemplo — o que na prática significa
+inverter a lista.** No mesmo incidente a lista nasceu com as três chaves que motivaram a
+fase; faltava `expires`, que é pior que todas (ele **apaga a fila inteira**, com backlog e
+bindings juntos, e a precondição "fila sem consumidor" ficava permanentemente satisfeita
+porque o consumidor só chega na fase seguinte). Acrescentar `expires` **não fechou nada**:
+uma lista de proibidas com um item a mais continua sendo uma lista de exemplos, e a chave
+seguinte — inclusive uma que o fornecedor acrescente num minor — passa igual.
+
+O fecho é a **allow-list**: enumere o que é legítimo, e reprove todo o resto. Quando a
+resposta certa for "nada é legítimo", a lista permitida é **vazia**, e isso é a forma mais
+forte da guarda, não a mais preguiçosa.
+
+**Guarda:** olhe a sua lista e pergunte — *"esta é a lista do que eu PROIBO, ou do que eu
+PERMITO?"*. Se for a primeira, uma chave nova do fornecedor entra em silêncio, e você vai
+descobrir pelo incidente. Vale para chave de configuração, campo de payload, código de
+erro tratado e tipo de evento consumido.
 
 **Corolário sobre aceitação: servidor aceitar o parâmetro não é servidor honrar o
 parâmetro.** A management API do RabbitMQ 4.3.5 devolve HTTP 201 para
@@ -1278,10 +1289,24 @@ parágrafo seguinte àquele que proibia `messages_ready == 0` pelo mesmo motivo.
 contradizia o argumento, e o executor seguiu a letra.
 
 **Onde a igualdade continua certa:** quando `>=` seria **vácuo**. Provar que uma fila
-**esvaziou** é `== antes`, porque `>= antes` é trivialmente verdadeiro. Nesses pontos,
-verifique se o recurso tem produtor de terceiros: se tiver, a asserção de igualdade só pode
-ser **informativa** (avisa, não reprova); se não tiver — no caso, uma fila de atraso sem
-consumidor e sem outro publicador —, ela é determinística e pode bloquear.
+**esvaziou** é `== antes`, porque `>= antes` é trivialmente verdadeiro. Nesses pontos, a
+igualdade só pode bloquear se **duas** condições valerem, e a versão anterior deste item
+enunciava só a primeira:
+
+1. **não há produtor de terceiros** no recurso; e
+2. **o contador que você lê é instantâneo**.
+
+A (2) foi aprendida depois, e derrubou o exemplo que este item usava como canônico. O
+`messages_ready` do RabbitMQ tem defasagem **medida** de ~10 s contra um
+`collect_statistics_interval` de 60 s: mesmo numa fila de atraso sem consumidor e sem
+outro publicador — onde a (1) vale plenamente —, a igualdade é refém do **observador**, e
+uma leitura atrasada reprova um deploy sadio. No F2 da `custodia` essa asserção foi
+rebaixada a **reforço que só avisa**, e o veredito da prova passou a ser outro sinal (um
+marcador lido de volta de uma fila-sonda), não a contagem.
+
+**Guarda:** antes de deixar uma igualdade bloquear, pergunte as duas — *"quem mais escreve
+nesse contador?"* e *"esse contador é o estado, ou é uma amostra do estado?"*. A segunda é
+a que não parece uma pergunta até custar um deploy vermelho.
 
 **Guarda:** ao escrever a asserção, pergunte quem mais escreve nesse contador. Se a
 resposta não for "ninguém", `==` é um floco esperando a hora.

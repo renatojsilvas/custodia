@@ -1016,7 +1016,9 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   `rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"}`, isto é,
   sobre a **existência da fila**, que o `rabbitmq_prometheus` expõe de verdade, por fila.
   **A grafia foi corrigida no F2, por medição, e o nome importa:** a série com o label
-  `queue` só existe em `/metrics/detailed?family=queue_coarse_metrics` (12 séries) e em
+  `queue` só existe em `/metrics/detailed?family=queue_coarse_metrics` (**31 séries ativas
+  no job**, medidas na nuvem com as quatro filas declaradas — não são as 12 *linhas* que o
+  corpo do endpoint traz com uma fila de sonda; grandezas diferentes, §10.42) e em
   `/metrics/per-object` (~730 séries, e crescendo com conexão/canal de terceiros); no
   `/metrics` default ela vem agregada, **sem** o label, e o seletor que este arquivo
   trazia antes nunca casaria — disparando todo dia, para sempre, que é o defeito que o
@@ -1259,7 +1261,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   substituição não é um teste parecido, é o **mesmo ramo com a mesma entrada relativa**: a
   comparação é de conjuntos ordenados, e injetar uma chave na lista ESPERADA produz
   exatamente a assimetria (esperado ⊃ atual) que a remoção de um binding real produziria.
-  Exercitável sem tocar em binding de produção, por `CUSTODIA_TOPOLOGIA_TESTE_NEGATIVO`.* Mais:
+  Exercitável sem tocar em binding de produção, por `CUSTODIA_TOPOLOGIA_TESTE_NEGATIVO`.*
+  **E há uma segunda asserção bloqueante, que a redação anterior não previa porque ela
+  nasceu na revisão adversarial: a de que nenhuma POLICY do broker aplica configuração por
+  cima das nossas filas.** O controle positivo dela não é variável de ambiente — é
+  **plantar a policy no broker**, porque asserção de ausência sobre estado de terceiro só
+  se prova pelo mecanismo real (§10.40). Planta-se na `custodia.parked` (terminal e vazia,
+  **nunca** na `custodia.prices`), nos dois sabores — policy e **operator** policy, que
+  têm endpoints de remoção diferentes e é a segunda a mais provável num broker alheio —,
+  confere-se que reprova nomeando a fonte certa, e apaga-se as duas. Mais:
   (a) **prova de que o fanout não engole nada** — publicar no `custodia.dlx` com uma
   routing key arbitrária que nenhum binding casaria (`chave.que.ninguem.binda`) e provar
   que a mensagem **aparece** na `custodia.prices.dlq`; mesmo controle para
@@ -1307,9 +1317,13 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   *Use IP, não nome: o script distingue os dois de propósito, e um NOME que não resolve
   sai **17** em ~8 s, sem rodar o laço — numa rede docker, nome que não resolve significa
   que o alvo não está naquela rede, o que é configuração NOSSA e acionável aqui. Medido
-  em 2026-09-09: IP → 11 em ~40 s com `curl (28) timed out`; nome → 17 em ~8 s com
-  `curl (6) Could not resolve host`. Um procedimento escrito com nome prova a coisa
-  errada e faz quem o repetir concluir que o mapeamento quebrou.* *Seja preciso
+  em 2026-09-09: IP → **11**, com `curl (28) timed out`; nome → **17**, com
+  `curl (6) Could not resolve host`. Um procedimento escrito com nome prova a coisa errada
+  e faz quem o repetir concluir que o mapeamento quebrou. **E reduza o laço na execução
+  manual** (`CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES`/`_SLEEP`): com os defaults, o caso do IP
+  custa ~9-10 minutos, porque nenhuma das duas saídas rápidas dispara e as 36 tentativas
+  rodam com `--max-time 10` cada. Os comandos literais estão em
+  `infra/rabbitmq/README.md`, "Rodar à mão".* *Seja preciso
   sobre o que isso prova e o que não prova: o `::warning::` e o "deploy segue verde" não
   são do script, são do `case` do `.github/workflows/ci.yml`, que mapeia 11 — e só 11 —
   para avisar e seguir. A variável **não** é encaminhada pelo `ssh-action`, de propósito:

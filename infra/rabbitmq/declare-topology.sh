@@ -82,11 +82,25 @@
 #                                                       a declaracao/verificacao anterior
 #                                                       continua valendo" para confiar)
 #   exchange `prices` presente com props divergentes -> EXIT_EXCHANGE_PRICES_DIVERGENTE
-#                                                       (reprova e NAO redeclara)
+#                                                       (reprova e NAO redeclara — a
+#                                                       divergencia e do DONO do
+#                                                       exchange, a correcao e no
+#                                                       repo dele)
+#   uma POLICY/OPERATOR POLICY de terceiro liga uma   -> EXIT_POLICY_DE_TERCEIRO
+#   garantia que esta fase existe para manter            (reprova — MESMO raciocinio
+#   desligada (teto, TTL, ou `expires` apagando a         do EXIT_EXCHANGE_PRICES_
+#   fila inteira)                                        DIVERGENTE: a correcao e no
+#                                                       repo DONO DO BROKER
+#                                                       (hub-precos), nao aqui)
 #   prova de fumaca/fanout/retry falhou              -> EXIT_SMOKE_FALHOU /
 #                                                       EXIT_FANOUT_FALHOU /
 #                                                       EXIT_RETRY_FALHOU (reprova —
 #                                                       sao mecanismos NOSSOS)
+#   a limpeza de uma mensagem de prova removeu algo   -> EXIT_LIMPEZA_INSEGURA
+#   que NAO era a prova (dano JA CONSUMADO)              (reprova — NAO REEXECUTE o
+#                                                       deploy sem investigar antes:
+#                                                       reexecutar percorre o MESMO
+#                                                       caminho destrutivo)
 #
 # TUDO roda de containers cliente na rede docker (nunca por loopback, PADROES §10.3):
 # `curlimages/curl` para HTTP, e `ghcr.io/jqlang/jq` para interpretar JSON — nenhum
@@ -119,10 +133,19 @@ CUSTODIA_RABBITMQ_CURL_IMAGE="${CUSTODIA_RABBITMQ_CURL_IMAGE:-curlimages/curl:8.
 CUSTODIA_RABBITMQ_JQ_IMAGE="${CUSTODIA_RABBITMQ_JQ_IMAGE:-ghcr.io/jqlang/jq:1.7.1}"
 
 # Numeros do laco de espera de autenticacao: os mesmos do molde `operacoes`/`hub-precos`
-# (36 tentativas x 5s = ~3min) — nao sao chute, sao o numero ja em uso neste
-# ecossistema para "broker pode estar subindo" (PADROES §10.15/§10.9).
+# (36 tentativas x 5s de `sleep` = ~3min) — nao sao chute, sao o numero ja em uso
+# neste ecossistema para "broker pode estar subindo" (PADROES §10.15/§10.9). "~3min"
+# CONTA SO O `sleep` ENTRE TENTATIVAS — ignora o `--max-time 10` de cada `curl`. O
+# PIOR CASO REAL (IP nao roteavel, connect-refused/timeout em toda tentativa — nem o
+# 401 nem o `curl exit 6` disparam a saida rapida nesse cenario, entao as 36
+# tentativas rodam INTEIRAS) e 36 x (10s de max-time + 5s de sleep) = 540s, mais a
+# sobrecarga de subir 36 containers — MEDIDO em ~576s (~9-10 minutos), nao ~3min.
 CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES="${CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES:-36}"
 CUSTODIA_RABBITMQ_AUTH_WAIT_SLEEP="${CUSTODIA_RABBITMQ_AUTH_WAIT_SLEEP:-5}"
+# CONSTANTE COMPARTILHADA com o `--max-time` do curl em wait_for_auth, para a
+# mensagem de timeout e a chamada real nunca divergirem (a mesma razao de
+# CUSTODIA_RETRY_SONDA_PREFIXO abaixo).
+CUSTODIA_RABBITMQ_AUTH_CURL_MAXTIME=10
 
 # x-message-ttl da `custodia.retry`: 30000ms, 6x o Messaging:Relay:IntervaloSegundos=5
 # do operacoes (medido, nao de memoria — PADROES §10.9). CUSTODIA_RETRY_TTL_MS so
@@ -139,6 +162,13 @@ CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP="${CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP:-5}"
 # proposito: o sufixo real e "$$.$(date +%s)" (PID e epoch), entao o prefixo
 # sozinho nunca casa por acaso com nenhum outro nome deste script.
 CUSTODIA_RETRY_SONDA_PREFIXO="custodia.f2.retry.sonda."
+
+# Prefixo COMPARTILHADO por TODOS os marcadores de mensagem de prova deste script
+# (smoke, fanout, retry — ver os tres `marker="custodia-f2-..."` mais abaixo).
+# Usado por `safe_take_probe` para reconhecer, SO nas duas filas TERMINAIS
+# (custodia.prices.dlq, custodia.parked), lixo de uma EXECUCAO ANTERIOR que
+# morreu antes de limpar a propria prova (ver o comentario de `safe_take_probe`).
+CUSTODIA_PROBE_PREFIXO="custodia-f2-"
 
 BASE_URL="http://${RABBITMQ_MANAGEMENT_HOST}:${RABBITMQ_MANAGEMENT_PORT}"
 
@@ -166,6 +196,17 @@ EXIT_FERRAMENTA=17
 # outra coisa. Codigo proprio porque isto NAO e "topologia ausente" nem
 # "prova falhou" — e um efeito colateral destrutivo que ja aconteceu.
 EXIT_LIMPEZA_INSEGURA=18
+# `assert_no_poisoning_policy` saia com EXIT_TOPOLOGIA_AUSENTE (12) — mas 12
+# significa, pela propria tabela deste cabecalho, "autenticou, mas fila/binding
+# continua ausente — A DECLARACAO E NOSSA". Uma policy de terceiro nao e nada
+# disso: a mensagem que o script imprime diz, com todas as letras, "A CORRECAO E
+# NO REPO DONO DO BROKER — nao aqui", e sair com 12 CONTRADIZ a propria mensagem.
+# O operador ve 12, le a tabela, conclui "a declaracao e nossa", reexecuta o
+# deploy, sai 12 de novo, para sempre — a policy continua la, porque a causa nao
+# esta neste repositorio. O precedente exato ja existe: EXIT_EXCHANGE_PRICES_
+# DIVERGENTE=13 existe PARA dizer "a divergencia e do dono, a correcao e no repo
+# dele" — este codigo e o mesmo raciocinio aplicado a policy.
+EXIT_POLICY_DE_TERCEIRO=19
 
 docker pull -q "$CUSTODIA_RABBITMQ_CURL_IMAGE" >/dev/null 2>&1 || true
 docker pull -q "$CUSTODIA_RABBITMQ_JQ_IMAGE" >/dev/null 2>&1 || true
@@ -284,7 +325,7 @@ wait_for_auth() {
     stderr_file=$(mktemp)
     set +e
     status=$(docker run --rm --network "$CUSTODIA_RABBITMQ_NETWORK" "$CUSTODIA_RABBITMQ_CURL_IMAGE" \
-      -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+      -sS -o /dev/null -w '%{http_code}' --max-time "$CUSTODIA_RABBITMQ_AUTH_CURL_MAXTIME" \
       -u "$RABBITMQ_USER:$RABBITMQ_PASSWORD" \
       "${BASE_URL}/api/whoami" 2>"$stderr_file")
     docker_rc=$?
@@ -361,8 +402,15 @@ wait_for_auth() {
   fi
 
   if [ "$status" != "200" ]; then
+    # A FORMULA INCLUI o `--max-time` de cada tentativa, nao so o `sleep` entre
+    # elas — MEDIDO: contar so `TRIES * SLEEP` da 180s com os defaults, mas o pior
+    # caso real (IP nao roteavel: nem o 401 nem o `curl exit 6` disparam a saida
+    # rapida, entao as 36 tentativas rodam INTEIRAS) e ~576s (~9-10 min), porque
+    # cada tentativa pode gastar ate os 10s do `--max-time` ANTES do `sleep`.
     echo "AVISO: management do plataforma-rabbitmq (${RABBITMQ_MANAGEMENT_HOST}:${RABBITMQ_MANAGEMENT_PORT})" >&2
-    echo "       nao respondeu em ~$((CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES * CUSTODIA_RABBITMQ_AUTH_WAIT_SLEEP))s" >&2
+    echo "       nao respondeu em ate ~$((CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES * (CUSTODIA_RABBITMQ_AUTH_CURL_MAXTIME + CUSTODIA_RABBITMQ_AUTH_WAIT_SLEEP)))s" >&2
+    echo "       (${CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES} tentativas x ate ${CUSTODIA_RABBITMQ_AUTH_CURL_MAXTIME}s de --max-time +" >&2
+    echo "       ${CUSTODIA_RABBITMQ_AUTH_WAIT_SLEEP}s de sleep cada — pior caso real, nao so o sleep)" >&2
     echo "       (ultimo codigo: ${status:-vazio}; 000 = nao conectou; ultimo stderr do" >&2
     echo "       curl: ${err_txt:-<vazio>}). O plataforma-rabbitmq e servico do" >&2
     echo "       hub-precos, nao deste repositorio." >&2
@@ -386,8 +434,15 @@ handle_prices_exchange() {
       esac
       ;;
     200)
+      # `(.arguments // {})`, NAO `.arguments` cru: e o UNICO `.arguments` do arquivo
+      # sem esta guarda, e falha de um jeito PIOR que os outros — nao estoura
+      # EXIT_FERRAMENTA (nao usa `has()`), mas `null == {}` e FALSE em jq, entao uma
+      # resposta sem `arguments` faria este script concluir "propriedades
+      # DIVERGENTES" e sair com EXIT_EXCHANGE_PRICES_DIVERGENTE — acusando o
+      # hub-precos de ter quebrado o proprio exchange por causa de um campo ausente
+      # na RESPOSTA, nao no exchange.
       local ok
-      ok=$(jqf "$MGMT_BODY" '(.type=="topic") and (.durable==true) and (.auto_delete==false) and (.internal==false) and (.arguments=={})')
+      ok=$(jqf "$MGMT_BODY" '(.type=="topic") and (.durable==true) and (.auto_delete==false) and (.internal==false) and ((.arguments // {})=={})')
       if [ "$ok" != "true" ]; then
         echo "ERRO: exchange 'prices' JA EXISTE com propriedades DIVERGENTES do esperado" >&2
         echo "      (type=topic, durable=true, auto_delete=false, internal=false, arguments={})." >&2
@@ -563,39 +618,51 @@ assert_arg_absent() {
   echo "    ${ctx}: ${argname} ausente (confere)"
 }
 
-# PADROES §10.40: uma POLICY do broker aplica `max-length`, `max-length-bytes`,
-# `message-ttl`, `overflow` e `expires` SEM TOCAR em `.arguments` — e policy e o
+# PADROES §10.40: uma POLICY do broker aplica chaves como `max-length`,
+# `message-ttl`, `overflow` ou `expires` SEM TOCAR em `.arguments` — e policy e o
 # caminho NORMAL de operacao num broker que e do hub-precos, nao nosso.
 # `assert_arg_absent` le `.arguments` (o que NOS declaramos) e fica CEGO para
 # isso: uma policy pode ligar exatamente as garantias que esta fase existe para
 # manter desligadas (teto com reject-publish envenenando o relay de terceiros —
 # ARQUITETURA/cabecalho deste arquivo —, TTL descartando em silencio, ou
-# `expires` APAGANDO A FILA INTEIRA) sem que o script perceba, porque o broker
-# aplica a policy POR CIMA da declaracao, sem alterar o que foi declarado. O
-# estado resultante ja esta no MESMO corpo que `fetch_queue` devolve, em
-# `.effective_policy_definition` — so faltava olhar para la, que e o que
-# `assert_arg_effective` ja faz para `delivery_limit`, aplicado aqui aos campos
-# que uma policy pode ligar.
+# `expires` APAGANDO A FILA INTEIRA — MEDIDO em 2026-09-09: uma policy real com
+# `expires` chegou a apagar `custodia.prices` de verdade num teste, porque a
+# fila nao tem consumidor ate o F4 e portanto e "unused" o tempo todo) sem que o
+# script perceba, porque o broker aplica a policy POR CIMA da declaracao, sem
+# alterar o que foi declarado. O estado resultante ja esta no MESMO corpo que
+# `fetch_queue` devolve, em `.effective_policy_definition` — so faltava olhar
+# para la, que e o que `assert_arg_effective` ja faz para `delivery_limit`.
 #
-# `expires` E PIOR QUE OS OUTROS QUATRO, e por isso entra na lista (§10.8
-# corolario: fecha a CLASSE, nao colecione o EXEMPLO) — ele apaga a fila
-# INTEIRA, com backlog e bindings juntos, o incidente que esta fase inteira
-# existe para impedir. E a precondicao do broker para aplicar `expires`
-# ("unused") esta PERMANENTEMENTE satisfeita nesta fase: `custodia.prices` nao
-# tem consumidor ate o F4, entao ela e "unused" o tempo todo entre um deploy e o
-# proximo, com o unico acesso sendo o `basic.get` desta propria verificacao. Sem
-# esta checagem, o resultado so apareceria DEPOIS, pela regra
-# `custodia-topologia-ausente` — o script teria aprovado com EXIT=0.
+# ALLOW-LIST, E A LISTA PERMITIDA E VAZIA — DE PROPOSITO, NAO E UM DESCUIDO.
+# Uma versao anterior desta checagem era uma DENY-LIST de cinco chaves
+# conhecidas (`max-length`, `max-length-bytes`, `message-ttl`, `overflow`,
+# `expires`), e o comentario dela ja invocava "§10.8 corolario: feche a CLASSE,
+# nao colecione o EXEMPLO" — mas acrescentar um sexto nome a uma lista de nomes
+# NAO fecha classe nenhuma: uma chave nova do fornecedor (o RabbitMQ 4.x ja
+# acrescentou chaves entre minors) ou uma que ninguem pensou passaria batido.
+# NESTA FASE, NENHUMA chave de policy sobre as nossas quatro filas e legitima —
+# o comportamento delas tem que ser EXATAMENTE o que declaramos, ponto — entao
+# qualquer chave presente em `.effective_policy_definition`, seja ela qual for,
+# reprova. Se um dia uma chave legitima precisar existir, ela entra numa
+# allow-list EXPLICITA, com o motivo ESCRITO — nunca de volta para uma
+# deny-list, que so fecha o que ja foi pensado.
 #
-# CANDIDATAS AVALIADAS E EXCLUIDAS, com motivo (nao acrescente sem revisitar por
-# que ficaram de fora): `delivery-limit` ja e coberta por `assert_arg_effective`
-# (campo de topo, ja lido de volta separadamente); `dead-letter-exchange` tem
-# PRECEDENCIA DE ARGUMENTO na `custodia.prices` (ver o efeito colateral abaixo) e
-# nas filas terminais nao ha o que dead-letrar nesta fase — vira defeito do F4
-# quando o consumidor existir, nao agora; `dead-letter-strategy` nao degrada
-# ABAIXO do default que ja documentamos (`at-most-once`) — nao ha "pior" para uma
-# policy impor aqui; `queue-mode` e `max-in-memory-*` afetam PAGINACAO (RAM x
-# disco), nao DESCARTE de mensagem — fora do invariante que esta fase protege.
+# CANDIDATAS JA AVALIADAS (documentacao do que EU CONCLUI QUE TAMBEM DEVE
+# REPROVAR, com o motivo — NAO E "o que passa", e nunca foi uma excecao):
+# `delivery-limit` por policy TAMBEM reprova aqui (qualquer chave reprova), e
+# alem disso ja e coberta EM SEPARADO por `assert_arg_effective` (campo de
+# topo) — ser pega duas vezes e BOM, nao redundante, porque as duas leem fontes
+# diferentes; `dead-letter-exchange` tem PRECEDENCIA DE ARGUMENTO na
+# `custodia.prices` (ver o efeito colateral abaixo) e nas filas terminais nao
+# ha o que dead-letrar nesta fase — mas TAMBEM reprova, porque a lista
+# permitida e vazia, nao porque foi avaliada como perigosa isoladamente;
+# `dead-letter-strategy` nao degrada ABAIXO do default que ja documentamos
+# (`at-most-once`); `queue-mode` e `max-in-memory-*` afetam PAGINACAO (RAM x
+# disco), nao DESCARTE de mensagem. Nenhuma dessas quatro tem uma razao PROPRIA
+# para reprovar isoladamente — mas isso nao importa mais: com a lista permitida
+# vazia, elas reprovam pela MESMA razao que qualquer chave desconhecida
+# reprovaria, e este paragrafo existe so para registrar que elas JA foram
+# pensadas, nao para justificar uma excecao que nao existe.
 #
 # EFEITO COLATERAL A NAO CONFUNDIR: a `custodia.retry` TEM `message-ttl` por
 # ARGUMENTO nosso (declarado por nos, nao por policy) — esta checagem olha
@@ -609,7 +676,7 @@ assert_arg_absent() {
 assert_no_poisoning_policy() {
   local ctx="$1" body="$2"
   local achadas
-  achadas=$(jqf "$body" '(.effective_policy_definition // {}) as $d | ["max-length","max-length-bytes","message-ttl","overflow","expires"] | map(select(. as $k | $d | has($k))) | join(", ")')
+  achadas=$(jqf "$body" '(.effective_policy_definition // {}) | keys | join(", ")')
   if [ -n "$achadas" ]; then
     # `.policy` (regular) e `.operator_policy` sao campos DIFERENTES, com
     # comandos de remocao DIFERENTES (/api/policies/... x
@@ -650,7 +717,7 @@ assert_no_poisoning_policy() {
     echo "      '.arguments' na resposta para saber se a policy esta REALMENTE em" >&2
     echo "      vigor ou so presente e sobreposta." >&2
     echo "      A CORRECAO E NO REPO DONO DO BROKER (hub-precos) — nao aqui." >&2
-    exit "$EXIT_TOPOLOGIA_AUSENTE"
+    exit "$EXIT_POLICY_DE_TERCEIRO"
   fi
 }
 
@@ -813,10 +880,23 @@ publish_probe() {
 # ackmode=reject_requeue_true (nao remove nada, so olha e devolve), e SO remove
 # (ackmode=ack_requeue_false) se o payload da cabeca bater com o marcador que ESTE
 # script publicou. Se nao bater, ha trafego real na frente da prova na fila FIFO — a
-# limpeza e abortada, sem tocar em nada, e a mensagem de prova (inocua) fica ate o F4
+# limpeza e abortada, sem tocar em nada, e a mensagem de prova fica ate o F4
 # processa-la. Retorna 0 se removeu, 1 se nao (nao removeu NADA em nenhum dos casos).
+#
+# `permite_lixo_proprio` (3o parametro, "sim"/"nao", default "nao"): SO para as
+# DUAS FILAS TERMINAIS (`custodia.prices.dlq`, `custodia.parked`), NUNCA para
+# `custodia.prices` (onde a cabeca pode ser um trade real — ali a guarda de
+# payload EXATO continua como estava). Sem trafego de terceiro nessas duas
+# filas nesta fase, um payload que NAO bate o marcador ATUAL mas CASA o prefixo
+# compartilhado `CUSTODIA_PROBE_PREFIXO` so pode ser NOSSO — lixo de uma
+# execucao anterior que morreu entre `publish_probe` e a limpeza. Sem tratar
+# esse caso: a cabeca NUNCA MAIS e a mensagem do deploy atual, TODA limpeza
+# futura aborta por "payload divergente", e o lixo cresce em UMA mensagem por
+# deploy, MONOTONICAMENTE, exatamente nas duas filas que sao FIM DE LINHA e que
+# o F4 espera encontrar limpas para drenar a mao — sem nunca reprovar, sem
+# nunca aparecer.
 safe_take_probe() {
-  local queue="$1" marker="$2"
+  local queue="$1" marker="$2" permite_lixo_proprio="${3:-nao}"
   local peek_body
   peek_body=$(jqn --argjson count 1 --arg ackmode "reject_requeue_true" \
     '{count:$count, ackmode:$ackmode, encoding:"auto", truncate:50000}')
@@ -831,14 +911,26 @@ safe_take_probe() {
     echo "AVISO: '${queue}' ficou vazia antes da limpeza — nada a remover." >&2
     return 1
   fi
-  local head_payload
+  local head_payload esperado_removido eh_lixo_proprio
   head_payload=$(jqf "$MGMT_BODY" '.[0].payload')
+  esperado_removido="$marker"
+  eh_lixo_proprio="nao"
   if [ "$head_payload" != "$marker" ]; then
-    echo "AVISO: a cabeca de '${queue}' NAO e a mensagem de prova (esperava marcador" >&2
-    echo "       '${marker}', encontrei '${head_payload}'). Ha trafego REAL na frente" >&2
-    echo "       dela na fila FIFO — a limpeza e ABORTADA para nao remover uma mensagem" >&2
-    echo "       real. A mensagem de prova, inocua, fica na fila ate o F4 processa-la." >&2
-    return 1
+    if [ "$permite_lixo_proprio" = "sim" ] && [ "${head_payload#"$CUSTODIA_PROBE_PREFIXO"}" != "$head_payload" ]; then
+      eh_lixo_proprio="sim"
+      esperado_removido="$head_payload"
+      echo "AVISO: a cabeca de '${queue}' nao e o marcador DESTA execucao ('${marker}')," >&2
+      echo "       mas e LIXO NOSSO de uma execucao anterior (payload '${head_payload}'," >&2
+      echo "       casa o prefixo compartilhado '${CUSTODIA_PROBE_PREFIXO}'). Nesta fila" >&2
+      echo "       TERMINAL, sem trafego de terceiro nesta fase, removendo — senao toda" >&2
+      echo "       limpeza futura abortaria por payload divergente, para sempre." >&2
+    else
+      echo "AVISO: a cabeca de '${queue}' NAO e a mensagem de prova (esperava marcador" >&2
+      echo "       '${marker}', encontrei '${head_payload}'). Ha trafego REAL na frente" >&2
+      echo "       dela na fila FIFO — a limpeza e ABORTADA para nao remover uma mensagem" >&2
+      echo "       real. A mensagem de prova, inocua, fica na fila ate o F4 processa-la." >&2
+      return 1
+    fi
   fi
   local ack_body
   ack_body=$(jqn --argjson count 1 --arg ackmode "ack_requeue_false" \
@@ -848,29 +940,35 @@ safe_take_probe() {
     echo "AVISO: encontrei a mensagem de prova na cabeca de '${queue}' mas o ack falhou (HTTP ${MGMT_STATUS})." >&2
     return 1
   fi
-  # RECONFERE o payload NA RESPOSTA DO PROPRIO ACK — nao confia que a espiada
-  # acima ainda descreve a cabeca no instante do ack. Entre os dois POSTs (a
-  # espiada e este) ha DOIS `docker run` separados, ~1s cada, e nesse intervalo a
-  # cabeca PODE MUDAR se outro consumidor existir (hoje nao ha, mas
-  # `fanout_control_test` chama esta funcao, SEM esta guarda, tambem em
-  # `custodia.prices.dlq` e `custodia.parked` — filas que existem justamente para
-  # o OPERADOR drenar a mao, e um operador na management UI durante o deploy e
-  # exatamente essa janela; o F4 tambem poe um consumidor de verdade na
-  # `custodia.prices`, e este script continua rodando a cada deploy depois disso).
+  # RECONFERE o payload NA RESPOSTA DO PROPRIO ACK, SEMPRE — nao confia que a
+  # espiada acima ainda descreve a cabeca no instante do ack. Entre os dois
+  # POSTs (a espiada e este) ha DOIS `docker run` separados, ~1s cada, e nesse
+  # intervalo a cabeca PODE MUDAR se outro consumidor existir (hoje nao ha, mas
+  # `fanout_control_test` chama esta funcao tambem em `custodia.prices.dlq` e
+  # `custodia.parked` — filas que existem justamente para o OPERADOR drenar a
+  # mao, e um operador na management UI durante o deploy e exatamente essa
+  # janela; o F4 tambem poe um consumidor de verdade na `custodia.prices`, e
+  # este script continua rodando a cada deploy depois disso).
   # Um `ack_requeue_false` remove O QUE ESTIVER LA, cego — sem esta reconferencia,
   # o dano (mensagem REAL destruida) e SILENCIOSO. Falhar ALTO aqui e a unica forma
-  # de nao afirmar "removi a nossa prova" quando removemos outra coisa.
+  # de nao afirmar "removi a nossa prova" quando removemos outra coisa. Compara
+  # contra `esperado_removido` (o marcador ATUAL, ou o payload do lixo proprio
+  # identificado acima), nao contra `marker` cru.
   local removido_payload
   removido_payload=$(jqf "$MGMT_BODY" '.[0].payload // "AUSENTE"')
-  if [ "$removido_payload" != "$marker" ]; then
-    echo "ERRO: removi de '${queue}' uma mensagem que NAO ERA a nossa prova (payload" >&2
-    echo "      removido: '${removido_payload}', esperado marcador '${marker}'). A" >&2
+  if [ "$removido_payload" != "$esperado_removido" ]; then
+    echo "ERRO: removi de '${queue}' uma mensagem que NAO ERA a esperada (payload" >&2
+    echo "      removido: '${removido_payload}', esperado '${esperado_removido}'). A" >&2
     echo "      cabeca mudou entre a espiada (reject_requeue_true) e o ack" >&2
     echo "      (ack_requeue_false) — algo mais consumiu desta fila durante o deploy." >&2
     echo "      Isto JA ACONTECEU: uma mensagem real foi destruida por este script." >&2
     exit "$EXIT_LIMPEZA_INSEGURA"
   fi
-  echo "    mensagem de prova removida de '${queue}' (basic.get + ack da mensagem especifica)"
+  if [ "$eh_lixo_proprio" = "sim" ]; then
+    echo "    lixo de execucao anterior removido de '${queue}' (payload '${removido_payload}')"
+  else
+    echo "    mensagem de prova removida de '${queue}' (basic.get + ack da mensagem especifica)"
+  fi
   return 0
 }
 
@@ -1148,7 +1246,12 @@ fanout_control_test() {
   fi
   echo "    PARADA POR COMPLETUDE — fanout '${exchange}' -> '${queue}' confere: mensagem com routing key arbitraria chegou (delta ${antes} -> ${depois})"
 
-  safe_take_probe "$queue" "$marker" || true
+  # "sim": `${queue}` aqui e SEMPRE uma das duas filas TERMINAIS
+  # (custodia.prices.dlq, custodia.parked — os dois unicos chamadores deste
+  # teste, em main()) — nunca custodia.prices. Ver o comentario de
+  # `safe_take_probe` sobre por que so nessas duas e seguro reconhecer lixo de
+  # execucao anterior pelo prefixo compartilhado.
+  safe_take_probe "$queue" "$marker" "sim" || true
 }
 
 # Prova que o retry fecha o ciclo (custodia.retry.in -> custodia.retry -> TTL ->

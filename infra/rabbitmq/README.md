@@ -143,13 +143,42 @@ junto do ponto onde agem:
   inexistente na lista **esperada**, contra um broker correto, e prova que a comparação
   de conjuntos sabe dizer "não" (§10.8: asserção sem controle negativo passa também
   quando o mecanismo de detecção quebrou);
+- **o controle da checagem de policy não é variável de ambiente — é plantar a policy no
+  broker**, e tem que ser assim: a §10.40 diz que o controle positivo de uma asserção de
+  ausência sobre estado de terceiro precisa ser produzido **no servidor**, porque mutar o
+  nosso próprio PUT não reproduz o caso. Use a **`custodia.parked`**: terminal, vazia, e
+  nada nela pode ser danificado por um teto temporário — **nunca a `custodia.prices`**,
+  que guarda o backlog. Medido em 2026-09-09, os dois casos:
+
+  ```bash
+  # policy comum -> EXIT=12 (hoje 19), nomeando /api/policies/...
+  curl -sS -u "$U:$P" -H 'content-type: application/json' -X PUT     --data-raw '{"pattern":"custodia.parked","apply-to":"queues","priority":9,"definition":{"expires":600000}}'     http://plataforma-rabbitmq:15672/api/policies/%2F/prova-expires
+  # operator policy -> mesma reprova, nomeando /api/operator-policies/...
+  curl -sS -u "$U:$P" -H 'content-type: application/json' -X PUT     --data-raw '{"pattern":"custodia.parked","apply-to":"queues","priority":9,"definition":{"max-length":7}}'     http://plataforma-rabbitmq:15672/api/operator-policies/%2F/prova-op
+  ```
+
+  **Apague as duas ao terminar** (`DELETE` nos mesmos caminhos) e rode o script mais uma
+  vez para confirmar que volta a 0. Uma policy esquecida num broker de terceiro é o dano
+  que esta checagem existe para detectar;
 - `RABBITMQ_MANAGEMENT_HOST` — e aqui há **dois** casos, que o script distingue de
   propósito e que dão códigos diferentes. **Medidos em produção, 2026-09-09:**
 
-  | valor | exit | tempo | por quê |
-  |---|---|---|---|
-  | `192.0.2.1` (IP de TEST-NET-1, não roteável) | **11** | ~40 s | o laço roda inteiro, `curl (28) timed out`; é o único código que o workflow mapeia para `::warning::` |
-  | `nome.que.nao.existe` | **17** | ~8 s | `curl (6) Could not resolve host`. Numa rede docker, nome que não resolve significa que o alvo **não está naquela rede** — configuração NOSSA, acionável aqui, e não melhora com espera |
+  | valor | exit | por quê |
+  |---|---|---|
+  | `192.0.2.1` (IP de TEST-NET-1, não roteável) | **11** | o laço roda até o fim, `curl (28) timed out`; é o único código que o workflow mapeia para `::warning::` |
+  | `nome.que.nao.existe` | **17** | `curl (6) Could not resolve host`. Numa rede docker, nome que não resolve significa que o alvo **não está naquela rede** — configuração NOSSA, acionável aqui, e não melhora com espera |
+
+  Os **comandos literais** que produziram os dois, medidos em 2026-09-09 (§10.9 — repita
+  estes, não um equivalente):
+
+  ```bash
+  # 11 — reduza o laço, senão com os defaults ele custa ~9-10 min:
+  #      36 tentativas × (10 s de --max-time + 5 s de sleep)
+  RABBITMQ_MANAGEMENT_HOST=192.0.2.1     CUSTODIA_RABBITMQ_AUTH_WAIT_TRIES=3 CUSTODIA_RABBITMQ_AUTH_WAIT_SLEEP=2     ./infra/rabbitmq/declare-topology.sh; echo "EXIT=$?"
+
+  # 17 — sai rápido por construção, não espera o laço
+  RABBITMQ_MANAGEMENT_HOST=nome.que.nao.existe ./infra/rabbitmq/declare-topology.sh; echo "EXIT=$?"
+  ```
 
   Para provar o caminho do `::warning::` use o **IP**, não um nome: até a correção do
   `curl (6)` os dois davam 11, e um procedimento escrito com nome hoje prova 17 e faz

@@ -251,9 +251,20 @@ jobs:
             # `plataforma-rabbitmq` e servico do hub-precos, nao deste repositorio, e um
             # `exit 1` aqui faria o job `guarda-deploy` (PADROES §10.17) afirmar "este
             # commit NAO chegou a producao" com o container custodia-app healthy de
-            # verdade. QUALQUER outro exit code (401 da credencial, fila/binding ausente,
-            # exchange `prices` divergente, prova de fumaca/fanout/retry falhando) e
-            # NOSSO e acionavel aqui, e reprova o deploy.
+            # verdade. QUALQUER outro exit code e NOSSO e acionavel aqui, e reprova o
+            # deploy — mas nem todo "nosso" tem a MESMA causa, e o `case` abaixo tem
+            # ramos proprios para os que precisam de uma acao diferente de "reexecute":
+            # 17 (EXIT_FERRAMENTA) e falha da NOSSA ferramenta de deploy (imagem do
+            # curl/jq, rede docker local, daemon, ou DNS que nao resolve) — reexecutar
+            # PODE resolver, se a causa for transiente; 18 (EXIT_LIMPEZA_INSEGURA) e
+            # DANO JA CONSUMADO (a limpeza de uma mensagem de prova removeu algo que
+            # nao era a prova) — reexecutar NAO ajuda, percorre o MESMO caminho
+            # destrutivo, e o que falta e investigacao manual; 19
+            # (EXIT_POLICY_DE_TERCEIRO) e uma policy do broker (do hub-precos)
+            # envenenando uma das nossas filas — a correcao e no repo dele, reexecutar
+            # aqui so repete o mesmo 19 para sempre enquanto a policy existir. Os
+            # demais (401 da credencial, fila/binding ausente, exchange `prices`
+            # divergente, prova de fumaca/fanout/retry falhando) caem no `*)` generico.
             #
             # A LEGITIMIDADE DO `::warning::` ABAIXO DEPENDE DE UMA REGRA QUE ESTE
             # REPOSITORIO NAO PUBLICA. A regra `custodia-topologia-ausente` ESTA neste
@@ -294,6 +305,33 @@ jobs:
                 echo "      subir healthy independentemente deste broker); a regra"
                 echo "      custodia-topologia-ausente cobre o cenario 'fila custodia.prices nao"
                 echo "      existe' em runtime, ate o proximo deploy redeclarar."
+                ;;
+              17)
+                echo "ERRO: falha da NOSSA ferramenta de deploy (exit code 17 = EXIT_FERRAMENTA)."
+                echo "      Ver a saida acima: imagem do curl/jq que nao pode ser puxada, rede"
+                echo "      docker local ausente, o daemon docker com problema, ou"
+                echo "      RABBITMQ_MANAGEMENT_HOST que nao resolve na rede docker (curl exit 6)."
+                echo "      Isto NAO e diagnostico de broker nenhum."
+                exit 1
+                ;;
+              18)
+                echo "ERRO: LIMPEZA INSEGURA (exit code 18 = EXIT_LIMPEZA_INSEGURA) — a limpeza de"
+                echo "      uma mensagem de prova deste script REMOVEU DA FILA algo que NAO ERA a"
+                echo "      prova. Ver o payload removido na saida acima."
+                echo "      NAO REEXECUTE O DEPLOY antes de investigar manualmente: reexecutar"
+                echo "      percorre o MESMO caminho destrutivo desta verificacao, e o dano ja"
+                echo "      esta consumado (uma mensagem real foi destruida) — reexecutar nao"
+                echo "      desfaz isso e pode repetir contra outra mensagem."
+                exit 1
+                ;;
+              19)
+                echo "ERRO: POLICY DE TERCEIRO (exit code 19 = EXIT_POLICY_DE_TERCEIRO) — ver a"
+                echo "      saida acima para o nome da policy/operator policy e as chaves que ela"
+                echo "      aplica sobre uma das nossas filas."
+                echo "      A CORRECAO E NO REPO DONO DO BROKER (hub-precos), NAO aqui — reexecutar"
+                echo "      este deploy sem corrigir la repete o mesmo 19 para sempre, porque a"
+                echo "      causa nao esta neste repositorio."
+                exit 1
                 ;;
               *)
                 echo "ERRO: declaracao/verificacao da topologia RabbitMQ falhou (exit code ${rabbitmq_topologia_status})."
