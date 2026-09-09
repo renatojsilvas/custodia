@@ -494,10 +494,16 @@ assert_type_durable() {
 # como "nao-valor" e cai no lado direito — um argumento presente com o valor
 # `false` (ou `null`) leria como AUSENTE. Nenhum dos nossos argumentos hoje usa
 # esses valores, mas `has()` fecha a classe inteira em vez de confiar nisso.
+# `(.arguments // {})`, NAO `.arguments` cru: `has()` em jq FALHA (erro, nao
+# "false") quando o valor a esquerda e `null` em vez de um objeto — e uma
+# resposta sem `arguments` e exatamente esse caso. Sem o `// {}`, essa falha sai
+# de `jqf` como `EXIT_FERRAMENTA` (17) — "nossa ferramenta falhou" para o que e
+# so uma resposta sem `arguments`, o mesmo padrao de guarda que
+# `assert_no_poisoning_policy` ja usa em `(.effective_policy_definition // {})`.
 assert_arg() {
   local ctx="$1" body="$2" argname="$3" expected="$4"
   local atual
-  atual=$(jqf "$body" --arg a "$argname" 'if (.arguments|has($a)) then .arguments[$a] else "AUSENTE" end')
+  atual=$(jqf "$body" --arg a "$argname" 'if ((.arguments // {})|has($a)) then (.arguments // {})[$a] else "AUSENTE" end')
   if [ "$atual" != "$expected" ]; then
     echo "ERRO: ${ctx}: argumento '${argname}' = '${atual}', esperado '${expected}'." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
@@ -549,7 +555,7 @@ verify_exchange_type() {
 assert_arg_absent() {
   local ctx="$1" body="$2" argname="$3"
   local atual
-  atual=$(jqf "$body" --arg a "$argname" 'if (.arguments|has($a)) then .arguments[$a] else "AUSENTE" end')
+  atual=$(jqf "$body" --arg a "$argname" 'if ((.arguments // {})|has($a)) then (.arguments // {})[$a] else "AUSENTE" end')
   if [ "$atual" != "AUSENTE" ]; then
     echo "ERRO: ${ctx}: argumento '${argname}' presente com valor '${atual}', mas a decisao desta fase e NAO declarar este argumento." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
@@ -558,34 +564,92 @@ assert_arg_absent() {
 }
 
 # PADROES §10.40: uma POLICY do broker aplica `max-length`, `max-length-bytes`,
-# `message-ttl` e `overflow` SEM TOCAR em `.arguments` — e policy e o caminho
-# NORMAL de operacao num broker que e do hub-precos, nao nosso. `assert_arg_absent`
-# le `.arguments` (o que NOS declaramos) e fica CEGO para isso: uma policy pode
-# ligar exatamente as duas garantias que esta fase existe para manter desligadas
-# (teto com reject-publish envenenando o relay de terceiros — ARQUITETURA/cabecalho
-# deste arquivo — ou TTL descartando em silencio) sem que o script perceba, porque
-# o broker aplica a policy POR CIMA da declaracao, sem alterar o que foi declarado.
-# O estado resultante ja esta no MESMO corpo que `fetch_queue` devolve, em
+# `message-ttl`, `overflow` e `expires` SEM TOCAR em `.arguments` — e policy e o
+# caminho NORMAL de operacao num broker que e do hub-precos, nao nosso.
+# `assert_arg_absent` le `.arguments` (o que NOS declaramos) e fica CEGO para
+# isso: uma policy pode ligar exatamente as garantias que esta fase existe para
+# manter desligadas (teto com reject-publish envenenando o relay de terceiros —
+# ARQUITETURA/cabecalho deste arquivo —, TTL descartando em silencio, ou
+# `expires` APAGANDO A FILA INTEIRA) sem que o script perceba, porque o broker
+# aplica a policy POR CIMA da declaracao, sem alterar o que foi declarado. O
+# estado resultante ja esta no MESMO corpo que `fetch_queue` devolve, em
 # `.effective_policy_definition` — so faltava olhar para la, que e o que
-# `assert_arg_effective` ja faz para `delivery_limit`, aplicado aqui aos quatro
-# campos que uma policy pode ligar. EFEITO COLATERAL A NAO CONFUNDIR: a
-# `custodia.retry` TEM `message-ttl` por ARGUMENTO nosso (declarado por nos, nao
-# por policy) — esta checagem olha `effective_policy_definition`, nao `.arguments`,
-# entao ela nao acusa o nosso proprio TTL.
+# `assert_arg_effective` ja faz para `delivery_limit`, aplicado aqui aos campos
+# que uma policy pode ligar.
+#
+# `expires` E PIOR QUE OS OUTROS QUATRO, e por isso entra na lista (§10.8
+# corolario: fecha a CLASSE, nao colecione o EXEMPLO) — ele apaga a fila
+# INTEIRA, com backlog e bindings juntos, o incidente que esta fase inteira
+# existe para impedir. E a precondicao do broker para aplicar `expires`
+# ("unused") esta PERMANENTEMENTE satisfeita nesta fase: `custodia.prices` nao
+# tem consumidor ate o F4, entao ela e "unused" o tempo todo entre um deploy e o
+# proximo, com o unico acesso sendo o `basic.get` desta propria verificacao. Sem
+# esta checagem, o resultado so apareceria DEPOIS, pela regra
+# `custodia-topologia-ausente` — o script teria aprovado com EXIT=0.
+#
+# CANDIDATAS AVALIADAS E EXCLUIDAS, com motivo (nao acrescente sem revisitar por
+# que ficaram de fora): `delivery-limit` ja e coberta por `assert_arg_effective`
+# (campo de topo, ja lido de volta separadamente); `dead-letter-exchange` tem
+# PRECEDENCIA DE ARGUMENTO na `custodia.prices` (ver o efeito colateral abaixo) e
+# nas filas terminais nao ha o que dead-letrar nesta fase — vira defeito do F4
+# quando o consumidor existir, nao agora; `dead-letter-strategy` nao degrada
+# ABAIXO do default que ja documentamos (`at-most-once`) — nao ha "pior" para uma
+# policy impor aqui; `queue-mode` e `max-in-memory-*` afetam PAGINACAO (RAM x
+# disco), nao DESCARTE de mensagem — fora do invariante que esta fase protege.
+#
+# EFEITO COLATERAL A NAO CONFUNDIR: a `custodia.retry` TEM `message-ttl` por
+# ARGUMENTO nosso (declarado por nos, nao por policy) — esta checagem olha
+# `effective_policy_definition`, nao `.arguments`, entao ela nao acusa o nosso
+# proprio TTL. MAS: para um argumento que NOS declaramos (como este), o
+# ARGUMENTO tem precedencia sobre a policy — uma policy de `message-ttl` que
+# alcance `custodia.retry` apareceria em `effective_policy_definition` e faria
+# esta checagem reprovar nomeando o dono do broker por algo que PODE NAO ESTAR
+# EM VIGOR naquela fila especifica (o nosso argumento pode estar sobrepondo). A
+# mensagem de erro abaixo registra isso para quem for investigar.
 assert_no_poisoning_policy() {
   local ctx="$1" body="$2"
   local achadas
-  achadas=$(jqf "$body" '(.effective_policy_definition // {}) as $d | ["max-length","max-length-bytes","message-ttl","overflow"] | map(select(. as $k | $d | has($k))) | join(", ")')
+  achadas=$(jqf "$body" '(.effective_policy_definition // {}) as $d | ["max-length","max-length-bytes","message-ttl","overflow","expires"] | map(select(. as $k | $d | has($k))) | join(", ")')
   if [ -n "$achadas" ]; then
-    local policy_nome
+    # `.policy` (regular) e `.operator_policy` sao campos DIFERENTES, com
+    # comandos de remocao DIFERENTES (/api/policies/... x
+    # /api/operator-policies/...) — MEDIDO em producao em 2026-09-09: o
+    # `effective_policy_definition` do 4.3.5 MESCLA as duas (operator policy tem
+    # prioridade nas chaves que se sobrepoem), entao esta checagem cobre operator
+    # policy tambem, mas so se o DIAGNOSTICO disser qual das duas (ou as duas)
+    # e a fonte — nomear ".policy" quando quem aplicou foi so a operator policy
+    # manda o operador procurar por uma policy que nao existe (medido: `.policy`
+    # vem `null` e a mensagem antiga imprimia "policy 'AUSENTE'"). Operator
+    # policy e o instrumento mais PROVAVEL aqui, nao o menos: e como o DONO do
+    # broker impoe teto a filas alheias.
+    local policy_nome operator_nome origem
     policy_nome=$(jqf "$body" '.policy // "AUSENTE"')
-    echo "ERRO: ${ctx}: uma POLICY do broker ('${policy_nome}') aplica [${achadas}]" >&2
+    operator_nome=$(jqf "$body" '.operator_policy // "AUSENTE"')
+    origem=""
+    if [ "$policy_nome" != "AUSENTE" ]; then
+      origem="policy '${policy_nome}' (ajuste/remova via /api/policies/%2F/${policy_nome})"
+    fi
+    if [ "$operator_nome" != "AUSENTE" ]; then
+      if [ -n "$origem" ]; then
+        origem="${origem} E operator policy '${operator_nome}' (via /api/operator-policies/%2F/${operator_nome})"
+      else
+        origem="operator policy '${operator_nome}' (ajuste/remova via /api/operator-policies/%2F/${operator_nome})"
+      fi
+    fi
+    if [ -z "$origem" ]; then
+      origem="uma policy sem .policy/.operator_policy capturados (os dois vieram nulos, mas effective_policy_definition tem a definicao mesmo assim — investigue direto no broker, nao so por estes dois campos)"
+    fi
+    echo "ERRO: ${ctx}: ${origem} aplica [${achadas}]" >&2
     echo "      por cima da declaracao (via effective_policy_definition), sem tocar" >&2
     echo "      em .arguments. Isto liga exatamente as garantias que esta fase" >&2
     echo "      existe para manter desligadas nesta fila (teto com reject-publish" >&2
-    echo "      envenenando trafego de terceiro, ou TTL descartando em silencio)." >&2
-    echo "      A CORRECAO E NO REPO DONO DO BROKER (hub-precos), removendo ou" >&2
-    echo "      ajustando a policy '${policy_nome}' — nao aqui." >&2
+    echo "      envenenando trafego de terceiro, TTL descartando em silencio, ou" >&2
+    echo "      'expires' apagando a fila inteira)." >&2
+    echo "      Para argumentos que NOS declaramos nesta fila (ex.: x-message-ttl na" >&2
+    echo "      custodia.retry), o ARGUMENTO tem precedencia sobre a policy — confira" >&2
+    echo "      '.arguments' na resposta para saber se a policy esta REALMENTE em" >&2
+    echo "      vigor ou so presente e sobreposta." >&2
+    echo "      A CORRECAO E NO REPO DONO DO BROKER (hub-precos) — nao aqui." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   fi
 }
@@ -611,6 +675,16 @@ assert_no_poisoning_policy() {
 # distancia, e apagar fila errada neste script e o pior dano possivel); (2) LOGA
 # cada sonda orfa apagada, com o NOME — varredura silenciosa esconde que a
 # execucao anterior morreu no meio, que e informacao que o operador quer.
+#
+# GARANTIA IMPLICITA DE QUE ESTA VARREDURA DEPENDE, E QUE PRECISA SER PROCURADA
+# ANTES DE MEXER NELA: ela so e segura porque o `concurrency.group` do `ci.yml`
+# SERIALIZA os runs de deploy em push (nunca duas execucoes deste script ao mesmo
+# tempo). Duas execucoes SIMULTANEAS fariam a varredura de UMA apagar a sonda
+# VIVA da OUTRA (o prefixo casa qualquer sonda, viva ou orfa — nao ha como
+# distinguir pela idade sem reintroduzir a corrida contra `x-expires`). Hoje o CI
+# garante isso; alguem rodando este script A MAO durante um deploy em andamento,
+# nao. Se um dia o `concurrency.group` for removido ou relaxado, esta varredura
+# precisa ser revisitada primeiro.
 sweep_orphan_sondas() {
   mgmt_get "/api/queues/%2F"
   if [ "$MGMT_STATUS" != "200" ]; then
@@ -836,12 +910,15 @@ maybe_take_probe_prices() {
     echo "      nesta fila FIFO, e espiar a cabeca gastaria uma tentativa de entrega" >&2
     echo "      (x-delivery-limit) de uma mensagem REAL sem nenhum beneficio (a" >&2
     echo "      limpeza abortaria de qualquer forma)." >&2
-    echo "      A mensagem de prova fica na fila. ATE DUAS por deploy podem ficar" >&2
-    echo "      retidas quando ha backlog (esta, mais a do ciclo de retry, que" >&2
-    echo "      tambem chega em custodia.prices pelo fanout de custodia.retry.dlx)." >&2
+    echo "      A mensagem de prova fica na fila. COM BACKLOG, no MAXIMO UMA fica" >&2
+    echo "      retida por deploy (a do ciclo de retry — com backlog," >&2
+    echo "      smoke_test_prices nem publica mais nada). DUAS so aconteceriam se a" >&2
+    echo "      fila estivesse VAZIA no inicio do deploy E trafego real chegasse na" >&2
+    echo "      janela (fazendo a limpeza da PROPRIA prova de fumaca tambem abortar)." >&2
     echo "      NAO afirmamos que ela e inocua: 'prices.smoke' nao e payload de" >&2
     echo "      contrato nenhum da §5.1, e cabe ao F4 decidir o que fazer ao" >&2
-    echo "      encontra-la, nao a esta fase." >&2
+    echo "      encontra-la — o F4 herda em torno de UMA 'custodia-f2-retry-*' por" >&2
+    echo "      deploy do F2, e e esse o numero que ele vai contar, nao esta fase." >&2
     return 1
   fi
   safe_take_probe "$queue" "$marker"
@@ -1164,21 +1241,36 @@ retry_cycle_test() {
        "fila-sonda '${sonda}' (bindada so a custodia.retry.dlx) receber o marcador —" \
        "PADROES §10.31: completude x limite"
 
+  # `count:10` + `any(.[]; .payload == $marker)`, NAO `count:1` + `.[0].payload`:
+  # `reject_requeue_true` numa fila CLASSIC devolve a mensagem para a CABECA (nao
+  # reordena) — entao `count:1` sempre rele a MESMA cabeca em toda iteracao do
+  # laco. Se uma mensagem de uma EXECUCAO ANTERIOR abortada (que morreu entre
+  # publicar no custodia.retry.in e limpar) ainda estiver na `custodia.retry` e
+  # expirar DURANTE a janela desta execucao, ela chega a esta sonda (o fanout de
+  # custodia.retry.dlx entrega para quem estiver bindado, nao so para quem
+  # publicou) ANTES da nossa, e fica na cabeca — o laco com `count:1` nunca
+  # avancaria para ver o NOSSO marcador atras dela, e reprovaria (EXIT_RETRY_FALHOU)
+  # um deploy sadio. `sweep_orphan_sondas` nao cobre este caso: o lixo esta na
+  # PROPRIA custodia.retry, nao numa sonda. Espiar ate 10 mensagens e checar se
+  # ALGUMA delas e o nosso marcador resolve sem se importar com a ordem.
   local achou="nao" achado="" tentativa
   for tentativa in $(seq 1 "$CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES"); do
     local peek_body
-    peek_body=$(jqn --argjson count 1 --arg ackmode "reject_requeue_true" \
+    peek_body=$(jqn --argjson count 10 --arg ackmode "reject_requeue_true" \
       '{count:$count, ackmode:$ackmode, encoding:"auto", truncate:50000}')
     mgmt_post "/api/queues/%2F/${sonda}/get" "$peek_body"
     if [ "$MGMT_STATUS" = "200" ]; then
       local n
       n=$(jqf "$MGMT_BODY" 'length')
       if [ "$n" != "0" ]; then
-        achado=$(jqf "$MGMT_BODY" '.[0].payload')
-        if [ "$achado" = "$marker" ]; then
+        local tem_marcador
+        tem_marcador=$(jqf "$MGMT_BODY" --arg m "$marker" 'any(.[]; .payload == $m)')
+        if [ "$tem_marcador" = "true" ]; then
           achou="sim"
+          achado="$marker"
           break
         fi
+        achado=$(jqf "$MGMT_BODY" '.[0].payload')
       fi
     fi
     sleep "$CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP"

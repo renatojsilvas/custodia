@@ -173,8 +173,12 @@ groups:
             broker engasgando). Nesses casos a fila existe e este alerta grita mesmo
             assim. Então o PRIMEIRO passo do diagnóstico é desambiguar, e não reexecutar
             o deploy: consulte up{job="plataforma-rabbitmq"} no Grafana Cloud — se for 0
-            ou ausente, o problema é de COLETA e a topologia provavelmente está intacta;
-            só se ele for 1 é que a fila sumiu de verdade. TERCEIRA LACUNA: com lookback
+            ou ausente, o problema é de COLETA e a topologia provavelmente está intacta.
+            Se for 1, o alvo respondeu — mas isso NÃO prova que a família
+            queue_coarse_metrics foi raspada: se alguém editar o config.alloy (que vive em
+            OUTRO repo) e perder o parâmetro family, o endpoint responde 200, up fica 1, a
+            série some, e concluir "a fila sumiu" seria errado. Confirme com
+            GET /api/queues/%2F/custodia.prices na management API antes de concluir. TERCEIRA LACUNA: com lookback
             de 5m mais o for de 3m, a detecção de "fila apagada" leva até ~8 minutos, e
             nessa janela trades.registered é descartado em silêncio — inerente à detecção
             por ausência de série, e escrito aqui para não ser descoberto durante um

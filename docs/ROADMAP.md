@@ -1265,15 +1265,30 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   que a mensagem **aparece** na `custodia.prices.dlq`; mesmo controle para
   `custodia.parking` → `custodia.parked`. Sem isso o F4 dead-letra para um buraco, e o
   Pronto "existem, ligadas" fica verde com a mensagem sendo descartada em silêncio;
-  (b) **o retry fecha o ciclo, não é buraco:** uma mensagem publicada no
-  `custodia.retry.in` com routing key `prices.smoke` sai da `custodia.retry` **depois do
-  TTL** e chega na `custodia.prices` — e é retirada de lá com `basic.get`+ack da mensagem
-  específica ao fim da prova (`prices.smoke` de propósito: se a limpeza falhar, a
-  mensagem estaciona no F4 em vez de virar linha de livro);
+  (b) **o retry fecha o ciclo, não é buraco.** *A técnica mudou no fecho da fase, por
+  medição, e o texto anterior — "sai da `custodia.retry` e chega na `custodia.prices`,
+  observado pela contagem das duas" — descrevia uma prova que é **flaky e vácua ao mesmo
+  tempo**: passa com o `custodia.retry.dlx` desligado (sair não é chegar) e reprova
+  deploy sadio quando a defasagem de `messages_ready` come a janela do TTL.* O veredito é
+  por **marcador**, numa **fila-sonda temporária** bindada ao `custodia.retry.dlx`: como
+  ele é `fanout`, a mensagem chega à `custodia.prices` **e** à sonda, e a sonda só tem
+  tráfego nosso — `basic.get` determinístico, sem disputar cabeça de fila com mensagem
+  real e sem gastar tentativa de entrega de ninguém. A sonda nasce com `x-expires`, é
+  apagada ao fim, e órfãs de execução morta são varridas no início da verificação seguinte
+  (por prefixo exato) — sem isso elas reprovariam o deploy seguinte, porque a sonda entra
+  no conjunto que a verificação de bindings confere. A chegada na `custodia.prices` passa
+  a ser **inferida** — sonda + `fanout` + conjunto exato de bindings + ausência de policy
+  envenenando —, e a retirada de lá é condicional, pelo mesmo motivo da alínea (c);
   (c) a prova de fumaça por **DELTA**, nunca por valor absoluto: `messages_ready` anotado
   **antes**, `depois >= antes + 1` após publicar `prices.smoke` (crescimento, não
   igualdade — ver a correção medida acima), a contagem sem a nossa mensagem após o
-  `basic.get`+ack. Exigir `messages_ready == 0` seria reprovar o deploy assim que o
+  `basic.get`+ack. **E ela é CONDICIONAL: só roda com a fila vazia.** Com backlog — o
+  estado normal a partir do primeiro trade — ela é pulada, porque (i) a limpeza seria
+  impossível, já que a nossa mensagem não estaria na cabeça, e cada deploy deixaria lixo
+  crescendo; e (ii) ela seria **vácua**, porque com uma fila de terceiro bindada em
+  `prices` e tráfego na janela o delta cresce mesmo com o nosso binding removido. Nesse
+  caso o roteamento daquele deploy é provado pela comparação de conjunto dos bindings,
+  que é estrita nas duas direções, e o log diz qual caminho foi usado. Exigir `messages_ready == 0` seria reprovar o deploy assim que o
   primeiro `trades.registered` real chegasse — e esta fase existe para que ele chegue;
   (d) o deploy roda **duas vezes seguidas** com o mesmo resultado — idempotência provada,
   não suposta;
@@ -1286,9 +1301,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   dispara `hub-relay-falha-persistente` no plantão de outro serviço, que é precisamente o
   "reprovar/estragar o alheio por causa de um serviço que não é seu" que esta fase invoca
   para justificar o `::warning::`. **Decidido: a prova é em duas partes, nenhuma
-  destrutiva.** (i) O **script de topologia** é rodado uma vez apontado para um **host
-  inalcançável** (`RABBITMQ_MANAGEMENT_HOST` para um endereço inexistente, numa execução
-  manual): prova que o laço de espera roda e que o script sai com **11**. *Seja preciso
+  destrutiva.** (i) O **script de topologia** é rodado uma vez apontado para um **IP
+  inalcançável** — `RABBITMQ_MANAGEMENT_HOST=192.0.2.1` (TEST-NET-1, não roteável), numa
+  execução manual: prova que o laço de espera roda e que o script sai com **11**.
+  *Use IP, não nome: o script distingue os dois de propósito, e um NOME que não resolve
+  sai **17** em ~8 s, sem rodar o laço — numa rede docker, nome que não resolve significa
+  que o alvo não está naquela rede, o que é configuração NOSSA e acionável aqui. Medido
+  em 2026-09-09: IP → 11 em ~40 s com `curl (28) timed out`; nome → 17 em ~8 s com
+  `curl (6) Could not resolve host`. Um procedimento escrito com nome prova a coisa
+  errada e faz quem o repetir concluir que o mapeamento quebrou.* *Seja preciso
   sobre o que isso prova e o que não prova: o `::warning::` e o "deploy segue verde" não
   são do script, são do `case` do `.github/workflows/ci.yml`, que mapeia 11 — e só 11 —
   para avisar e seguir. A variável **não** é encaminhada pelo `ssh-action`, de propósito:

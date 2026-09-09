@@ -1220,6 +1220,36 @@ informativa sozinha, e quem carrega a prova são as filas onde o valor esperado 
 default. Ao escrever a asserção, pergunte: *"ela ficaria vermelha se ninguém tivesse
 declarado nada?"*.
 
+**Corolário que custou três auditorias: o efetivo nem sempre é um campo ao lado do eco —
+às vezes é um OBJETO, e é lá que mora o que o DONO do serviço impôs por fora.** O exemplo
+acima tem `delivery_limit` (efetivo) ao lado de `x-delivery-limit` (eco), no mesmo nível.
+Para `max-length`, `overflow` e `message-ttl` **não existe** campo de topo equivalente: o
+estado real mora num objeto mesclado, `effective_policy_definition`, alimentado pelas
+**policies** do broker. E policy é o caminho **normal** de operação — não sabotagem —,
+especialmente quando o objeto é declarado por nós num serviço de **outro time**.
+
+Três coisas se seguem, e as três faltavam quando este item foi escrito:
+
+1. **"Não achei campo efetivo" não autoriza voltar ao eco.** Procure o objeto.
+2. **Asserção de AUSÊNCIA sobre o eco é vácua por construção**, não apenas pouco
+   informativa: ela imprime "ausente (confere)" com a propriedade **ligada**. E o controle
+   positivo dela tem que ser produzido **no servidor**, pelo mesmo mecanismo fora-de-banda
+   — plantar a policy —, porque mutar o nosso próprio PUT não reproduz o caso (§10.8:
+   mutação que não altera o sinal que o teste lê é mutação que não aconteceu).
+3. **Releia o efetivo em TODA execução, e NOMEIE a fonte da divergência.** O dono pode
+   mudar o comportamento depois da declaração, sem tocar nela. E o desfecho é "reprova, e
+   a correção é no repo do dono" — nomear errado manda o operador para onde o defeito não
+   está. Medido no F2 da `custodia` (2026-09-09): uma **operator policy** aparece no
+   `effective_policy_definition` normalmente, mas o campo `policy` vem `null` e o nome
+   está em `operator_policy` — reportar só o primeiro faz o operador procurar uma policy
+   chamada "AUSENTE". Os dois têm endpoints de remoção diferentes.
+
+**E a lista de chaves se fecha por CLASSE, não por exemplo.** No mesmo incidente a lista
+nasceu com as três que motivaram a fase e faltava `expires`, que é pior que todas: ele
+**apaga a fila inteira**, com backlog e bindings juntos, e a precondição ("fila sem
+consumidor") ficava permanentemente satisfeita porque o consumidor só chega na fase
+seguinte.
+
 **Corolário sobre aceitação: servidor aceitar o parâmetro não é servidor honrar o
 parâmetro.** A management API do RabbitMQ 4.3.5 devolve HTTP 201 para
 `x-dead-letter-strategy: at-least-once` **com e sem** o `x-overflow: reject-publish` que
