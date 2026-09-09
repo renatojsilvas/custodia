@@ -834,9 +834,15 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   a Decisão A executável. E a verificação bloqueante do resultado, com controle positivo
   **e** negativo (§10.8: a checagem tem que saber dizer "não").
 
-  **Por que esta é a fase 2 e não a sexta.** Operações publica `trades.registered` em
-  produção desde 2026-09-06. Cada dia entre o F1 e o F2 é um dia de trades potencialmente
-  perdidos **para sempre** — e não há caminho de recuperação por contrato. Cada dia depois
+  **Por que esta é a fase 2 e não a sexta.** O relay do Operações está no ar desde
+  2026-09-06 e pode publicar `trades.registered` a qualquer instante. Cada dia entre o F1
+  e o F2 é um dia de trades potencialmente perdidos **para sempre** — e não há caminho de
+  recuperação por contrato. *"Potencialmente" é literal, e a distinção foi medida no
+  fecho do F2: até 2026-09-08 a `outbox` do `operacoes` tinha **0 linhas** e a tabela
+  `operacoes` **0 registros**, e o relay dele **marca** `publicado_em` em vez de apagar a
+  linha — então nada tinha sido publicado, e a janela fechou **antes** do primeiro trade.
+  A fase é preventiva, não remediadora. Não leia "exposto" como "perdido": ver o
+  `LEIA-ME-KIT`, corolário de "Perder o volume do broker".* Cada dia depois
   do F2 é um dia de mensagens acumuladas numa fila durável, esperando o consumidor do F4.
   A fila **acumula de propósito**: isso é a entrega, não efeito colateral.
 
@@ -1131,8 +1137,10 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
       que e falso.
 
   NAO IMPLEMENTE CONSUMIDOR. Nada de basic.consume, nada de codigo .NET de consumo,
-  nada de RabbitMq__* no compose. A fila ACUMULA de proposito ate o F4 — o operacoes ja
-  publica trades.registered em PRODUCAO desde 2026-09-06, e evento em exchange topic sem
+  nada de RabbitMq__* no compose. A fila ACUMULA de proposito ate o F4 — o relay do
+  operacoes esta NO AR desde 2026-09-06 e pode publicar trades.registered a qualquer
+  instante (medido em 2026-09-08: a outbox dele tinha 0 linhas, entao nada tinha sido
+  publicado AINDA — nao confunda "exposto" com "perdido"), e evento em exchange topic sem
   binding casando e descartado EM SILENCIO com o produtor marcando sucesso.
 
   A verificacao no deploy substitui o que o CI perdeu de proposito (leia o comentario no
@@ -1242,9 +1250,16 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   `custodia.prices.dlq`, a `custodia.parked` e a `custodia.retry` existem, ligadas aos
   exchanges **nossos**, e a `custodia.retry` traz `x-message-ttl` e
   `x-dead-letter-exchange` batendo com os decididos.
-  (**Estrita**) a MESMA checagem **reprova** quando alimentada com um binding inventado, e
-  reprova quando um binding real é removido à mão — controle negativo **e** positivo, sem
-  os quais a asserção passa também quando o mecanismo de detecção quebrou (§10.8). Mais:
+  (**Estrita**) a MESMA checagem **reprova** quando a lista esperada contém uma chave que
+  o broker não tem — controle negativo **e** positivo, sem os quais a asserção passa também
+  quando o mecanismo de detecção quebrou (§10.8). *A redação anterior pedia "reprova quando
+  um binding real é removido à mão", e isso é **inalcançável por desenho**: o script declara
+  os oito bindings ANTES de verificar, então um binding removido à mão é recriado e a
+  verificação passa — e é bom que passe, porque é isso que idempotência significa. A
+  substituição não é um teste parecido, é o **mesmo ramo com a mesma entrada relativa**: a
+  comparação é de conjuntos ordenados, e injetar uma chave na lista ESPERADA produz
+  exatamente a assimetria (esperado ⊃ atual) que a remoção de um binding real produziria.
+  Exercitável sem tocar em binding de produção, por `CUSTODIA_TOPOLOGIA_TESTE_NEGATIVO`.* Mais:
   (a) **prova de que o fanout não engole nada** — publicar no `custodia.dlx` com uma
   routing key arbitrária que nenhum binding casaria (`chave.que.ninguem.binda`) e provar
   que a mensagem **aparece** na `custodia.prices.dlq`; mesmo controle para
@@ -1271,17 +1286,29 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   dispara `hub-relay-falha-persistente` no plantão de outro serviço, que é precisamente o
   "reprovar/estragar o alheio por causa de um serviço que não é seu" que esta fase invoca
   para justificar o `::warning::`. **Decidido: a prova é em duas partes, nenhuma
-  destrutiva.** (i) O passo de deploy é rodado uma vez apontado para um **host
-  inalcançável** (endereço de management API inexistente, por variável, numa execução
-  manual): prova que o laço de espera roda, que o desfecho é `::warning::` e não `exit 1`,
-  e que o deploy segue verde. (ii) O alerta de topologia é provado em **duas metades, e a
+  destrutiva.** (i) O **script de topologia** é rodado uma vez apontado para um **host
+  inalcançável** (`RABBITMQ_MANAGEMENT_HOST` para um endereço inexistente, numa execução
+  manual): prova que o laço de espera roda e que o script sai com **11**. *Seja preciso
+  sobre o que isso prova e o que não prova: o `::warning::` e o "deploy segue verde" não
+  são do script, são do `case` do `.github/workflows/ci.yml`, que mapeia 11 — e só 11 —
+  para avisar e seguir. A variável **não** é encaminhada pelo `ssh-action`, de propósito:
+  uma alavanca de teste no `envs:` do deploy é uma alavanca para o deploy falar com o
+  broker errado em silêncio. Então esta alínea se fecha com as duas metades separadas: o
+  exit code, medido; e o mapeamento, lido no `case`.* (ii) O alerta de topologia é provado em **duas metades, e a
   primeira é CONTROLE POSITIVO, sem o qual a segunda passa por vacuidade**: primeiro, com a
   `custodia.prices` declarada e o broker no ar, a série
   `rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"}` **está
   presente** — conferida na
   consulta do Grafana Cloud, não no arquivo de regra — e a regra avalia em **OK**; só então
-  a segunda metade, `noDataState` configurado para disparar, é aceita como prova do estado
-  "broker fora". *Sem o controle positivo, uma regra construída sobre uma série que **nunca
+  a segunda metade: a MESMA expressão `absent()`, consultada com um seletor de fila
+  **inexistente** (`queue="custodia.prices.que.nao.existe"`), devolve **1** — o que prova,
+  sem derrubar nada, que a expressão sabe dizer "ausente". *A redação anterior pedia
+  "`noDataState` configurado para disparar", e isso está **errado e induz ao defeito que
+  esta fase rejeita duas vezes**: a regra JÁ É um `absent()`, então com a fila existindo a
+  query devolve vetor vazio, que o Grafana lê como "sem dado" — o estado SÃO. Pôr
+  `Alerting` ali liga um alerta permanente em operação normal. O `noDataState` correto é
+  **`OK`**, e a fase o entrega assim de propósito; quem some é a fila, e aí o `absent()`
+  devolve 1 e a condição dispara sem passar pelo `noDataState`.* *Sem o controle positivo, uma regra construída sobre uma série que **nunca
   existiu** satisfaz a prova perfeitamente — e depois dispara todo dia, para sempre. Era
   esse o buraco da versão anterior deste Pronto, e ele casava com a escolha de sinal
   (contagem de bindings) que a fase agora rejeita nominalmente.* *Rejeitado:*

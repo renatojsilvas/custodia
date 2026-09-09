@@ -65,7 +65,20 @@
 #   autenticou, mas fila/binding continua ausente   -> EXIT_TOPOLOGIA_AUSENTE (reprova
 #                                                       — TAMBEM usado quando a fila/
 #                                                       exchange desaparece NO MEIO de
-#                                                       uma prova, depois de autenticar)
+#                                                       uma prova, depois de autenticar,
+#                                                       INCLUSIVE quando o BROKER cai no
+#                                                       meio — DECISAO DELIBERADA: a
+#                                                       assimetria que autoriza o
+#                                                       ::warning:: (linha acima) vale SO
+#                                                       na janela de autenticacao. Depois
+#                                                       do 200 em /api/whoami ja provamos
+#                                                       que o broker estava de pe; uma
+#                                                       queda DALI EM DIANTE deixa a
+#                                                       topologia num estado que NINGUEM
+#                                                       verificou, e reprovar e o desfecho
+#                                                       certo — nao ha "o broker caiu, mas
+#                                                       a declaracao/verificacao anterior
+#                                                       continua valendo" para confiar)
 #   exchange `prices` presente com props divergentes -> EXIT_EXCHANGE_PRICES_DIVERGENTE
 #                                                       (reprova e NAO redeclara)
 #   prova de fumaca/fanout/retry falhou              -> EXIT_SMOKE_FALHOU /
@@ -150,7 +163,7 @@ MGMT_STDERR=""
 # (DNS, timeout, conexao recusada) aparece no log em vez de desaparecer em silencio.
 mgmt_request() {
   local method="$1" path="$2" body="${3:-}"
-  local combined stderr_file
+  local combined stderr_file docker_rc
   stderr_file=$(mktemp)
   set +e
   if [ -n "$body" ]; then
@@ -164,11 +177,29 @@ mgmt_request() {
       -X "$method" \
       "${BASE_URL}${path}" 2>"$stderr_file")
   fi
+  docker_rc=$?
   set -e
   MGMT_STDERR="$(cat "$stderr_file" 2>/dev/null)"
   rm -f "$stderr_file"
   MGMT_STATUS="${combined##*$'\n'}"
   MGMT_BODY="${combined%$'\n'*}"
+  # MESMO discriminador de wait_for_auth (ver o comentario la): se o 'docker run'
+  # nao executou o curl (imagem, rede docker local, daemon), nada escreve em
+  # stdout e `combined` — logo `MGMT_STATUS` — vem VAZIO. Sem esta checagem, TODA
+  # chamada deste script DEPOIS da autenticacao (dezenas delas, em declare/verify/
+  # smoke/fanout/retry) cairia no `case ... *)` de quem a chamou com MGMT_STATUS="",
+  # e sairia como EXIT_TOPOLOGIA_AUSENTE ("fila ou binding ausente, a declaracao e
+  # NOSSA") quando a causa real e o DAEMON LOCAL ter caido NO MEIO do script — o
+  # mesmo defeito que o EXIT_FERRAMENTA existe para impedir, um passo adiante do
+  # laco de autenticacao.
+  if [ -z "$MGMT_STATUS" ]; then
+    echo "ERRO: 'docker run' nao produziu saida alguma para ${method} ${path}" >&2
+    echo "      (exit do 'docker run': ${docker_rc}) — FALHA DA NOSSA FERRAMENTA" >&2
+    echo "      (imagem '${CUSTODIA_RABBITMQ_CURL_IMAGE}', rede docker" >&2
+    echo "      '${CUSTODIA_RABBITMQ_NETWORK}', ou o daemon local), NAO do broker." >&2
+    echo "      Detalhe: ${MGMT_STDERR:-<sem stderr>}" >&2
+    exit "$EXIT_FERRAMENTA"
+  fi
   # `if/fi`, NAO `[ cond ] && echo` — esta e a ULTIMA instrucao da funcao. Um
   # `[ cond ] && echo` cujo `cond` de FALSO (o caso comum, MGMT_STDERR vazio) devolve
   # o status do teste (1) como retorno da FUNCAO INTEIRA, e como `mgmt_get`/`mgmt_put`/
@@ -587,10 +618,16 @@ safe_take_probe() {
 # provar fila vazia, mas antes vem de um contador com defasagem de ate ~10s (ver o
 # comentario de wait_for_messages_ready) — um trade real pode chegar DEPOIS da
 # leitura de "antes" e ANTES da nossa publicacao, e a cabeca seria dele mesmo assim.
-# `depois == 1` fecha por construcao: se a fila tem EXATAMENTE uma mensagem apos o
-# nosso publish, essa mensagem SO PODE ser a nossa (nao ha outra fonte de escrita
-# possivel numa fila com exatamente 1 elemento). A checagem de payload em
-# `safe_take_probe` continua como segunda guarda, redundante de proposito.
+# `depois == 1` TORNA IMPROVAVEL, NAO IMPOSSIVEL, que a mensagem na fila seja de
+# terceiro — nao "fecha por construcao". `wait_for_messages_ready` retorna na
+# PRIMEIRA leitura que satisfaz `>= antes+1`, e `messages_ready` tem a mesma
+# defasagem de ate ~10s ja citada acima: e perfeitamente possivel um trade real
+# entrar e a NOSSA publicacao ainda nao ter sido contabilizada nessa leitura,
+# fazendo `depois==1` mesmo com a mensagem da cabeca sendo a REAL (a nossa,
+# atrasada na contagem, apareceria depois). Por isso a checagem de PAYLOAD em
+# `safe_take_probe` nao e redundante: e ELA que fecha o caso, comparando o
+# conteudo de verdade — `depois==1` so torna esse caminho menos frequente de
+# precisar abortar a limpeza.
 maybe_take_probe_prices() {
   local queue="$1" marker="$2" depois="$3"
   if [ "$depois" != "1" ]; then
@@ -604,6 +641,30 @@ maybe_take_probe_prices() {
     return 1
   fi
   safe_take_probe "$queue" "$marker"
+}
+
+# Leitura UNICA (sem laco) de `.messages_ready`, com a MESMA guarda numerica de
+# `wait_for_messages_ready` (ver o comentario dela abaixo): a management API OMITE
+# o campo numa fila recem-declarada, antes da primeira emissao de estatisticas — e
+# o broker de producao roda com collect_statistics_interval=60000. Sem esta guarda,
+# `jq -r` devolve a string "null", e `$((antes + 1))` sob `set -u` morre com
+# "unbound variable"/erro aritmetico em vez de uma mensagem que diz o que houve —
+# e essa janela (broker recem-recriado, filas recem-declaradas, prova rodando
+# segundos depois) e EXATAMENTE a que esta fase existe para cobrir.
+read_messages_ready() {
+  local ctx="$1" body="$2"
+  local atual
+  atual=$(jqf "$body" '.messages_ready // "AUSENTE"')
+  if [[ ! "$atual" =~ ^[0-9]+$ ]]; then
+    echo "ERRO: ${ctx}: campo 'messages_ready' ausente ou nao-numerico ('${atual}') na" >&2
+    echo "      resposta da management API. Isto acontece quando a fila foi" >&2
+    echo "      DECLARADA AGORA MESMO e o broker ainda nao emitiu a primeira" >&2
+    echo "      estatistica (producao roda com collect_statistics_interval=60000 —" >&2
+    echo "      ver o comentario de wait_for_messages_ready abaixo). NAO e falha de" >&2
+    echo "      topologia nem de credencial." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
+  fi
+  echo "$atual"
 }
 
 # A contagem `messages_ready` da management API NAO e instantanea. MEDIDO pelo
@@ -633,18 +694,24 @@ maybe_take_probe_prices() {
 # trafego de terceiro possivel, ou onde o resultado ja e so informativo).
 wait_for_messages_ready() {
   local queue="$1" alvo="$2" cmp="${3:-ge}" tries="${4:-30}" sleep_s="${5:-3}"
-  local atual="" consultou_ok=0
+  local atual="" respondeu_200=0 campo_numerico_ok=0
   local tentativa
   for tentativa in $(seq 1 "$tries"); do
     if fetch_queue_soft "$queue"; then
+      respondeu_200=1
       # Guarda numerica (o `assert_arg` ja se protege com `// "AUSENTE"` — aqui nao
       # havia guarda nenhuma): se `.messages_ready` vier ausente/nulo/nao-numerico
       # por qualquer motivo transiente, `[ "$atual" -ge "$alvo" ]` sairia com status
       # 2 e a mensagem "integer expression expected" no stderr, em vez de so
-      # tentar de novo na proxima iteracao do laco.
+      # tentar de novo na proxima iteracao do laco. O campo vem AUSENTE numa fila
+      # recem-declarada, antes da primeira emissao de estatisticas (producao roda
+      # com collect_statistics_interval=60000) — respondeu_200 e campo_numerico_ok
+      # sao FLAGS SEPARADAS de proposito: "a fila nao respondeu" e "a fila respondeu
+      # mas a estatistica ainda nao existe" sao diagnosticos DIFERENTES, e o
+      # chamador precisa saber qual dos dois aconteceu.
       atual=$(jqf "$MGMT_BODY" '.messages_ready // "AUSENTE"')
       if [[ "$atual" =~ ^[0-9]+$ ]]; then
-        consultou_ok=1
+        campo_numerico_ok=1
         # `if/fi`, NAO `[ cond ] && { …; return 0; }`: a mesma classe de armadilha
         # do `mgmt_request` (comentario acima) — hoje nao morde porque ha um `sleep`
         # depois do `fi` do `if fetch_queue_soft`, mas fica a uma edicao de morder.
@@ -664,8 +731,16 @@ wait_for_messages_ready() {
     sleep "$sleep_s"
   done
   echo "$atual"
-  if [ "$consultou_ok" = "0" ]; then
+  # Tres desfechos de falha, cada um com diagnostico proprio (o chamador escolhe a
+  # mensagem certa por eles): 2 = nunca respondeu 200 (fila/management sumiu);
+  # 3 = respondeu 200 sempre, mas o campo nunca ficou numerico (estatistica nao
+  # emitida — NAO e "binding quebrado"); 1 = respondeu com numero, mas nunca
+  # atingiu o alvo (o timeout comum, isto sim pode ser binding quebrado).
+  if [ "$respondeu_200" = "0" ]; then
     return 2
+  fi
+  if [ "$campo_numerico_ok" = "0" ]; then
+    return 3
   fi
   return 1
 }
@@ -674,16 +749,20 @@ smoke_test_prices() {
   local queue="custodia.prices"
   fetch_queue "$queue"
   local antes
-  antes=$(jqf "$MGMT_BODY" '.messages_ready')
+  antes=$(read_messages_ready "$queue" "$MGMT_BODY")
 
   local marker="custodia-f2-smoke-$(date +%s)-$$"
   publish_probe "prices" "prices.smoke" "$marker" "$EXIT_SMOKE_FALHOU"
 
-  # CRESCIMENTO (>= antes+1), nao igualdade. O operacoes publica trades.registered
-  # em producao desde 2026-09-06 — um trade real chegando entre "antes" e "depois"
-  # levaria a contagem a antes+2, e uma exigencia de igualdade nunca bateria e
-  # reprovaria um deploy saudavel. A prova de que O NOSSO binding roteou nao depende
-  # dessa igualdade: publish_probe ja confere `routed==true` na resposta do publish,
+  # CRESCIMENTO (>= antes+1), nao igualdade. A decisao se justifica pelo FUTURO, nao
+  # pelo passado: o operacoes esta no ar desde 2026-09-06 e pode publicar
+  # trades.registered a qualquer instante — MEDIDO em 2026-09-08: ate essa data ele
+  # NAO tinha publicado nada (outbox com 0 linhas, tabela operacoes com 0 registros;
+  # o relay dele MARCA publicado_em em vez de apagar, entao a ausencia e conferivel).
+  # Uma exigencia de igualdade quebraria no PRIMEIRO trade real que chegasse entre
+  # "antes" e "depois" (levaria a contagem a antes+2), e esta fase existe justamente
+  # para que ele chegue. A prova de que O NOSSO binding roteou nao depende dessa
+  # igualdade: publish_probe ja confere `routed==true` na resposta do publish,
   # evidencia direta e imune a trafego de terceiro; o crescimento aqui e reforco.
   local esperado=$((antes + 1))
   local depois rc
@@ -698,6 +777,12 @@ smoke_test_prices() {
   if [ "$rc" -eq 2 ]; then
     echo "ERRO: nao consegui LER '${queue}' em NENHUMA tentativa apos publicar (fila pode" >&2
     echo "      ter sido apagada ou o management caiu no meio da prova) — isto NAO e" >&2
+    echo "      falha de roteamento do binding." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
+  elif [ "$rc" -eq 3 ]; then
+    echo "ERRO: '${queue}' respondeu 200 em toda tentativa, mas 'messages_ready' nunca" >&2
+    echo "      ficou numerico — o broker ainda nao emitiu a primeira estatistica desta" >&2
+    echo "      fila (producao roda com collect_statistics_interval=60000). Isto NAO e" >&2
     echo "      falha de roteamento do binding." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   elif [ "$rc" -ne 0 ]; then
@@ -728,7 +813,7 @@ fanout_control_test() {
   local exchange="$1" queue="$2"
   fetch_queue "$queue"
   local antes
-  antes=$(jqf "$MGMT_BODY" '.messages_ready')
+  antes=$(read_messages_ready "$queue" "$MGMT_BODY")
 
   local marker="custodia-f2-fanout-$(date +%s)-$$-${queue}"
   publish_probe "$exchange" "chave.que.ninguem.binda" "$marker" "$EXIT_FANOUT_FALHOU"
@@ -744,6 +829,12 @@ fanout_control_test() {
   if [ "$rc" -eq 2 ]; then
     echo "ERRO: nao consegui LER '${queue}' em NENHUMA tentativa apos publicar — fila pode" >&2
     echo "      ter sido apagada ou o management caiu no meio da prova." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
+  elif [ "$rc" -eq 3 ]; then
+    echo "ERRO: '${queue}' respondeu 200 em toda tentativa, mas 'messages_ready' nunca" >&2
+    echo "      ficou numerico — o broker ainda nao emitiu a primeira estatistica desta" >&2
+    echo "      fila (producao roda com collect_statistics_interval=60000). Isto NAO e" >&2
+    echo "      falha do fanout." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   elif [ "$rc" -ne 0 ]; then
     echo "ERRO: PARADA POR LIMITE — prova de fanout falhou: publiquei em '${exchange}'" >&2
@@ -784,11 +875,11 @@ fanout_control_test() {
 retry_cycle_test() {
   fetch_queue "custodia.retry"
   local retry_antes
-  retry_antes=$(jqf "$MGMT_BODY" '.messages_ready')
+  retry_antes=$(read_messages_ready "custodia.retry" "$MGMT_BODY")
 
   fetch_queue "custodia.prices"
   local prices_antes
-  prices_antes=$(jqf "$MGMT_BODY" '.messages_ready')
+  prices_antes=$(read_messages_ready "custodia.prices" "$MGMT_BODY")
 
   local marker="custodia-f2-retry-$(date +%s)-$$"
   publish_probe "custodia.retry.in" "prices.smoke" "$marker" "$EXIT_RETRY_FALHOU"
@@ -801,6 +892,12 @@ retry_cycle_test() {
   if [ "$rc" -eq 2 ]; then
     echo "ERRO: nao consegui LER 'custodia.retry' apos publicar em 'custodia.retry.in'" >&2
     echo "      — a fila pode ter sido apagada ou o management caiu no meio da prova." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
+  elif [ "$rc" -eq 3 ]; then
+    echo "ERRO: 'custodia.retry' respondeu 200 em toda tentativa, mas 'messages_ready'" >&2
+    echo "      nunca ficou numerico — o broker ainda nao emitiu a primeira estatistica" >&2
+    echo "      desta fila (producao roda com collect_statistics_interval=60000). Isto" >&2
+    echo "      NAO e falha de roteamento do binding." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   elif [ "$rc" -ne 0 ]; then
     echo "ERRO: PARADA POR LIMITE — publiquei em 'custodia.retry.in' e messages_ready de" >&2
@@ -818,6 +915,12 @@ retry_cycle_test() {
   if [ "$rc" -eq 2 ]; then
     echo "ERRO: nao consegui LER 'custodia.retry' durante a espera do TTL." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
+  elif [ "$rc" -eq 3 ]; then
+    echo "ERRO: 'custodia.retry' respondeu 200 em toda tentativa, mas 'messages_ready'" >&2
+    echo "      nunca ficou numerico durante a espera do TTL — estatistica nao emitida" >&2
+    echo "      (producao roda com collect_statistics_interval=60000). Isto NAO e falha" >&2
+    echo "      de dead-letter." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
   elif [ "$rc" -ne 0 ]; then
     echo "ERRO: PARADA POR LIMITE — 'custodia.retry' nao esvaziou de volta a" >&2
     echo "      ${retry_antes} apos $((CUSTODIA_RABBITMQ_RETRY_WAIT_TRIES * CUSTODIA_RABBITMQ_RETRY_WAIT_SLEEP))s" >&2
@@ -832,6 +935,11 @@ retry_cycle_test() {
   prices_atual=$(wait_for_messages_ready "custodia.prices" "$prices_esperado" ge) && rc=0 || rc=$?
   if [ "$rc" -eq 2 ]; then
     echo "ERRO: nao consegui LER 'custodia.prices' apos 'custodia.retry' esvaziar." >&2
+    exit "$EXIT_TOPOLOGIA_AUSENTE"
+  elif [ "$rc" -eq 3 ]; then
+    echo "ERRO: 'custodia.prices' respondeu 200 em toda tentativa, mas 'messages_ready'" >&2
+    echo "      nunca ficou numerico — estatistica nao emitida (producao roda com" >&2
+    echo "      collect_statistics_interval=60000). Isto NAO e mensagem perdida." >&2
     exit "$EXIT_TOPOLOGIA_AUSENTE"
   elif [ "$rc" -ne 0 ]; then
     echo "ERRO: 'custodia.retry' esvaziou mas 'custodia.prices' nao cresceu — a mensagem" >&2
@@ -873,6 +981,13 @@ main() {
   fetch_queue "custodia.prices"
   assert_type_durable "custodia.prices" "$MGMT_BODY" "quorum"
   assert_arg "custodia.prices" "$MGMT_BODY" "x-delivery-limit" "20"
+  # O `delivery_limit` EFETIVO de custodia.prices e 20 tanto com o argumento
+  # aplicado quanto com o DEFAULT do broker (§10.9) — esta linha, sozinha, passaria
+  # nos dois casos. Quem carrega a informacao que importa e o PAR com o
+  # `assert_arg` acima (o que foi declarado) mais os dois `unlimited` de
+  # custodia.prices.dlq/custodia.parked abaixo, que so existem PORQUE declaramos
+  # -1 (o default lá seria 20, nao unlimited) — nao ha assinatura nova a inventar
+  # aqui so para este caso especifico.
   assert_arg_effective "custodia.prices" "$MGMT_BODY" "delivery_limit" "20"
   assert_arg "custodia.prices" "$MGMT_BODY" "x-dead-letter-exchange" "custodia.dlx"
   assert_arg_absent "custodia.prices" "$MGMT_BODY" "x-max-length"
@@ -892,6 +1007,12 @@ main() {
   assert_type_durable "custodia.retry" "$MGMT_BODY" "classic"
   assert_arg "custodia.retry" "$MGMT_BODY" "x-message-ttl" "$CUSTODIA_RETRY_TTL_MS"
   assert_arg "custodia.retry" "$MGMT_BODY" "x-dead-letter-exchange" "custodia.retry.dlx"
+  # SEM x-max-length e SEM x-overflow: e essa ausencia que faz o exemplo motivador
+  # do laco quente (ROADMAP, Decisao A) deixar de existir. Ate agora so estava
+  # protegida de lado, pelo 400 que uma redeclaracao divergente produziria — nao
+  # lida de volta, diferente da propriedade analoga da custodia.prices acima.
+  assert_arg_absent "custodia.retry" "$MGMT_BODY" "x-max-length"
+  assert_arg_absent "custodia.retry" "$MGMT_BODY" "x-overflow"
 
   verify_exchange_type "custodia.dlx" "fanout"
   verify_exchange_type "custodia.parking" "fanout"

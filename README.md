@@ -217,9 +217,10 @@ nunca direto em fila**: o órfão vai para o exchange `custodia.retry.in` (que e
 `custodia.retry`) e a mensagem estacionada vai para o `custodia.parking` (que entrega na
 `custodia.parked`). Publicar na fila pelo nome — pela default exchange — está
 **rejeitado nominalmente** no `docs/ROADMAP.md`: torna invisível na management API quem
-publica para onde, e a topologia existe justamente para ser conferível. A
-`custodia.prices.dlq` **ninguém publica**: quem a alimenta é o próprio broker, por
-dead-letter. Tudo isso pertence ao consumidor de eventos, que ainda não existe nesta
+publica para onde, e a topologia existe justamente para ser conferível. Na
+`custodia.prices.dlq` **nenhuma aplicação publica**: quem a alimenta é o próprio broker,
+por dead-letter — o único publish direto nela é a prova de fanout do passo de deploy,
+retirada ao fim da própria prova. Tudo isso pertence ao consumidor de eventos, que ainda não existe nesta
 fase.
 
 **A topologia já existe, e a aplicação continua sem tocá-la (F2).** Quem declara a fila
@@ -229,8 +230,10 @@ fase.
 e com verificação bloqueante. A razão de ser da ordem é literal: evento publicado num
 exchange topic **sem binding casando é descartado em silêncio**, com o produtor marcando
 sucesso. O relay do Operações está no ar desde 2026-09-06 e mantém conexão aberta com o
-broker; até 2026-09-08 a `outbox` dele tinha 0 linhas, isto é, nada tinha sido publicado
-ainda — a topologia entrou **antes** do primeiro trade, que é o ponto. **A fila acumula
+broker; até 2026-09-08 a `outbox` dele tinha 0 linhas — e o relay dele **marca**
+`publicado_em` em vez de apagar a linha, então isso é prova de que nada tinha sido
+publicado ainda (na convenção oposta, apagar ao publicar, "outbox vazia" significaria
+justamente o contrário) — a topologia entrou **antes** do primeiro trade, que é o ponto. **A fila acumula
 de propósito** a partir daqui, esperando o consumidor do F4 — não purgue a
 `custodia.prices`.
 

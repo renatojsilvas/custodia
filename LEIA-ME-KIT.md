@@ -1140,3 +1140,55 @@ de outro serviço.
 **ainda chega** — o Alertmanager cai para a rota raiz quando nenhuma filha casa. Chega pelo
 contact point errado, com o prefixo de outro serviço. Quem for caçar "alerta sumido" não
 vai achar nada sumido.
+
+## Toda rodada de correção gerou o defeito seguinte — e o padrão tem uma forma
+
+No F2 da `custodia` (2026-09-08) foram **três** rodadas de revisão, e nas três a correção
+do achado grave produziu um defeito novo, sempre da **mesma família** do que ela acabara de
+fechar:
+
+1. O executor, testando contra um broker real, achou que `[ -n "$X" ] && echo …` como
+   **última instrução de função** devolve 1 quando a condição é falsa, e sob `set -e` isso
+   matava o script no primeiro uso. Consertou com `if/fi` + `return 0`.
+2. A rodada seguinte, corrigindo outra coisa, introduziu `X=$(f)` seguido de `rc=$?` em
+   **seis** sítios. É o mesmo `set -e` com outra sintaxe: o script morre na atribuição, e
+   os doze ramos de tratamento viram código morto (§10.39). Ninguém olhou para a família
+   depois de fechar o caso.
+3. Eu, corrigindo uma afirmação minha que era falsa, escrevi no commit "corrigidos junto os
+   textos que repetiam a afirmação" e nomeei **dois** arquivos. Eram cinco — e o pior deles
+   era o comentário que usava a afirmação falsa como **justificativa da decisão**, além de
+   uma cópia dentro do *bloco de prompt* do próprio roadmap, que é o texto que o executor
+   da fase seguinte lê como instrução.
+
+**O que isso ensina, além de "rode as duas revisões de novo":**
+
+- **Achado é instância; o que se fecha é a CLASSE.** Depois de corrigir, faça a varredura da
+  forma, não do caso: se o defeito era `set -e` numa construção, procure as outras
+  construções que interagem com `set -e`. A revisão que pegou o (2) o pegou por leitura,
+  não por teste — porque **ramo de erro que nunca foi exercitado não é tratamento**.
+- **Inventário de "onde mais isso aparece" é ele próprio um achado a verificar.** O meu (3)
+  tinha número de linha, parecia completo, e estava errado por 60%. `grep` pela frase, não
+  pela memória do que você editou.
+- **A revisão precisa estar apontada para os textos do CONDUTOR.** Nas três rodadas o
+  guardião achou defeito meu, e nas três eram do tipo caro: alíneas do critério de Pronto
+  que, executadas ao pé da letra, mandavam fazer a coisa errada — uma delas pedia
+  `noDataState` "configurado para disparar" numa regra `absent()`, o que ligaria um alerta
+  permanente em operação normal, que é o defeito que a mesma fase rejeita nominalmente duas
+  vezes.
+- **Critério de Pronto também é código, e envelhece igual.** Outra alínea pedia "reprova
+  quando um binding real é removido à mão" — **inalcançável por desenho**, porque o script
+  declara antes de verificar e o binding é recriado. Ao escrever um Pronto, pergunte se ele
+  é executável contra a implementação que você mesmo pediu; se não for, ou ele muda, ou a
+  implementação ganha um modo que o torne executável. O que não pode é ficar lá parecendo
+  provado.
+
+## "Exposto" e "perdido" são afirmações diferentes, e só a segunda faz o dono agir
+
+Registrado no corolário de "Perder o volume do broker" acima, mas vale como regra de
+**relato**, não só de diagnóstico: eu abri o F2 dizendo ao dono, e escrevendo no commit, que
+`trades.registered` estava sendo descartado **naquele minuto**. Era falso — a `outbox` do
+produtor tinha 0 linhas. A fase era preventiva.
+
+Errar para o lado do alarme parece o lado seguro e não é: ele **desloca prioridade**, e o
+número inventado é herdado pela fase seguinte como se fosse medido. Antes de escrever
+"perdemos", abra a tabela que registra o que foi publicado.

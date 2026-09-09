@@ -73,7 +73,7 @@ tudo descartaria a mensagem morta em silêncio dentro da nossa própria infraest
 |---|---|---|
 | `401` na management API | 10 | **reprova**, rápido, sem repetir — é o secret **deste** repo |
 | broker inacessível **depois** do laço de espera | 11 | `::warning::` e **segue** |
-| fila ou binding ausente depois da declaração | 12 | **reprova** — a declaração é nossa |
+| fila ou binding ausente depois da declaração | 12 | **reprova** — a declaração é nossa. Também usado quando uma declaração falha, e quando fila/exchange desaparece (ou o management deixa de responder) **no meio** de uma prova, depois de autenticar |
 | exchange `prices` presente com propriedades divergentes | 13 | **reprova e não redeclara** |
 | prova de fumaça / fanout / retry falhando | 14, 15, 16 | **reprova** — um código por prova, para o log dizer qual |
 | **a nossa ferramenta não rodou** (imagem não pôde ser puxada, rede docker ausente, daemon fora) | 17 | **reprova** — a culpa é deste repositório, não do broker |
