@@ -31,8 +31,8 @@ escrita nesta plataforma — é definitivo, não "ainda não chegou" — e rota 
 
 Sobe banco e API conectados entre si, sem precisar de SDK .NET local. O serviço
 `custodia` entra desde já na rede compartilhada `plataforma` (`external: true` no
-`docker-compose.yml`, mesmo sem broker configurado nesta fase — ver "Mensageria"
-abaixo) — se ela ainda não existir no seu Docker, crie uma vez antes do primeiro `up`:
+`docker-compose.yml`, mesmo sem a APLICAÇÃO falar com o broker nesta fase — quem fala
+com ele é o passo de deploy, ver "Mensageria" abaixo) — se ela ainda não existir no seu Docker, crie uma vez antes do primeiro `up`:
 
 ```bash
 docker network create plataforma 2>/dev/null || true   # uma vez; ignora se já existe
@@ -213,8 +213,23 @@ excluindo `Migrations/`, `bin/` e `obj/`) — não há gate configurado dentro d
 `prices.*`, `corpactions.*` são publicados por Operações e pelo Hub, nunca por aqui) e
 não tem outbox nem relay. Isso não quer dizer "não publica, ponto": o único tráfego
 AMQP que ela emite é infraestrutura interna dela mesma — as filas `custodia.retry`,
-`custodia.parked` e `custodia.prices.dlq`, previstas para o F2/F4 de
-`docs/ROADMAP.md`, junto com o consumidor de eventos que ainda não existe nesta fase.
+`custodia.parked` e `custodia.prices.dlq`, junto com o consumidor de eventos que ainda
+não existe nesta fase.
+
+**A topologia já existe, e a aplicação continua sem tocá-la (F2).** Quem declara a fila
+`custodia.prices`, os quatro bindings da §5 (`prices.#`, `corpactions.#`, `eod.ready`,
+`trades.registered`) e a infraestrutura de DLQ/parking/retry é
+`infra/rabbitmq/declare-topology.sh`, invocado pelo job de deploy — de forma idempotente
+e com verificação bloqueante. A razão de ser da ordem é literal: evento publicado num
+exchange topic **sem binding casando é descartado em silêncio**, com o produtor marcando
+sucesso, e Operações publica `trades.registered` em produção desde 2026-09-06. **A fila
+acumula de propósito** desde então, esperando o consumidor do F4 — não purgue a
+`custodia.prices`.
+
+Esse script é o único consumidor dos secrets `RABBITMQ_USER` e `RABBITMQ_PASSWORD`
+(credencial do broker). Por serem usados só pelo script de deploy, eles entram em
+**duas** listas — o `envs:` do `ssh-action` e o `env:` do mesmo step — e **não** nos
+composes, nem no `.env` da VPS, nem nas dummies do config gate (`PADROES.md` §10.33).
 
 O broker `plataforma-rabbitmq` é compartilhado com outros serviços, não sobe neste
 `docker-compose.yml`. Para rodar localmente com o `dotnet run` e ter o broker

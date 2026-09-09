@@ -874,7 +874,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     management API quem publica para onde, e esta fase existe justamente para que a
     topologia seja **conferível**.
   - **A fila de retry com atraso, e é ela que sustenta a Decisão A.** `custodia.retry`
-    (quorum, durable, **sem consumidor**) com `x-message-ttl` e
+    (**`classic` durable** — ver a decisão medida no fim deste item —, **sem consumidor**)
+    com `x-message-ttl` e
     `x-dead-letter-exchange = custodia.retry.dlx` (fanout) → de volta para
     `custodia.prices`. O consumidor republica o órfão **pelo exchange `custodia.retry.in`**
     (nunca direto na fila) e confirma a mensagem original,
@@ -919,8 +920,14 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   decidido antes; fica rejeitado porque purge com backlog real na fila é a mesma perda que
   a fase impede, e o binding de `trades.registered` já é provado por comparação de conjunto
   com controle negativo.* **E a prova é de DELTA, nunca de valor absoluto:** anota-se
-  `messages_ready` antes, exige-se `depois == antes + 1`, retira-se a mensagem específica e
-  exige-se `final == antes`. Exigir `messages_ready == 0` antes de publicar — como dizia o
+  `messages_ready` antes, exige-se `depois >= antes + 1`, retira-se a mensagem específica e
+  exige-se que a contagem volte a **não incluir** a nossa mensagem. **É `>=`, e não `==`,
+  e a versão anterior deste parágrafo escrevia `==`:** um `trades.registered` real
+  chegando entre as duas leituras leva a contagem a `antes + 2`, a igualdade nunca
+  acontece, e o deploy reprova — o mesmo falso negativo que o parágrafo seguinte rejeita
+  ao proibir `messages_ready == 0`, pela mesma causa. A prova de que o binding roteou não
+  depende da igualdade: o publish pela management API devolve `routed`, que é evidência
+  direta e imune a tráfego de terceiro. Exigir `messages_ready == 0` antes de publicar — como dizia o
   rascunho anterior — reprovaria o deploy assim que o primeiro `trades.registered` real
   chegasse, e esta fase diz com todas as letras que **a fila acumula de propósito**; o
   próprio Pronto manda rodar o deploy duas vezes seguidas, e na segunda já pode haver
@@ -974,15 +981,19 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
   1. **Medir** se o `plataforma-rabbitmq` já é raspado pelo alloy (`LEIA-ME-KIT`,
      "Especular em vez de medir"). Se for, a regra `custodia-topologia-ausente` entra em
-     `rules-custodia.yaml` **nesta fase**, ancorada em
-     `absent(rabbitmq_queue_messages_ready{queue="custodia.prices"})`.
+     `rules-custodia.yaml` **nesta fase**, ancorada na série por fila que o endpoint
+     escolhido de fato expõe — **medido no F2: é
+     `absent(rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"})`**,
+     do `/metrics/detailed?family=queue_coarse_metrics`. Ver a decisão medida abaixo.
   2. Se **não** for raspado, o F2 **torna-o raspado**: acrescenta o alvo em
      `../tesouro-direto-api/infra/alloy/config.alloy`, do mesmo jeito que o F1 acrescentou
      o da custódia. **E a §10.9 se aplica à SÉRIE, não ao endpoint:** conferir com o
      comando literal que o endpoint de métricas responde prova que o plugin está
      habilitado, e **não** prova que a série que a regra vai usar existe. O comando literal
-     a rodar é o que busca **`rabbitmq_queue_messages_ready{queue="custodia.prices"}` no
-     corpo da resposta**, com a fila já declarada. Sem esse passo, a regra nasce sobre uma
+     a rodar é o que busca **a série por fila no corpo da resposta**, com a fila já
+     declarada — e foi ele que derrubou a grafia que este arquivo trazia: no `/metrics`
+     default a série vem **agregada, sem o label `queue`** (medido no F2), então o seletor
+     original nunca casaria. Sem esse passo, a regra nasce sobre uma
      série que nunca existiu, e o Pronto por `noDataState` a aprova — ver a armadilha
      abaixo.
   3. Se o endpoint de métricas do broker não existir, ou existir **sem a série** acima, e
@@ -993,8 +1004,14 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
   **O sinal escolhido, e o que ele NÃO cobre — escrito porque a versão anterior desta fase
   escolheu um sinal que não existe.** A regra é `absent()` sobre
-  `rabbitmq_queue_messages_ready{queue="custodia.prices"}`, isto é, sobre a **existência da
-  fila**, que o `rabbitmq_prometheus` expõe de verdade, por fila. *Rejeitado:* **contagem
+  `rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"}`, isto é,
+  sobre a **existência da fila**, que o `rabbitmq_prometheus` expõe de verdade, por fila.
+  **A grafia foi corrigida no F2, por medição, e o nome importa:** a série com o label
+  `queue` só existe em `/metrics/detailed?family=queue_coarse_metrics` (12 séries) e em
+  `/metrics/per-object` (~730 séries, e crescendo com conexão/canal de terceiros); no
+  `/metrics` default ela vem agregada, **sem** o label, e o seletor que este arquivo
+  trazia antes nunca casaria — disparando todo dia, para sempre, que é o defeito que o
+  parágrafo seguinte rejeita nominalmente por outro caminho. *Rejeitado:* **contagem
   de bindings do `prices`** — como dizia a versão anterior. Dois defeitos, e o primeiro é
   fatal: (i) o plugin expõe séries **por fila** e contagens globais, e **não** expõe
   contagem de bindings **por exchange**; a regra nasceria sobre uma série inexistente,
@@ -1053,7 +1070,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     exchange `custodia.parking`   (NOSSO, FANOUT durable) -> fila `custodia.parked`
     exchange `custodia.retry.in`  (NOSSO, FANOUT durable) -> fila `custodia.retry`
     exchange `custodia.retry.dlx` (NOSSO, FANOUT durable) -> fila `custodia.prices`
-    fila     `custodia.retry`    (quorum, durable, SEM CONSUMIDOR) com
+    fila     `custodia.retry`    (CLASSIC durable — a saida (ii) foi a escolhida, ver o
+                                  fecho do F2 —, SEM CONSUMIDOR) com
                                   x-message-ttl = 30000 e
                                   x-dead-letter-exchange = custodia.retry.dlx
 
@@ -1146,21 +1164,26 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   real desde o instante em que o binding existe — exigir zero reprovaria o deploy assim
   que o primeiro trade chegasse, e o proprio Pronto manda rodar o deploy duas vezes. A
   prova de uma fila que acumula e de DELTA: registre `antes`, publique, exija
-  `depois == antes + 1`, retire a mensagem especifica, exija `final == antes`.
+  `depois >= antes + 1` (CRESCIMENTO, nunca igualdade: trade real chegando na janela leva
+  a `antes + 2` e reprovaria o deploy), retire a mensagem especifica, exija que a contagem
+  volte a nao incluir a nossa mensagem.
 
   ALERTA DE TOPOLOGIA — INCONDICIONAL NESTA FASE, e e ele que autoriza o ::warning::
   acima. MECA primeiro se o plataforma-rabbitmq ja e raspado pelo alloy; nao especule.
     (1) se for  -> a regra `custodia-topologia-ausente` entra AGORA em
                    rules-custodia.yaml, ancorada em
-                   absent(rabbitmq_queue_messages_ready{queue="custodia.prices"});
+                   absent(rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"})
+                   — grafia CORRIGIDA no F2 por medicao: no /metrics default a serie vem
+                   agregada, SEM o label `queue`, e o seletor antigo nunca casaria;
     (2) se nao for -> o F2 TORNA-O RASPADO: acrescente o alvo em
                    ../tesouro-direto-api/infra/alloy/config.alloy, do mesmo jeito que o
                    F1 acrescentou o da custodia. E A 10.9 SE APLICA A SERIE, NAO AO
                    ENDPOINT: conferir que o endpoint de metricas responde prova que o
                    plugin esta habilitado e NAO prova que a serie da sua regra existe.
                    O comando literal a rodar e o que procura
-                   `rabbitmq_queue_messages_ready{queue="custodia.prices"}` NO CORPO da
-                   resposta, com a fila ja declarada;
+                   a serie POR FILA NO CORPO da resposta, com a fila ja declarada — foi
+                   esse comando que derrubou a grafia antiga (o endpoint que a expoe com o
+                   label `queue` e /metrics/detailed?family=queue_coarse_metrics);
     (3) se o endpoint nao existir, ou existir SEM ESSA SERIE, e nao puder ser habilitado
                    (container de OUTRO repo)
                 -> nao ha regra possivel, e entao o passo passa a REPROVAR tambem no
@@ -1230,7 +1253,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   específica ao fim da prova (`prices.smoke` de propósito: se a limpeza falhar, a
   mensagem estaciona no F4 em vez de virar linha de livro);
   (c) a prova de fumaça por **DELTA**, nunca por valor absoluto: `messages_ready` anotado
-  **antes**, `depois == antes + 1` após publicar `prices.smoke`, `final == antes` após o
+  **antes**, `depois >= antes + 1` após publicar `prices.smoke` (crescimento, não
+  igualdade — ver a correção medida acima), a contagem sem a nossa mensagem após o
   `basic.get`+ack. Exigir `messages_ready == 0` seria reprovar o deploy assim que o
   primeiro `trades.registered` real chegasse — e esta fase existe para que ele chegue;
   (d) o deploy roda **duas vezes seguidas** com o mesmo resultado — idempotência provada,
@@ -1250,7 +1274,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   e que o deploy segue verde. (ii) O alerta de topologia é provado em **duas metades, e a
   primeira é CONTROLE POSITIVO, sem o qual a segunda passa por vacuidade**: primeiro, com a
   `custodia.prices` declarada e o broker no ar, a série
-  `rabbitmq_queue_messages_ready{queue="custodia.prices"}` **está presente** — conferida na
+  `rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"}` **está
+  presente** — conferida na
   consulta do Grafana Cloud, não no arquivo de regra — e a regra avalia em **OK**; só então
   a segunda metade, `noDataState` configurado para disparar, é aceita como prova do estado
   "broker fora". *Sem o controle positivo, uma regra construída sobre uma série que **nunca

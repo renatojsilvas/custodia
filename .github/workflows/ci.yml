@@ -111,7 +111,14 @@ jobs:
           # flutuante `@v1` ja aponta para uma versao que nao o conhece — o run anota
           # "Unexpected input(s) 'script_stop'" e segue. Ele estava aqui sem efeito
           # nenhum. Ver LEIA-ME-KIT.md, "Guarda que sumiu junto com um tag flutuante".
-          envs: CUSTODIA_APP_PASSWORD,CUSTODIA_API_KEY
+          # RABBITMQ_USER/RABBITMQ_PASSWORD sao credencial usada SO por este script de
+          # deploy (a declaracao de topologia abaixo) — nao entram em nenhum compose,
+          # entao entram em DUAS listas (esta e o `env:` do MESMO step logo abaixo),
+          # nao nas cinco do PADROES §10.33 (o criterio de lá: "credencial usada só
+          # pelo script de deploy entra em DUAS"). Quando o consumidor de eventos
+          # existir e RabbitMq__User/Password entrarem nos composes com `:?`, ESSAS
+          # (mesmo nome, papel diferente) passam a exigir as cinco.
+          envs: CUSTODIA_APP_PASSWORD,CUSTODIA_API_KEY,RABBITMQ_USER,RABBITMQ_PASSWORD
           script: |
             set -e
             REPO_DIR=/opt/custodia
@@ -223,13 +230,80 @@ jobs:
             docker compose -f docker-compose.prod.yml build
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # NAO HA AQUI verificacao de credencial do broker nem smoke test de relay.
-            # O molde `operacoes` tem os dois porque PUBLICA na outbox; a custodia CONSOME
-            # eventos (ADR-10) e nesta fase nem broker usa. Quando o consumidor existir,
-            # a prova equivalente NAO e a mesma: o que importa la e que a fila e o binding
-            # existem ANTES da primeira publicacao — evento em exchange topic sem binding
-            # casando e descartado EM SILENCIO, com o produtor marcando sucesso (ja
-            # aconteceu nesta plataforma). Ver LEIA-ME-KIT, "Perder o volume do broker".
+            echo "== declarando e verificando a topologia RabbitMQ do lado consumidor (F2) =="
+            # ATE O F2, este comentario dizia "NAO HA AQUI verificacao de credencial do
+            # broker nem smoke test de relay" — porque o molde `operacoes` PUBLICA na
+            # outbox e a custodia so CONSOME (ADR-10), e nesta fase nem broker usava. O
+            # F2 fecha essa lacuna: a prova equivalente aqui NAO e credencial+smoke do
+            # relay, e sim que a fila e os bindings do CONSUMIDOR existem ANTES da
+            # primeira publicacao — evento em exchange topic sem binding casando e
+            # descartado EM SILENCIO, com o produtor marcando sucesso (ja aconteceu
+            # nesta plataforma — LEIA-ME-KIT, "Perder o volume do broker apaga fila e
+            # binding"). infra/rabbitmq/declare-topology.sh declara (idempotente) e
+            # verifica (bloqueante, com prova de fumaca por delta) a topologia da
+            # ARQUITETURA §5 pelo lado consumidor: exchange `prices`, fila
+            # `custodia.prices` com os quatro bindings, e a infraestrutura de
+            # DLQ/parking/retry que a Decisao A do F4 vai precisar.
+            #
+            # DESFECHO ASSIMETRICO (LEIA-ME-KIT, "Reprovar o proprio deploy por causa de
+            # um servico que nao e seu"; PADROES §10.15): o script devolve o exit code
+            # 11 SOMENTE quando o broker nao respondeu apos o laco de espera — o
+            # `plataforma-rabbitmq` e servico do hub-precos, nao deste repositorio, e um
+            # `exit 1` aqui faria o job `guarda-deploy` (PADROES §10.17) afirmar "este
+            # commit NAO chegou a producao" com o container custodia-app healthy de
+            # verdade. QUALQUER outro exit code (401 da credencial, fila/binding ausente,
+            # exchange `prices` divergente, prova de fumaca/fanout/retry falhando) e
+            # NOSSO e acionavel aqui, e reprova o deploy.
+            #
+            # A LEGITIMIDADE DO `::warning::` ABAIXO DEPENDE DE UMA REGRA QUE ESTE
+            # REPOSITORIO NAO PUBLICA. A regra `custodia-topologia-ausente` ESTA neste
+            # commit (infra/grafana/cloud/rules-custodia.yaml), mas a copia EFETIVA vive
+            # em ../tesouro-direto-api/infra/grafana/cloud/rules-custodia.yaml e so chega
+            # a nuvem pelo apply-cloud.sh de la — editar so a daqui deixa a regra
+            # existindo no repo e NAO existindo na nuvem, em silencio (LEIA-ME-KIT,
+            # "Publicar alerta na nuvem: as duas copias, o valor do token, e a prova pela
+            # API"). Ela e ancorada em
+            # absent(rabbitmq_detailed_queue_messages_ready{vhost="/",queue="custodia.prices"}).
+            # NAO ha contraste entre "detailed" e "coarse": `queue_coarse_metrics` e o
+            # nome da FAMILIA dentro do endpoint `/metrics/detailed`, e e essa familia que
+            # o alloy raspa. O contraste real e com o `/metrics` DEFAULT, onde a serie vem
+            # agregada e SEM o label `queue` — por isso o seletor nao pode usar
+            # `rabbitmq_queue_messages_ready`. Ver o comentario correspondente em
+            # ../tesouro-direto-api/infra/alloy/config.alloy.
+            # A regra cobre o intervalo entre este deploy e o proximo enquanto o broker
+            # estiver fora. SEM ela publicada na nuvem, um blip transitorio do broker
+            # deixaria a topologia por declarar com o deploy inteiro verde e NENHUM
+            # sinal — a mesma janela de perda que este passo existe para fechar. Se um
+            # dia essa regra for removida sem que este comentario seja atualizado, quem
+            # ler isto tem que saber: SEM ela, a linha abaixo tem que virar REPROVA
+            # (trocar o `echo "::warning::..."` por `exit 1`), nao silenciosamente
+            # continuar avisando para o vazio.
+            set +e
+            RABBITMQ_USER="$RABBITMQ_USER" RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD" \
+              ./infra/rabbitmq/declare-topology.sh
+            rabbitmq_topologia_status=$?
+            set -e
+            case "$rabbitmq_topologia_status" in
+              0)
+                echo "    topologia RabbitMQ declarada e verificada"
+                ;;
+              11)
+                echo "::warning::plataforma-rabbitmq inacessivel apos o laco de espera — topologia NAO declarada/verificada neste deploy. Servico do hub-precos, nao deste repositorio; cobertura em runtime pela regra custodia-topologia-ausente."
+                echo "AVISO: plataforma-rabbitmq inacessivel apos o laco de espera do script de"
+                echo "      topologia. O deploy do custodia PROSSEGUE (o container e valido e vai"
+                echo "      subir healthy independentemente deste broker); a regra"
+                echo "      custodia-topologia-ausente cobre o cenario 'fila custodia.prices nao"
+                echo "      existe' em runtime, ate o proximo deploy redeclarar."
+                ;;
+              *)
+                echo "ERRO: declaracao/verificacao da topologia RabbitMQ falhou (exit code ${rabbitmq_topologia_status})."
+                echo "      Isto e NOSSO e acionavel: ver a saida acima (RABBITMQ_USER/RABBITMQ_PASSWORD"
+                echo "      ausente ou vazio apos normalizar — exit 1 do proprio script, PADROES §10.33;"
+                echo "      401 de credencial; fila ou binding ausente; exchange 'prices' divergente; ou"
+                echo "      prova de fumaca/fanout/retry falhando)."
+                exit 1
+                ;;
+            esac
 
             echo "== esperando ficar healthy =="
             timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" custodia-app 2>/dev/null)" = "healthy" ]; do
@@ -275,6 +349,8 @@ jobs:
         env:
           CUSTODIA_APP_PASSWORD: ${{ secrets.CUSTODIA_APP_PASSWORD }}
           CUSTODIA_API_KEY: ${{ secrets.CUSTODIA_API_KEY }}
+          RABBITMQ_USER: ${{ secrets.RABBITMQ_USER }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
 
   guarda-deploy:
     # PADROES §10.17: o `deploy` depende do `test`; um teste instável pula o deploy em
