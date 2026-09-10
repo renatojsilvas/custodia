@@ -204,6 +204,25 @@ public sealed class SchemaTests
     private sealed record LinhaMovimento(
         long Id, string Tipo, string InstrumentoId, decimal QtdDelta, decimal ValorFinanceiro, DateOnly DataEvento, string RefExterna);
 
+    private async Task<IReadOnlyDictionary<long, LinhaMovimento>> LerLinhasGravadasPorIdAsync(
+        NpgsqlConnection connection, IReadOnlyList<long> ids)
+    {
+        var linhas = await connection.QueryAsync<LinhaMovimento>(
+            """
+            SELECT id AS "Id",
+                   tipo AS "Tipo",
+                   instrumento_id AS "InstrumentoId",
+                   qtd_delta AS "QtdDelta",
+                   valor_financeiro AS "ValorFinanceiro",
+                   data_evento AS "DataEvento",
+                   ref_externa AS "RefExterna"
+            FROM movimentos
+            WHERE id = ANY(@ids)
+            """,
+            new { ids = ids.ToArray() });
+        return linhas.ToDictionary(l => l.Id);
+    }
+
     private sealed record LinhasDeResgate(
         string ClienteId,
         string InstrumentoId,
@@ -269,15 +288,18 @@ public sealed class SchemaTests
 
         await transacao.CommitAsync();
 
+        var linhasGravadas = await LerLinhasGravadasPorIdAsync(
+            connection, [idVenda, idIr, idIof, idAliq, idLiqAliq, idLiqBrl]);
+
         return new LinhasDeResgate(
             clienteId,
             instrumentoId,
-            new LinhaMovimento(idVenda, TipoMovimento.Venda.Name, instrumentoId, -quantidade, valorBruto, d, tradeId),
-            new LinhaMovimento(idIr, TipoMovimento.IrRetido.Name, InstrumentosCaixa.ALiquidar, -ir, ir, d, $"ir:{tradeId}"),
-            new LinhaMovimento(idIof, TipoMovimento.Iof.Name, InstrumentosCaixa.ALiquidar, -iof, iof, d, $"iof:{tradeId}"),
-            new LinhaMovimento(idAliq, TipoMovimento.ALiquidar.Name, InstrumentosCaixa.ALiquidar, valorBruto, valorBruto, d, $"aliq:{tradeId}"),
-            new LinhaMovimento(idLiqAliq, TipoMovimento.Liquidacao.Name, InstrumentosCaixa.ALiquidar, -liquido, liquido, d1, $"liq:{tradeId}:aliq"),
-            new LinhaMovimento(idLiqBrl, TipoMovimento.Liquidacao.Name, InstrumentosCaixa.Brl, liquido, liquido, d1, $"liq:{tradeId}:brl"));
+            linhasGravadas[idVenda],
+            linhasGravadas[idIr],
+            linhasGravadas[idIof],
+            linhasGravadas[idAliq],
+            linhasGravadas[idLiqAliq],
+            linhasGravadas[idLiqBrl]);
     }
 
     private async Task<LinhasDeVencimento> InserirVencimentoCompletoAsync(
@@ -309,15 +331,18 @@ public sealed class SchemaTests
 
         await transacao.CommitAsync();
 
+        var linhasGravadas = await LerLinhasGravadasPorIdAsync(
+            connection, [idPrincipal, idIr, idIof, idAliq, idLiqAliq, idLiqBrl]);
+
         return new LinhasDeVencimento(
             clienteId,
             instrumentoId,
-            new LinhaMovimento(idPrincipal, TipoMovimento.Resgate.Name, instrumentoId, -quantidade, valorBruto, d, fato),
-            new LinhaMovimento(idIr, TipoMovimento.IrRetido.Name, InstrumentosCaixa.ALiquidar, -ir, ir, d, $"ir:{fato}"),
-            new LinhaMovimento(idIof, TipoMovimento.Iof.Name, InstrumentosCaixa.ALiquidar, -iof, iof, d, $"iof:{fato}"),
-            new LinhaMovimento(idAliq, TipoMovimento.ALiquidar.Name, InstrumentosCaixa.ALiquidar, valorBruto, valorBruto, d, $"aliq:{fato}"),
-            new LinhaMovimento(idLiqAliq, TipoMovimento.Liquidacao.Name, InstrumentosCaixa.ALiquidar, -liquido, liquido, d1, $"liq:{fato}:aliq"),
-            new LinhaMovimento(idLiqBrl, TipoMovimento.Liquidacao.Name, InstrumentosCaixa.Brl, liquido, liquido, d1, $"liq:{fato}:brl"));
+            linhasGravadas[idPrincipal],
+            linhasGravadas[idIr],
+            linhasGravadas[idIof],
+            linhasGravadas[idAliq],
+            linhasGravadas[idLiqAliq],
+            linhasGravadas[idLiqBrl]);
     }
 
     private async Task<LinhasDeCupom> InserirCupomCompletoAsync(
@@ -347,14 +372,17 @@ public sealed class SchemaTests
 
         await transacao.CommitAsync();
 
+        var linhasGravadas = await LerLinhasGravadasPorIdAsync(
+            connection, [idPrincipal, idIr, idAliq, idLiqAliq, idLiqBrl]);
+
         return new LinhasDeCupom(
             clienteId,
             instrumentoId,
-            new LinhaMovimento(idPrincipal, TipoMovimento.Cupom.Name, instrumentoId, 0m, valorBruto, d, fato),
-            new LinhaMovimento(idIr, TipoMovimento.IrRetido.Name, InstrumentosCaixa.ALiquidar, -ir, ir, d, $"ir:{fato}"),
-            new LinhaMovimento(idAliq, TipoMovimento.ALiquidar.Name, InstrumentosCaixa.ALiquidar, liquido, liquido, d, $"aliq:{fato}"),
-            new LinhaMovimento(idLiqAliq, TipoMovimento.Liquidacao.Name, InstrumentosCaixa.ALiquidar, -liquido, liquido, d1, $"liq:{fato}:aliq"),
-            new LinhaMovimento(idLiqBrl, TipoMovimento.Liquidacao.Name, InstrumentosCaixa.Brl, liquido, liquido, d1, $"liq:{fato}:brl"));
+            linhasGravadas[idPrincipal],
+            linhasGravadas[idIr],
+            linhasGravadas[idAliq],
+            linhasGravadas[idLiqAliq],
+            linhasGravadas[idLiqBrl]);
     }
 
     [Theory]
@@ -1135,7 +1163,7 @@ public sealed class SchemaTests
         };
 
         await using var transacao = await connection.BeginTransactionAsync();
-        var ajustes = new List<LinhaMovimento>();
+        var idsDosAjustes = new List<long>();
         foreach (var original in resgate.Todas)
         {
             var refExternaDoAjuste = refsDeReversao[original.RefExterna];
@@ -1143,14 +1171,15 @@ public sealed class SchemaTests
                 connection, resgate.ClienteId, original.InstrumentoId, TipoMovimento.Ajuste.Name,
                 original.DataEvento, -original.QtdDelta, -original.ValorFinanceiro, refExternaDoAjuste,
                 refEstorno: original.Id, transaction: transacao);
-            ajustes.Add(new LinhaMovimento(
-                id, TipoMovimento.Ajuste.Name, original.InstrumentoId, -original.QtdDelta, -original.ValorFinanceiro,
-                original.DataEvento, refExternaDoAjuste));
+            idsDosAjustes.Add(id);
         }
         await transacao.CommitAsync();
 
-        foreach (var (original, ajuste) in resgate.Todas.Zip(ajustes))
+        var ajustesGravados = await LerLinhasGravadasPorIdAsync(connection, idsDosAjustes);
+
+        foreach (var (original, idAjuste) in resgate.Todas.Zip(idsDosAjustes))
         {
+            var ajuste = ajustesGravados[idAjuste];
             Assert.Equal(TipoMovimento.Ajuste.Name, ajuste.Tipo);
             Assert.Equal(original.InstrumentoId, ajuste.InstrumentoId);
             Assert.Equal(original.DataEvento, ajuste.DataEvento);
@@ -1232,6 +1261,61 @@ public sealed class SchemaTests
         Assert.NotNull(exception);
         var pgException = Assert.IsType<PostgresException>(exception);
         Assert.Equal("ck_movimentos_instrumento_caixa_valido", pgException.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData(" caixa:BRL")]
+    [InlineData("  caixa:BRL")]
+    [InlineData(" caixa:brl")]
+    [InlineData("caixa:BRL ")]
+    public async Task Movimentos_Insert_InstrumentoIdDeCaixaComEspacoNaBorda_EhRecusadoPeloCheckDeCaixaValido(string instrumentoId)
+    {
+        using var connection = await OpenConnectionAsync();
+
+        var exception = await Record.ExceptionAsync(() => InserirMovimentoAsync(
+            connection, instrumentoId: instrumentoId, tipo: TipoMovimento.ALiquidar.Name, qtdDelta: 1m, valorFinanceiro: 1m));
+        Assert.NotNull(exception);
+        var pgException = Assert.IsType<PostgresException>(exception);
+        Assert.Equal("ck_movimentos_instrumento_caixa_valido", pgException.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData(" td:x ")]
+    [InlineData("td:x\t")]
+    [InlineData("\ttd:x")]
+    public async Task Movimentos_Insert_InstrumentoIdNaoCaixaComEspacoOuTabNaBorda_EhRecusadoPeloRegexDeBordaQueBtrimNaoPegaria(string instrumentoId)
+    {
+        using var connection = await OpenConnectionAsync();
+
+        var exception = await Record.ExceptionAsync(() => InserirMovimentoAsync(
+            connection, instrumentoId: instrumentoId, tipo: TipoMovimento.Compra.Name, qtdDelta: 1m, valorFinanceiro: 1m));
+        Assert.NotNull(exception);
+        var pgException = Assert.IsType<PostgresException>(exception);
+        Assert.Equal("ck_movimentos_instrumento_id_sem_espaco_nas_bordas", pgException.ConstraintName);
+    }
+
+    [Fact]
+    public async Task Movimentos_Insert_ClienteIdComEspacoNaBorda_EhRecusadoPeloRegexDeBordaMostrandoQueAClasseEDosTresIdentificadores()
+    {
+        using var connection = await OpenConnectionAsync();
+
+        var exception = await Record.ExceptionAsync(() => InserirMovimentoAsync(
+            connection, clienteId: $" cli-1-{Guid.NewGuid():N}"));
+        Assert.NotNull(exception);
+        var pgException = Assert.IsType<PostgresException>(exception);
+        Assert.Equal("ck_movimentos_cliente_id_sem_espaco_nas_bordas", pgException.ConstraintName);
+    }
+
+    [Fact]
+    public async Task Movimentos_Insert_RefExternaComEspacoNaBorda_EhRecusadoPeloRegexDeBordaMostrandoQueAClasseEDosTresIdentificadores()
+    {
+        using var connection = await OpenConnectionAsync();
+
+        var exception = await Record.ExceptionAsync(() => InserirMovimentoAsync(
+            connection, refExterna: $"k-{Guid.NewGuid():N} "));
+        Assert.NotNull(exception);
+        var pgException = Assert.IsType<PostgresException>(exception);
+        Assert.Equal("ck_movimentos_ref_externa_sem_espaco_nas_bordas", pgException.ConstraintName);
     }
 
     [Theory]
