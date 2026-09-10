@@ -12,17 +12,11 @@ public sealed class PendingMigrationsHealthCheckTests(ApiTestFactory factory)
 {
     private const string InitialCreateMigrationId = "20260907234841_InitialCreate";
 
-    private const string RecriaPrecoAtualSql =
-        """
-        CREATE TABLE preco_atual (
-            instrumento_id text NOT NULL,
-            data_ref date NOT NULL,
-            campo text NOT NULL,
-            valor numeric(18,6) NOT NULL,
-            revisao integer NOT NULL,
-            CONSTRAINT "PK_preco_atual" PRIMARY KEY (instrumento_id)
-        );
-        """;
+    private const string OcultaPrecoAtualSql =
+        "ALTER TABLE IF EXISTS preco_atual RENAME TO preco_atual_ausente_para_teste;";
+
+    private const string RestauraPrecoAtualSql =
+        "ALTER TABLE IF EXISTS preco_atual_ausente_para_teste RENAME TO preco_atual;";
 
     private const string RecriaTriggerImutavelSql =
         """
@@ -51,7 +45,7 @@ public sealed class PendingMigrationsHealthCheckTests(ApiTestFactory factory)
     [Fact]
     public async Task HealthReady_ComTabelaDropadaPorFora_RespondeUnhealthy_ERecriarRestauraHealthy()
     {
-        await ExecuteSqlAsync("DROP TABLE preco_atual CASCADE;");
+        await ExecuteSqlAsync(OcultaPrecoAtualSql);
         try
         {
             var driftResponse = await _client.GetAsync("/health/ready", CancellationToken.None);
@@ -62,7 +56,7 @@ public sealed class PendingMigrationsHealthCheckTests(ApiTestFactory factory)
         }
         finally
         {
-            await ExecuteSqlAsync(RecriaPrecoAtualSql);
+            await ExecuteSqlAsync(RestauraPrecoAtualSql);
         }
 
         var restauradoResponse = await _client.GetAsync("/health/ready", CancellationToken.None);
