@@ -1334,3 +1334,25 @@ a mais perigosa das duas: ele parece atual, não tem palavra-chave, e a próxima
 teto e a condição que os separa, em vez de uma faixa única. "4–5 linhas" para duas famílias que têm
 5 e 6 é uma frase que envelhece na primeira leitura atenta; "resgate 4–6, vencimento 4–6, cupom
 4–5, porque cupom não tem linha de IOF" não envelhece nunca.
+
+**E aqui está o desfecho que torna esta seção mais útil que a regra dela: eu escrevi a regra e não
+a apliquei ao meu próprio commit seguinte.** Duas horas depois de escrever "varra pelo numeral", o
+commit que corrigiu o achado grave do espaço em branco acrescentou **três** CHECKs a uma tabela, e
+o texto da fase continuou dizendo **"NOVE CHECKs em movimentos"**. Quem pegou foi a segunda passada
+do `guardiao-padroes` — e ele corrigiu, no caminho, um erro de contagem que eu havia posto no
+próprio despacho ("são 15"; eram 12).
+
+Três coisas saem disso, e nenhuma é "tenha mais cuidado":
+
+1. **O commit que ACRESCENTA membro é o que invalida o numeral, e ele nunca contém a palavra do
+   numeral.** A varredura tem de rodar **depois** do commit de correção, não só no fecho da
+   pendência que a motivou. O gatilho não é "fechei uma pendência" — é "acrescentei membro a
+   qualquer conjunto que o arquivo conta".
+2. **Escrever a regra não inocula contra ela.** O texto novo entra na memória como *feito*, e o
+   próximo commit é lido como um assunto diferente. A defesa é mecânica, não de atenção: um
+   `grep -niE "(um|dois|...|doze) (CHECKs?|desvios?|motivos?|linhas?|tabelas?|...)"` no fim de toda
+   rodada de correção, não uma intenção de lembrar.
+3. **Não ponha numeral num despacho de subagente sem contar na hora.** Eu escrevi "15 CHECKs" numa
+   pauta de auditoria; se o guardião fosse menos cuidadoso, ele teria auditado contra 15 e reportado
+   "faltam três" — e eu teria mandado alguém "consertar" um schema correto. Numeral em prompt é
+   afirmação como qualquer outra: ou você acabou de contar, ou você escreve "conte e me diga".
