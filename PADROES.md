@@ -989,10 +989,28 @@ dia.
 
 O modo de falha concreto, achado ao abrir a `custodia` (2026-09-07) antes de existir código:
 um job de ciclo curto que roda 24 h por dia, um livro append-only com **trigger de data
-futura** comparando contra `current_date`, e a janela **00:00–03:00 BRT** — em que o dia BRT
-já virou e o UTC ainda não. Nessa janela o job tenta inserir `data_evento = hoje_BRT` e a
-trigger **rejeita como data futura**, todo dia, com um desfecho que o job não tem nome para
-classificar. A suíte fica verde: nenhum teste roda às 01:00 UTC−3.
+futura** comparando contra `current_date`. A suíte fica verde de qualquer jeito: nenhum teste
+roda dentro da janela crítica.
+
+**O SINAL DA JANELA — e a primeira versão deste item o escrevia INVERTIDO, o que é pior que
+não o escrever, porque dele saía um teste que não separa as duas implementações.** Conferido
+contra Postgres 16 em 2026-09-10, na `custodia`:
+
+```
+utc = 2026-09-10 10:16:42     brt = 2026-09-10 07:16:42
+```
+
+`America/Sao_Paulo` é UTC**−3**: o relógio BRT lê **mais cedo**, e o dia BRT vira **três horas
+depois** do dia UTC. A janela em que as duas datas divergem é **21:00–24:00 BRT** (= 00:00–03:00
+**UTC**), e nela `data_utc = D` enquanto `data_brt = D − 1`. **Não** é "00:00–03:00 BRT, em que
+o dia BRT já virou e o UTC ainda não" — é o inverso, e o texto anterior dizia isso.
+
+**Com o sinal certo, o modo de falha também se inverte, e é ele que importa:** `current_date`
+num servidor em UTC **nunca é estrito demais — é permissivo demais**. Entre 21:00 e 24:00 BRT
+ele vale `D` e **aceita** `data_evento = D`, que **em BRT é amanhã**: a guarda deixa entrar no
+livro append-only, três horas por dia, exatamente o fato que ainda não aconteceu que ela existe
+para barrar. O job de ciclo curto **nunca** é rejeitado (`hoje_BRT ≤ current_date` em qualquer
+hora); quem passa é o **movimento com data futura**, que é o dado sem conserto.
 
 **Regra:** o fuso de negócio é **decidido na fase do schema**, escrito no arquivo, e vale
 para toda `date` daquele banco. Comparações de "hoje" no banco usam
@@ -1004,10 +1022,26 @@ avaliador é de outro repo e roda em UTC.
 **dado**, some no primeiro compose que esquecer a variável (e a variável não está nas cinco
 listas da §10.33), e **não alcança** o avaliador de alerta, que não é seu.
 
-**Guarda:** o teste de fronteira roda com a sessão do banco em `SET TIME ZONE 'UTC'` e o
-relógio **injetado** dentro da janela crítica, e exige que a data de negócio de hoje seja
-**aceita**. Escrito com `current_date` dos dois lados, o teste passa com a implementação
-errada — é a mesma tautologia da §10.22.
+**Guarda — e ela move a SESSÃO, não o relógio.** `now()` não é injetável de fora, e a janela
+crítica dura três horas por dia: teste que espera por ela só discrimina de madrugada. A
+alavanca é que `current_date` **respeita** `SET TIME ZONE` e `(now() AT TIME ZONE '<fuso>')::date`
+**não**. São duas direções, cada uma com a **precondição afirmada no próprio teste** (que falha
+se ela não valer, em vez de passar por vacuidade):
+
+- **sessão um dia à frente do fuso de negócio** — para BRT, `SET TIME ZONE 'Pacific/Kiritimati'`
+  (UTC+14, 17 h à frente; precondição vale das 07:00 às 24:00 BRT). `INSERT` com
+  `data_evento = current_date` tem de ser **RECUSADO** (é amanhã no fuso de negócio). A
+  implementação com `current_date` **aceita** — é o erro real, o de ser permissivo demais.
+- **sessão um dia atrás** — `SET TIME ZONE 'Etc/GMT+12'` (UTC−12, 9 h atrás; precondição vale
+  das 00:00 às 09:00 BRT). `INSERT` com `data_evento = (now() AT TIME ZONE '<fuso>')::date` tem
+  de ser **ACEITO** (é hoje). A implementação com `current_date` **recusa** como futuro.
+
+As duas janelas se sobrepõem e **cobrem as 24 horas juntas**: o teste exercita toda direção cuja
+precondição valer e afirma que **ao menos uma** valeu. *A versão anterior desta guarda pedia
+"sessão em `SET TIME ZONE 'UTC'`, relógio injetado na janela, data de hoje **aceita**" — e era
+**tautologia**: na janela real `hoje_BRT = D − 1 ≤ current_date = D`, então a implementação errada
+também aceita. Fechava verde sobre o defeito que existia para pegar, que é a §10.22 dentro do item
+que a invoca.*
 
 ---
 

@@ -189,7 +189,8 @@ tolerada em silêncio.
 a metade **comportamental** vai para o **F4** (consumidor).
 
 - F3: CHECK tornando `ref_estorno` obrigatório quando `tipo = 'ajuste'` e NULL nos demais
-  tipos, mais FK composta com `cliente_id` e CHECK de não-auto-referência. Um estorno
+  tipos, mais FK composta com `cliente_id` **e `instrumento_id`** e CHECK de
+  não-auto-referência. Um estorno
   órfão fica **impossível de nascer**, pelo banco e não pela disciplina do handler.
   *Rejeitado:* aceitar `ref_estorno = NULL` e preencher depois — o UPDATE que isso exige
   é barrado pela trigger, e o `UNIQUE (cliente_id, ref_externa)` torna a reentrega um
@@ -2254,11 +2255,54 @@ para ela.
 
   **Decisões desta fase:**
 
+  - **OS QUATRO DESVIOS POR CORREÇÃO DA §7.1, num lugar só — porque desvio que cada seção
+    declara sozinha não tem onde ser conferido inteiro.** A §7.1 escreve o contrário nos
+    quatro, e nos quatro o motivo está na própria decisão:
+    1. **`aporte` no enum de `tipo`** (V1) — a §7.1 omite; a §7.3, três seções adiante,
+       descreve o handler gravando "compra/venda/**aporte**".
+    2. **`ref_externa` NOT NULL** (V3) — o Postgres **não constrange NULL**, e cada linha
+       derivada duplicaria para sempre numa tabela sem DELETE.
+    3. **`valor_financeiro` NOT NULL** — o "quando houver" da §7.1 **não tem testemunha no
+       vocabulário fechado**: toda linha enumerada na V2, na V6 e nas famílias de
+       corpaction tem valor, `cupom` inclusive (`qtd_delta = 0`, `valor > 0`). E o
+       argumento decisivo é o mesmo do item 2, com outro nome: **`SUM` ignora `NULL`**, então
+       uma linha nula quebra **em silêncio** os dois invariantes independentes de preço do
+       Pronto (k) e a simetria do par `ajuste`, numa tabela sem UPDATE. *Rejeitado:*
+       nullable por fidelidade literal — no dia em que um tipo de fase 2 não tiver valor,
+       `DROP NOT NULL` é uma linha sem rewrite (§10.21).
+    4. **`qtd_delta` SEM `DEFAULT 0`** (a §7.1 o escreve) — o default **não protege
+       ninguém**: o EF emite toda coluna mapeada em todo INSERT, então o único caminho que
+       ele alcança é o **SQL cru** (fixture, migration de dados, os próprios `INSERT` dos
+       Prontos), e ali ele converte "esqueci a coluna" em **quantidade zero gravada em
+       silêncio**, sendo 0 legítimo apenas para `cupom`. **`registrado_em` mantém o
+       `now()`**, e a distinção é a que decide: ali o default **é o produtor do valor**
+       ("quando entrou aqui", §7.1), não há valor correto que um escritor possa omitir, e
+       o molde o reproduz — note que `quantidade`, no molde, **não** tem default.
+       *Rejeitado:* manter por fidelidade — a §10.21 não se aplica (`SET`/`DROP DEFAULT`
+       são simétricos e instantâneos nos dois sentidos); a assimetria está no **dado**.
+    Os dois primeiros já estavam declarados nas suas seções; **os dois últimos saíram da
+    varredura coluna a coluna que o próprio prompt desta fase manda fazer** ("confira
+    coluna a coluna contra a 7.1 antes de implementar; se discordar de alguma, levante
+    ANTES de escrever") — a enumeração de desvios descrevia o texto de então, não um teto
+    de decisões.
   - **Decisão A, a metade irreversível:** `ref_estorno` NOT NULL quando `tipo = 'ajuste'`,
-    e NULL obrigatório nos demais tipos, por CHECK; mais FK composta com `cliente_id` (o
-    ajuste não cruza cliente) e CHECK de não-auto-referência. Consequência deliberada: um
+    e NULL obrigatório nos demais tipos, por CHECK; mais FK composta com `cliente_id`
+    **e `instrumento_id`** (o ajuste não cruza cliente **nem instrumento**, V2),
+    sustentada pela chave alternada `ux_movimentos_id_cliente_instrumento`; e CHECK de
+    não-auto-referência. Consequência deliberada: um
     estorno órfão **não pode ser gravado**. O custo aceito é explícito e é o F4: o
     consumidor precisa de política para o evento fora de ordem.
+    **A terceira coluna não é fidelidade ao molde por fidelidade — ela é a V2 virando
+    schema.** A V2 afirma que a linha de reversão é `tipo = 'ajuste'` no **mesmo
+    `instrumento_id`** da linha revertida; com a FK de duas colunas, um `ajuste`
+    apontando para linha do mesmo cliente e de **outro** instrumento passa, **consome o
+    slot único de reversão** daquela linha (o índice parcial da V5) e, como não há UPDATE
+    nem DELETE, o `ajuste` correto fica impossível **para sempre** — é o incidente da
+    §10.21 com a terceira coluna faltando. A dobra, além disso, tiraria da chave errada
+    uma das duas linhas do par. *A versão anterior desta alínea dizia só "FK composta com
+    `cliente_id` (o ajuste não cruza cliente)", e o molde `operacoes` já usava as três:
+    `(estorna_operacao_id, cliente_id, instrumento_id)` → `(id, cliente_id,
+    instrumento_id)`.*
   - **`ref_externa`: a convenção completa é a V3 acima**, e o que ela compra é isto — o
     adiamento das consequências contábeis para o F5 vira **recorte de escopo** em vez de
     dívida sem prazo, porque com a chave definida o backfill do F5 é idempotente por
@@ -2299,11 +2343,37 @@ para ela.
     futura compara contra `(now() AT TIME ZONE 'America/Sao_Paulo')::date`, **nunca** contra
     `current_date`; "hoje", "dia útil" e "12:00" das fases seguintes são nesse fuso; e a
     regra do alerta das 12:00 do F7 **carrega o offset explicitamente**, porque o avaliador
-    roda em UTC. *O caso concreto que a ausência produzia é diário, não teórico:* entre 00:00
-    e 03:00 BRT o dia BRT já virou e o UTC não, então o job de **ciclo curto** do F5 — que
-    roda 24 h por dia por decisão daquela fase — tentaria inserir `data_evento = hoje_BRT` e
-    a trigger o **rejeitaria como data futura**, todo dia, por três horas, com um desfecho
-    que não tem nome em lugar nenhum (o job só tem `COMPLETUDE` e `LIMITE`). *Rejeitado:*
+    roda em UTC.
+
+    *O caso concreto que a ausência produzia é diário, não teórico — mas o SINAL dele estava
+    escrito ao contrário aqui e na §10.34, e a versão anterior derivava disso um teste que
+    não separa as duas implementações. Conferido contra Postgres real em 2026-09-10:*
+
+    ```
+    utc = 2026-09-10 10:16:42     brt = 2026-09-10 07:16:42
+    ```
+
+    `America/Sao_Paulo` é UTC**−3**, então o relógio BRT lê **mais cedo** e o dia BRT vira
+    **três horas depois** do dia UTC. A janela em que as duas datas divergem é, portanto,
+    **21:00–24:00 BRT** (= 00:00–03:00 **UTC**), e nela `data_utc = D` enquanto
+    `data_brt = D − 1`. **Não é** "o dia BRT já virou e o UTC não": é o inverso.
+
+    **A consequência inverte o modo de falha, e é ela que importa:** `current_date` num
+    servidor/sessão em UTC **nunca é estrito demais — é permissivo demais**. Entre 21:00 e
+    24:00 BRT ele vale `D`, então aceita `data_evento = D`, que **em BRT é amanhã**: a
+    trigger deixa entrar no livro append-only, todo dia, por três horas, exatamente o fato
+    que ainda não aconteceu que ela existe para barrar. O job de **ciclo curto** do F5 nunca
+    é rejeitado por isto (`hoje_BRT ≤ current_date` em qualquer hora); quem passa é o
+    **movimento com data futura**, que é o dado sem conserto.
+
+    **E é por isso que o teste de fronteira do Pronto (p) teve de ser reescrito:** a forma
+    anterior ("sessão em `SET TIME ZONE 'UTC'`, relógio na janela 00:00–03:00 BRT, o
+    `INSERT` com a data BRT de hoje tem de ser **aceito**") é **tautologia** — na janela real
+    `hoje_BRT = D − 1 ≤ current_date = D`, então a implementação errada **também** aceita, e
+    o teste fecha verde sobre ela. É a §10.22 dentro do item que a invoca. A forma que
+    separa as duas está no Pronto (p), e ela move a **sessão**, não o relógio.
+
+    *Rejeitado:*
     fixar `TZ=America/Sao_Paulo` no container e continuar usando `current_date` — resolve por
     configuração de ambiente o que é regra de **dado**, some no primeiro compose que esquecer
     a variável (e as cinco listas não a carregam), e não alcança o avaliador do Grafana, que
@@ -2765,11 +2835,46 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
      Estorno de estorno continua PERMITIDO de proposito (PADROES 10.21, a excecao).
 
   2. DECISAO A, metade irreversivel: CHECK tornando ref_estorno NOT NULL quando
-     tipo = 'ajuste' e NULL nos demais tipos; FK COMPOSTA com cliente_id (ajuste nao
-     cruza cliente); CHECK de nao-auto-referencia. Um estorno orfao tem que ser
-     IMPOSSIVEL de nascer. Ao declarar a FK composta, nomeie o indice de cobertura com
+     tipo = 'ajuste' e NULL nos demais tipos; FK COMPOSTA com cliente_id E
+     instrumento_id (o ajuste nao cruza cliente NEM instrumento — a V2 afirma que a
+     linha de reversao tem o MESMO instrumento_id da revertida), sustentada pela chave
+     alternada ux_movimentos_id_cliente_instrumento; CHECK de nao-auto-referencia. Um
+     estorno orfao tem que ser IMPOSSIVEL de nascer. SAO TRES COLUNAS, como no molde
+     operacoes: com duas, um ajuste apontando para linha de OUTRO instrumento do mesmo
+     cliente passa, consome o slot unico de reversao daquela linha (indice parcial da
+     V5), e sem UPDATE nem DELETE o ajuste correto fica impossivel PARA SEMPRE. Ao
+     declarar a FK composta, nomeie o indice de cobertura com
      HasDatabaseName, senao o EF gera um IX_ em PascalCase que ninguem escreveu
      (PADROES 10.23).
+
+  2b. OS QUATRO DESVIOS POR CORRECAO DA 7.1, e a lista e fechada — nao invente um quinto,
+     nao suprima nenhum: (1) `aporte` no enum de tipo; (2) ref_externa NOT NULL;
+     (3) valor_financeiro NOT NULL (o "quando houver" da 7.1 nao tem testemunha no
+     vocabulario fechado, e SUM ignora NULL, o que quebra em silencio os invariantes de
+     soma do livro); (4) qtd_delta SEM DEFAULT 0 (o EF emite toda coluna mapeada em todo
+     INSERT, entao o default so alcanca SQL cru — fixture, migration de dados — e ali ele
+     vira quantidade zero gravada em silencio, sendo 0 legitimo so para cupom).
+     registrado_em MANTEM o now(): la o default E o produtor do valor. A lista inteira, com
+     o motivo de cada um, esta em DECISOES DESTA FASE, no corpo da fase.
+
+  2c. NOVE CHECKs em movimentos, e os quatro ultimos entram pela 10.21 (em append-only o
+     lado estrito e o reversivel): ck_movimentos_tipo_valido (os dez, predicado DERIVADO
+     de TipoMovimento.All, nunca a lista escrita duas vezes); ck_movimentos_ajuste_coerente
+     (BICONDICIONAL: (tipo = 'ajuste') = (ref_estorno IS NOT NULL));
+     ck_movimentos_estorno_nao_auto; ck_movimentos_ref_externa_nao_vazia
+     (btrim(ref_externa) <> ''); ck_movimentos_instrumento_caixa_valido (allow-list
+     derivada de InstrumentosCaixa: instrumento_id NOT LIKE 'caixa:%' OR instrumento_id IN
+     ('caixa:BRL','caixa:a_liquidar')); ck_movimentos_valor_nao_negativo
+     (tipo = 'ajuste' OR valor_financeiro >= 0 — e NAO endureca o ajuste para <= 0, porque
+     o estorno DE estorno reverte um ajuste de -600 com +600 e essa guarda fecharia a
+     ultima porta de correcao); ck_movimentos_cupom_sem_quantidade
+     (tipo <> 'cupom' OR qtd_delta = 0 — senao I4 fica falso e a reconciliacao do F7
+     alerta sem ter o que consertar); ck_movimentos_cliente_id_nao_vazio e
+     ck_movimentos_instrumento_id_nao_vazio (a 10.24 manda normalizar os identificadores
+     TODOS, nao um: em append-only "cli-1" e "cli-1 " sao dois clientes para sempre).
+     NAO ponha CHECK em posicao_corrente: as tres colunas sao gravadas na MESMA TRANSACAO
+     do livro pelo handler do F4, e um CHECK numa projecao DESCARTAVEL transformaria
+     defeito de projecao em rollback da escrita do LIVRO, que nao e descartavel.
 
   3. ref_externa: implemente exatamente a V3 acima (NOT NULL, chave por MOVIMENTO, com
      as pernas e a familia de corpaction). Nao reescreva a convencao.
@@ -2816,10 +2921,23 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
      current_date e o dia no fuso do SERVIDOR, que num container padrao e UTC. TODA coluna
      `date` deste schema e uma data nesse fuso, e F5 e F7 HERDAM a regra ("hoje", "dia
      util" e "12:00" sao nesse fuso; a regra do alerta das 12:00 do F7 carrega o offset,
-     porque o avaliador do Grafana roda em UTC). SEM ISSO, entre 00:00 e 03:00 BRT o dia
-     BRT ja virou e o UTC nao, e o job de CICLO CURTO do F5 — que roda 24 h por dia —
-     tentaria inserir data_evento = hoje_BRT e a trigger o REJEITARIA como data futura,
-     todo dia, por tres horas, com um desfecho que nao tem nome em lugar nenhum.
+     porque o avaliador do Grafana roda em UTC).
+     O SINAL DA JANELA, conferido contra Postgres real em 2026-09-10 (utc = 10:16:42,
+     brt = 07:16:42): America/Sao_Paulo e UTC-3, o relogio BRT le MAIS CEDO, e o dia BRT
+     vira TRES HORAS DEPOIS do dia UTC. A janela em que as duas datas divergem e
+     21:00-24:00 BRT (= 00:00-03:00 UTC), e nela data_utc = D e data_brt = D-1. NAO
+     ESCREVA "entre 00:00 e 03:00 BRT o dia BRT ja virou e o UTC nao" — e o inverso, e
+     era o que esta linha dizia.
+     E O MODO DE FALHA E O INVERSO TAMBEM: current_date em UTC nunca e estrito demais, e
+     PERMISSIVO DEMAIS. Entre 21:00 e 24:00 BRT ele vale D e aceita data_evento = D, que
+     EM BRT E AMANHA — a trigger deixa entrar no livro append-only o fato que ainda nao
+     aconteceu, que e o dado sem conserto que ela existe para barrar. O job de ciclo
+     curto do F5 NAO e rejeitado por isso em hora nenhuma (hoje_BRT <= current_date
+     sempre); quem passa e o movimento com data futura.
+     CONSEQUENCIA PARA O SEU TESTE, e ela e a razao de este paragrafo existir: o teste
+     "sessao em UTC + data BRT de hoje tem de ser ACEITA" e TAUTOLOGIA — na janela real
+     hoje_BRT = D-1 <= current_date = D, entao a implementacao com current_date TAMBEM
+     aceita. O teste que separa as duas move a SESSAO, nao o relogio: ver Pronto (p).
      NAO "resolva" isso com TZ=America/Sao_Paulo no container: isso poe em configuracao de
      ambiente o que e regra de DADO, some no primeiro compose que esquecer a variavel, e
      nao alcanca o avaliador do Grafana, que e de outro repo.
@@ -2856,9 +2974,33 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   (b) `INSERT` de `tipo='ajuste'` com `ref_estorno IS NULL` **recusado** — é a prova de que
   a decisão A ficou no schema e não na disciplina;
   (c) `INSERT` de ajuste apontando para movimento de **outro cliente** recusado;
+  (c2) `INSERT` de ajuste apontando para movimento do **mesmo cliente** e de **outro
+  instrumento** recusado — é a **terceira** coluna da FK composta, e sem este gêmeo ela
+  entra sem teste. Sem ela o dado é irreparável: o ajuste no instrumento errado consome o
+  slot único de reversão da linha (o índice parcial da V5) e o ajuste correto fica
+  impossível para sempre;
   (d) `INSERT` com `ref_estorno = id` recusado;
   (e) `INSERT` com `ref_externa` nula, vazia ou só espaços recusado — entrada malformada
-  não é sinônimo de ausente (§10.24);
+  não é sinônimo de ausente (§10.24). **E o mesmo para `cliente_id` e `instrumento_id`**:
+  a §10.24 manda normalizar os identificadores **todos, não um** ("foi a seção 'Normalizar
+  de um lado só' acontecendo dentro do código que a combatia"), e numa tabela append-only
+  `"cli-1"` e `"cli-1 "` seriam dois clientes distintos para sempre;
+  (e2) **os dois CHECKs de valor que entram pela §10.21**, cada um com controle negativo
+  **e** positivo: `INSERT` de `compra` com `valor_financeiro < 0` **recusado** e com
+  `valor_financeiro = 0` **aceito** (a convenção de sinal da V2 — magnitude bruta não
+  negativa, e a **única** exceção é o `ajuste`), mais `INSERT` de `ajuste` com
+  `valor_financeiro` **negativo aceito** e com `valor_financeiro` **positivo também
+  aceito** — o segundo é o controle que impede endurecer o `ajuste` para `≤ 0`, porque o
+  estorno **de** estorno reverte um ajuste de −600 com +600 e essa guarda fecharia a última
+  porta de correção (a exceção nomeada da §10.21); e `INSERT` de `cupom` com
+  `qtd_delta ≠ 0` **recusado** e com `qtd_delta = 0` **aceito** — sem ele
+  `Σ qtd_delta = quantidade` (I4) fica falso e a reconciliação do F7, único detector
+  automático do sistema, alerta sem ter o que consertar na projeção;
+  (e3) **os dois desvios novos, provados e não afirmados:** `INSERT` **omitindo**
+  `valor_financeiro` **recusado** (a coluna é NOT NULL — desvio 3), e `INSERT` **omitindo**
+  `qtd_delta` **recusado** em vez de gravar `0` em silêncio (a coluna não tem DEFAULT —
+  desvio 4). O segundo é o único critério desta fase que reprova a DDL literal da §7.1, e é
+  por isso que ele é teste e não nota de rodapé;
   (f) as **constantes** de precisão/escala batendo com `numeric_precision`/`numeric_scale`
   lidos do `information_schema`, e o banco rejeitando (magnitude) ou **arredondando em
   silêncio** (escala) exatamente como a constante prevê — `qtd_delta` com escala 9 e com 11
@@ -2909,11 +3051,35 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   **recusado** pela trigger, e a **mesma expressão sem o `+ 1`** **aceita** — controle
   negativo e positivo do dado sem conserto, a §10.21 aplicada ao futuro e não só ao passado.
   **E o fuso faz parte da asserção, não é enfeite:** um teste escrito com `current_date`
-  passaria com a trigger comparando em UTC, que é o defeito que a decisão do fuso fecha. O
-  teste que **separa** as duas implementações é o de fronteira: com a sessão do Postgres em
-  `SET TIME ZONE 'UTC'` e o relógio dentro da janela 00:00–03:00 BRT (injetada, não
-  esperada), o `INSERT` com a data **BRT de hoje** tem de ser **aceito** — com
-  `current_date` ele seria recusado como futuro;
+  passaria com a trigger comparando em UTC, que é o defeito que a decisão do fuso fecha.
+  **O teste que SEPARA as duas implementações move a SESSÃO do Postgres, não o relógio** —
+  `now()` não é injetável de fora e a janela real dura três horas por dia, então esperar por
+  ela é ter suíte que só discrimina de madrugada. `current_date` **respeita**
+  `SET TIME ZONE`; a expressão `(now() AT TIME ZONE 'America/Sao_Paulo')::date` **não**.
+  Essa é a alavanca, e são **duas direções**, cada uma com a sua precondição afirmada no
+  próprio teste (o teste falha se a precondição não valer, em vez de passar por vacuidade):
+  - **sessão um dia À FRENTE do BRT** — `SET TIME ZONE 'Pacific/Kiritimati'` (UTC+14, 17 h
+    à frente de BRT; precondição `current_date > (now() AT TIME ZONE
+    'America/Sao_Paulo')::date`, verdadeira das 07:00 às 24:00 BRT). `INSERT` com
+    `data_evento = current_date` tem de ser **RECUSADO**: é amanhã em BRT. A implementação
+    com `current_date` **aceita** — e é este o caso que ela erra na vida real, porque
+    `current_date` é permissivo demais, não estrito demais.
+  - **sessão um dia ATRÁS do BRT** — `SET TIME ZONE 'Etc/GMT+12'` (UTC−12, 9 h atrás de
+    BRT; precondição `current_date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`,
+    verdadeira das 00:00 às 09:00 BRT). `INSERT` com
+    `data_evento = (now() AT TIME ZONE 'America/Sao_Paulo')::date` tem de ser **ACEITO**:
+    é hoje em BRT. A implementação com `current_date` **recusa** como futuro.
+
+  As duas janelas se sobrepõem entre 07:00 e 09:00 BRT e **cobrem as 24 horas juntas**, então
+  o teste exercita **toda direção cuja precondição valer** e afirma que **ao menos uma** valeu
+  — nenhuma hora do dia deixa a suíte sem o discriminante. *Verificado contra Postgres 16 em
+  2026-09-10, às 07:16 BRT, quando as duas precondições valiam: `Kiritimati` deu
+  `current_date = 2026-09-11` contra `data_brt = 2026-09-10`, e `Etc/GMT+12` deu
+  `2026-09-09`.* *A versão anterior deste item pedia "sessão em UTC e relógio na janela
+  00:00–03:00 BRT, com o `INSERT` da data BRT de hoje **aceito**", e ela era **tautologia**:
+  além de a janela ser 21:00–24:00 BRT e não 00:00–03:00, nela `hoje_BRT = D − 1 ≤
+  current_date = D`, então a implementação errada também aceita. O critério fechava verde
+  sobre o defeito que existia para pegar — §10.22 dentro do item que a invoca.*
 
 - [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
   de ordem. **Dependência externa nova: o `operacoes` publicando `valorOrigemSaldo` (V6) —
