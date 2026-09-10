@@ -105,7 +105,7 @@ namespace Custodia.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_movimentos_cliente_id_nao_vazio", "btrim(cliente_id) <> ''");
 
-                            t.HasCheckConstraint("ck_movimentos_cliente_id_sem_espaco_nas_bordas", "cliente_id !~ '^\\s|\\s$'");
+                            t.HasCheckConstraint("ck_movimentos_cliente_id_sem_espaco_nas_bordas", "cliente_id !~ '^[\\s\\u00A0\\u1680\\u2007\\u202F]|[\\s\\u00A0\\u1680\\u2007\\u202F]$'");
 
                             t.HasCheckConstraint("ck_movimentos_cupom_sem_quantidade", "tipo <> 'cupom' OR qtd_delta = 0");
 
@@ -115,11 +115,11 @@ namespace Custodia.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_movimentos_instrumento_id_nao_vazio", "btrim(instrumento_id) <> ''");
 
-                            t.HasCheckConstraint("ck_movimentos_instrumento_id_sem_espaco_nas_bordas", "instrumento_id !~ '^\\s|\\s$'");
+                            t.HasCheckConstraint("ck_movimentos_instrumento_id_sem_espaco_nas_bordas", "instrumento_id !~ '^[\\s\\u00A0\\u1680\\u2007\\u202F]|[\\s\\u00A0\\u1680\\u2007\\u202F]$'");
 
                             t.HasCheckConstraint("ck_movimentos_ref_externa_nao_vazia", "btrim(ref_externa) <> ''");
 
-                            t.HasCheckConstraint("ck_movimentos_ref_externa_sem_espaco_nas_bordas", "ref_externa !~ '^\\s|\\s$'");
+                            t.HasCheckConstraint("ck_movimentos_ref_externa_sem_espaco_nas_bordas", "ref_externa !~ '^[\\s\\u00A0\\u1680\\u2007\\u202F]|[\\s\\u00A0\\u1680\\u2007\\u202F]$'");
 
                             t.HasCheckConstraint("ck_movimentos_tipo_valido", "tipo IN ('compra', 'venda', 'aporte', 'cupom', 'resgate', 'ir_retido', 'iof', 'a_liquidar', 'liquidacao', 'ajuste')");
 

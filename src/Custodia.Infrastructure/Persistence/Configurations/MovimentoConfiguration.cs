@@ -53,15 +53,15 @@ public sealed class MovimentoConfiguration : IEntityTypeConfiguration<Movimento>
 
             t.HasCheckConstraint(
                 "ck_movimentos_cliente_id_sem_espaco_nas_bordas",
-                @"cliente_id !~ '^\s|\s$'");
+                @"cliente_id !~ '^[\s\u00A0\u1680\u2007\u202F]|[\s\u00A0\u1680\u2007\u202F]$'");
 
             t.HasCheckConstraint(
                 "ck_movimentos_instrumento_id_sem_espaco_nas_bordas",
-                @"instrumento_id !~ '^\s|\s$'");
+                @"instrumento_id !~ '^[\s\u00A0\u1680\u2007\u202F]|[\s\u00A0\u1680\u2007\u202F]$'");
 
             t.HasCheckConstraint(
                 "ck_movimentos_ref_externa_sem_espaco_nas_bordas",
-                @"ref_externa !~ '^\s|\s$'");
+                @"ref_externa !~ '^[\s\u00A0\u1680\u2007\u202F]|[\s\u00A0\u1680\u2007\u202F]$'");
         });
 
         builder.HasKey(m => m.Id);
