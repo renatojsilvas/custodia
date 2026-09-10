@@ -545,9 +545,32 @@ desliga a desconfiança de quem lê depois.
 
 **Guarda:** some uma sonda de existência física, com a lista de tabelas derivada de
 `db.Model.GetEntityTypes()` — **nunca escrita à mão**, que desatualiza em silêncio quando
-entrar tabela nova. Uma consulta só, `unnest` + `to_regclass`, resolve todas. O que este check **não** cobre —
-coluna, índice ou CHECK alterados mantendo a tabela — fica registrado aqui, no catálogo, e
-não no código.
+entrar tabela nova. Uma consulta só, `unnest` + `to_regclass`, resolve todas.
+
+**O INVENTÁRIO DO QUE A SONDA NÃO COBRE, completo, e ele fica aqui e não no código** (afirmação
+escrita no código desliga a desconfiança de quem lê depois — é o agravante registrado acima). Na
+`custodia`, com a sonda cobrindo **ausência** de tabela, trigger, chave (PK e alternada), foreign
+key e índice, sobra de fora:
+
+1. **CHECK constraint, ausente ou alterada** — não por escolha, por impossibilidade: `db.Model`
+   **lança** para `GetCheckConstraints()`, e o `IDesignTimeModel` que a exceção recomenda não é
+   deployado. Detalhe medido no bloco sobre `db.Model` mais abaixo. É a lacuna mais incômoda das
+   quatro, porque CHECK é onde vivem as guardas de dado irreparável.
+2. **Coluna alterada, renomeada ou com o tipo/escala trocado**, mantendo a tabela. `to_regclass`
+   só responde "a relação existe".
+3. **Definição alterada** de qualquer objeto que a sonda confere **por nome**: índice que virou
+   não-único, FK que perdeu o `RESTRICT`, CHECK com o predicado reescrito. A sonda detecta
+   **ausência**, nunca mudança de semântica — e comparar definição exigiria normalizar o texto
+   canonizado pelo Postgres (`= ANY (ARRAY[...])`, casts `::text`), que é a lista à mão por outro
+   caminho.
+4. **Corpo da função de uma trigger substituído**, com o nome intacto:
+   `CREATE OR REPLACE FUNCTION ... BEGIN RETURN NEW; END;` deixa a trigger em `pg_trigger`, a sonda
+   responde **Healthy**, e o `UPDATE` volta a passar em silêncio. Medido: `UPDATE 1`. *`DROP
+   FUNCTION` sem `CASCADE` não é vetor — o Postgres recusa enquanto a trigger existir.* Fica de
+   fora porque o objeto está **presente** e só o comportamento mudou: pegá-lo exigiria uma
+   definição esperada escrita à mão. E exige privilégio de dono de schema, a mesma classe que já
+   pode `ALTER TABLE ... DISABLE TRIGGER` — superfície que a decisão de "imutabilidade por trigger,
+   não por REVOKE" aceita explicitamente.
 
 **E o inventário do "não cobre" também é uma afirmação — tem que estar completo.** Na
 revisão seguinte, dropar a **trigger de imutabilidade** por fora deixou o `/health/ready`
@@ -570,6 +593,49 @@ has-pending-model-changes` sem mudanças, nenhuma DDL gerada pela anotação, e 
 idêntico com e sem ela.
 E note por que a sonda continua necessária mesmo com o metadado declarado: **`HasTrigger`
 registra intenção, não confere existência** — é exatamente a distinção da §10.18.
+
+**O QUE `db.Model` CARREGA E O QUE ELE NÃO CARREGA — e a diferença não é adivinhável, é por
+categoria.** `db.Model` é o modelo **read-optimized**: ele guarda o que o pipeline de query e de
+`SaveChanges` precisa em runtime, e **descarta metadado que só serve para gerar migration**.
+Estender a sonda "para tudo que está no modelo" bate nessa parede sem aviso de compilação.
+
+Medido no F3 da `custodia` (2026-09-10), com o schema aplicado e a sonda instanciada direto:
+
+| derivação de `db.Model` | runtime |
+|---|---|
+| `GetEntityTypes()` → `GetTableName()` | **funciona** |
+| `GetDeclaredTriggers()` | **funciona** |
+| `GetKeys()` → `GetName()` (PK e alternada) | **funciona** |
+| `GetForeignKeys()` → `GetConstraintName()` | **funciona** |
+| `GetIndexes()` → `GetDatabaseName()` | **funciona** |
+| `GetCheckConstraints()` | **LANÇA** |
+
+```
+System.InvalidOperationException: The requested configuration is not stored in the
+read-optimized model, please use 'DbContext.GetService<IDesignTimeModel>().Model'.
+   at RelationalEntityTypeExtensions.GetCheckConstraints(IEntityType entityType)
+```
+
+**E a alternativa que a própria exceção recomenda não existe em runtime.** Conferido por reflexão
+nos dois assemblies que são deployados:
+
+```
+Microsoft.EntityFrameworkCore=NAO    Microsoft.EntityFrameworkCore.Relational=NAO
+```
+
+`IDesignTimeModel` vem em `Microsoft.EntityFrameworkCore.Design`, que o `.csproj` referencia com
+`<PrivateAssets>all</PrivateAssets>` — build-time, deliberadamente fora do runtime. Ou seja: pôr
+**nome de CHECK** numa sonda de readiness custa deployar o pacote de design em produção, ou
+escrever a lista à mão, que é o que este item proíbe. **Fica de fora, e fica de fora declarado.**
+
+*Duas armadilhas de método que isto ensinou.* A primeira: o `catch` externo da sonda transforma
+essa exceção em `Unhealthy("Falha ao verificar...")` — direção segura de falhar, e que **mascara o
+motivo**: doze testes caíram juntos, inclusive o de schema íntegro, e o sintoma não apontava para a
+camada culpada. Ao estender uma sonda, instancie-a direto num teste e imprima
+`result.Description` **e** `result.Exception` antes de debugar pelo status code. A segunda:
+`strings` numa DLL **não** prova que o tipo está lá — `IDesignTimeModel` aparece no
+`Microsoft.EntityFrameworkCore.dll` porque é o texto da **mensagem de erro**. Prove por reflexão
+(`Assembly.GetType`), não por busca de texto.
 
 **Terceiro membro da família, e ele é o mais tentador dos três: `migrations
 has-pending-model-changes` NÃO prova que a migration produz o schema do modelo.** Ele compara o

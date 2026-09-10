@@ -38,8 +38,36 @@ public sealed class PendingMigrationsHealthCheck(AppDbContext db) : IHealthCheck
                     "ter sido removida por fora, com UPDATE/DELETE deixando de ser bloqueados.");
             }
 
+            var chavesAusentes = await ChavesAusentesAsync(cancellationToken);
+
+            if (chavesAusentes.Count > 0)
+            {
+                return HealthCheckResult.Unhealthy(
+                    "Chave(s) primária(s) ou alternada(s) do modelo ausente(s) no schema físico " +
+                    $"(drift manual): {string.Join(", ", chavesAusentes)}.");
+            }
+
+            var fksAusentes = await ForeignKeysAusentesAsync(cancellationToken);
+
+            if (fksAusentes.Count > 0)
+            {
+                return HealthCheckResult.Unhealthy(
+                    "Foreign key(s) do modelo ausente(s) no schema físico (drift manual): " +
+                    $"{string.Join(", ", fksAusentes)}.");
+            }
+
+            var indicesAusentes = await IndicesAusentesAsync(cancellationToken);
+
+            if (indicesAusentes.Count > 0)
+            {
+                return HealthCheckResult.Unhealthy(
+                    "Índice(s) do modelo ausente(s) no schema físico (drift manual): " +
+                    $"{string.Join(", ", indicesAusentes)}.");
+            }
+
             return HealthCheckResult.Healthy(
-                "Nenhuma migration pendente; tabelas e triggers do modelo presentes no schema.");
+                "Nenhuma migration pendente; tabelas, triggers, chaves, foreign keys e " +
+                "índices do modelo presentes no schema.");
         }
         catch (Exception ex)
         {
@@ -96,5 +124,86 @@ public sealed class PendingMigrationsHealthCheck(AppDbContext db) : IHealthCheck
             .ToListAsync(cancellationToken);
 
         return triggersEsperados.Except(triggersExistentes).ToList();
+    }
+
+    private async Task<IReadOnlyList<string>> ChavesAusentesAsync(CancellationToken cancellationToken)
+    {
+        var chavesEsperadas = db.Model.GetEntityTypes()
+            .SelectMany(entidade => entidade.GetKeys())
+            .Select(chave => chave.GetName())
+            .Where(nome => nome is not null)
+            .Select(nome => nome!)
+            .Distinct()
+            .ToArray();
+
+        if (chavesEsperadas.Length == 0)
+        {
+            return [];
+        }
+
+        var chavesExistentes = await db.Database
+            .SqlQueryRaw<string>(
+                """
+                SELECT conname AS nome
+                FROM pg_constraint
+                WHERE contype IN ('p', 'u')
+                """)
+            .ToListAsync(cancellationToken);
+
+        return chavesEsperadas.Except(chavesExistentes).ToList();
+    }
+
+    private async Task<IReadOnlyList<string>> ForeignKeysAusentesAsync(CancellationToken cancellationToken)
+    {
+        var fksEsperadas = db.Model.GetEntityTypes()
+            .SelectMany(entidade => entidade.GetForeignKeys())
+            .Select(fk => fk.GetConstraintName())
+            .Where(nome => nome is not null)
+            .Select(nome => nome!)
+            .Distinct()
+            .ToArray();
+
+        if (fksEsperadas.Length == 0)
+        {
+            return [];
+        }
+
+        var fksExistentes = await db.Database
+            .SqlQueryRaw<string>(
+                """
+                SELECT conname AS nome
+                FROM pg_constraint
+                WHERE contype = 'f'
+                """)
+            .ToListAsync(cancellationToken);
+
+        return fksEsperadas.Except(fksExistentes).ToList();
+    }
+
+    private async Task<IReadOnlyList<string>> IndicesAusentesAsync(CancellationToken cancellationToken)
+    {
+        var indicesEsperados = db.Model.GetEntityTypes()
+            .SelectMany(entidade => entidade.GetIndexes())
+            .Select(indice => indice.GetDatabaseName())
+            .Where(nome => nome is not null)
+            .Select(nome => nome!)
+            .Distinct()
+            .ToArray();
+
+        if (indicesEsperados.Length == 0)
+        {
+            return [];
+        }
+
+        var indicesExistentes = await db.Database
+            .SqlQueryRaw<string>(
+                """
+                SELECT indexname AS nome
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                """)
+            .ToListAsync(cancellationToken);
+
+        return indicesEsperados.Except(indicesExistentes).ToList();
     }
 }
