@@ -2300,6 +2300,32 @@ para ela.
     coluna a coluna contra a 7.1 antes de implementar; se discordar de alguma, levante
     ANTES de escrever") — a enumeração de desvios descrevia o texto de então, não um teto
     de decisões.
+  - **OS DOZE CHECKs de `movimentos`, e os SETE que entram pela §10.21 e não pela §7.1.**
+    A DDL canônica não tem CHECK nenhum além do enum de `tipo`; os outros onze são desta
+    fase, pela assimetria da §10.21 (sair de um CHECK sobrando é `DROP CONSTRAINT`, uma
+    linha, sem rewrite; sair de um que faltou exige `DISABLE TRIGGER` e perícia manual).
+    Cinco são prescritos pelos critérios de pronto — `tipo_valido`, `ajuste_coerente`,
+    `estorno_nao_auto`, `ref_externa_nao_vazia`, `instrumento_caixa_valido`. Os **sete**
+    restantes entram por decisão, e os **três últimos** por um **achado grave de revisão
+    adversarial**, não por desenho: `valor_nao_negativo` (a convenção de sinal da V2, com
+    o `ajuste` como única exceção — e **não** endurecido para `≤ 0`, porque o estorno *de*
+    estorno reverte −600 com +600 e isso fecharia a última porta de correção),
+    `cupom_sem_quantidade` (sem ele `Σ qtd_delta = quantidade` fica falso e a reconciliação
+    do F7 alerta sem ter o que consertar), `cliente_id_nao_vazio` e
+    `instrumento_id_nao_vazio` (§10.24: normalize os identificadores **todos**, não um), e
+    os **três de borda** `ck_movimentos_{cliente_id,instrumento_id,ref_externa}_sem_espaco_nas_bordas`,
+    todos `x !~ '^\s|\s$'`.
+    **Os três de borda são o registro de um defeito, e é por isso que estão aqui e não só
+    no commit:** `lower(instrumento_id) NOT LIKE 'caixa:%'` deixava `' caixa:BRL'` entrar,
+    porque com espaço à esquerda o valor não casa com o prefixo, o antecedente do OR fica
+    verdadeiro, e ele é aceito **como se fosse id do Hub** — um segundo instrumento de
+    caixa, permanente. E o furo não era do caixa: `' td:tesouro-selic-2029 '` também
+    entrava, e aí são dois instrumentos do Hub para sempre. **Regex e não `x = btrim(x)`**,
+    porque `btrim(text)` no Postgres tira só o caractere espaço e o `Trim()` do .NET tira
+    tab e newline — com `btrim`, Domínio e banco dariam **vereditos opostos para a mesma
+    entrada**, que é a §10.24 literal. Consequência para o F4, já registrada na lista
+    fechada de `x-custodia-motivo`: a violação dos três entra como
+    **`identificador_com_espaco_na_borda`**.
   - **Decisão A, a metade irreversível:** `ref_estorno` NOT NULL quando `tipo = 'ajuste'`,
     e NULL obrigatório nos demais tipos, por CHECK; mais FK composta com `cliente_id`
     **e `instrumento_id`** (o ajuste não cruza cliente **nem instrumento**, V2),
@@ -2878,26 +2904,43 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
      registrado_em MANTEM o now(): la o default E o produtor do valor. A lista inteira, com
      o motivo de cada um, esta em DECISOES DESTA FASE, no corpo da fase.
 
-  2c. NOVE CHECKs em movimentos, e os quatro ultimos entram pela 10.21 (em append-only o
+  2c. DOZE CHECKs em movimentos, e os SETE ultimos entram pela 10.21 (em append-only o
      lado estrito e o reversivel): ck_movimentos_tipo_valido (os dez, predicado DERIVADO
      de TipoMovimento.All, nunca a lista escrita duas vezes); ck_movimentos_ajuste_coerente
      (BICONDICIONAL: (tipo = 'ajuste') = (ref_estorno IS NOT NULL));
      ck_movimentos_estorno_nao_auto; ck_movimentos_ref_externa_nao_vazia
      (btrim(ref_externa) <> ''); ck_movimentos_instrumento_caixa_valido (allow-list
-     derivada de InstrumentosCaixa, e o `lower()` NAO E OPCIONAL:
-     lower(instrumento_id) NOT LIKE 'caixa:%' OR instrumento_id IN
-     ('caixa:BRL','caixa:a_liquidar') — sem ele o LIKE e case-sensitive, `Caixa:BRL` nao
-     casa com o prefixo, o antecedente fica falso e o valor ENTRA como se fosse id do Hub,
-     que e o proprio defeito que o CHECK existe para fechar; o lower() vai SO na deteccao
-     do prefixo, e a comparacao da allow-list continua EXATA, porque baixar caixa
-     transformaria identidade de outro contexto (PADROES 10.43 e 10.24)); ck_movimentos_valor_nao_negativo
+     derivada de InstrumentosCaixa, e o `lower(btrim(...))` NAO E OPCIONAL:
+     lower(btrim(instrumento_id)) NOT LIKE 'caixa:%' OR instrumento_id IN
+     ('caixa:BRL','caixa:a_liquidar'). SAO DOIS VETORES, e cada um foi achado numa rodada
+     diferente. Sem o lower(), o LIKE e case-sensitive e `Caixa:BRL` nao casa com o
+     prefixo; sem o btrim(), ` caixa:BRL` nao casa TAMPOUCO, porque comeca com espaco.
+     Nos dois casos o antecedente do OR fica verdadeiro e o valor ENTRA como se fosse id
+     do Hub — um SEGUNDO instrumento de caixa, permanente, que e o proprio defeito que o
+     CHECK existe para fechar. Assimetria util: espaco A DIREITA (`caixa:BRL `) ja era
+     recusado, porque o prefixo casa e o IN falha; so o da ESQUERDA driblava. E lower() e
+     btrim() vao SO na deteccao do prefixo — a comparacao da allow-list continua EXATA,
+     porque baixar caixa ou trimar ali transformaria identidade de outro contexto
+     (PADROES 10.43 e 10.24)); ck_movimentos_valor_nao_negativo
      (tipo = 'ajuste' OR valor_financeiro >= 0 — e NAO endureca o ajuste para <= 0, porque
      o estorno DE estorno reverte um ajuste de -600 com +600 e essa guarda fecharia a
      ultima porta de correcao); ck_movimentos_cupom_sem_quantidade
      (tipo <> 'cupom' OR qtd_delta = 0 — senao I4 fica falso e a reconciliacao do F7
      alerta sem ter o que consertar); ck_movimentos_cliente_id_nao_vazio e
      ck_movimentos_instrumento_id_nao_vazio (a 10.24 manda normalizar os identificadores
-     TODOS, nao um: em append-only "cli-1" e "cli-1 " sao dois clientes para sempre).
+     TODOS, nao um: em append-only "cli-1" e "cli-1 " sao dois clientes para sempre); e os
+     TRES DE BORDA — ck_movimentos_cliente_id_sem_espaco_nas_bordas,
+     ck_movimentos_instrumento_id_sem_espaco_nas_bordas e
+     ck_movimentos_ref_externa_sem_espaco_nas_bordas —, todos `x !~ '^\s|\s$'`, um por
+     coluna de identificador. Eles fecham a CLASSE do vetor de espaco, e nao so o caixa:
+     ` td:tesouro-selic-2029 ` tambem entrava, e ai sao dois instrumentos do Hub para
+     sempre. E O REGEX NAO E CAPRICHO — NAO use `x = btrim(x)`: `btrim(text)` no Postgres
+     tira SO O CARACTERE ESPACO por default, enquanto o Trim() do .NET tira tab, newline e
+     CR. Com btrim, `'td:x' + TAB` PASSARIA no banco e seria trimado pelo Dominio, e
+     Dominio e banco dariam VEREDITOS OPOSTOS para a mesma entrada, que e o modo de falha
+     que a 10.24 registra. Conferido: `textregexne`, `lower` e `btrim` tem
+     provolatile = 'i' (IMMUTABLE), logo os tres sao legais em CHECK — ao contrario de
+     now()/current_date, que e o que obriga a guarda de data a ser trigger.
      NAO ponha CHECK em posicao_corrente: as tres colunas sao gravadas na MESMA TRANSACAO
      do livro pelo handler do F4, e um CHECK numa projecao DESCARTAVEL transformaria
      defeito de projecao em rollback da escrita do LIVRO, que nao e descartavel.
@@ -3075,7 +3118,21 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   Hub (`'td:tesouro-selic-2029'`) **aceito**. Exercitar só `'caixa:brl'` é o antipadrão da
   §10.19 em forma de dado — verde num caixa não é evidência sobre os outros —, e é
   exatamente o teste que **passava** com o predicado sem `lower()`, que aceita `Caixa:BRL`
-  por engano (§10.43);
+  por engano (§10.43).
+  **E o plural tem DOIS eixos, não um:** além das variações de caixa, `' caixa:BRL'`,
+  `'  caixa:BRL'` e `' caixa:brl'` **recusados** — o eixo do **espaço**, que passou pela
+  primeira rodada inteira porque o critério só listava o eixo do caixa. `'caixa:BRL '`
+  (espaço à direita) já era recusado antes da correção, e por isso **não** serve de prova:
+  o prefixo casa e o `IN` falha. **O que separa as duas implementações é o espaço à
+  ESQUERDA**, e ele tem de estar no critério nomeadamente;
+  (n2) **os TRÊS CHECKs de borda**, um por coluna de identificador, com controle negativo e
+  positivo: `instrumento_id`, `cliente_id` e `ref_externa` com espaço **à esquerda**, **à
+  direita**, e com **TAB** (`E'td:x\t'`, `E'\ttd:x'`) **recusados**; os mesmos valores sem
+  espaço **aceitos**. O caso do **TAB** é o que separa o regex de um `x = btrim(x)`:
+  `btrim(text)` no Postgres tira **só o caractere espaço**, o `Trim()` do .NET tira tab e
+  newline, então com `btrim` o banco aceitaria o que o Domínio trimaria — Domínio e banco
+  com **vereditos opostos para a mesma entrada**, que é o modo de falha que a §10.24
+  registra. Sem o caso do TAB, as duas implementações empatam no teste;
   (o) `INSERT` de `tipo = 'aporte'` **aceito**, com `instrumento_id` **do título** e
   `qtd_delta > 0` (é a prova de que o desvio por correção da V1 chegou ao banco e de que o
   `aporte` não virou linha de caixa, que era o erro da versão anterior deste arquivo);
@@ -3240,14 +3297,28 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
     **`origem_recurso_ausente`** e **`origem_recurso_invalida`** (os dois da **V6** do F3: o
     primeiro quando `valorOrigemSaldo` não vem num `aplicacao`/`aporte` — e ausente **não é
     zero** —, o segundo quando ele vem não-decimal, negativo, ou maior que o
-    `valorFinanceiro`). **São DOZE nesta fase, e a lista é fechada e sem default**; duas fases
+    `valorFinanceiro`), e **`identificador_com_espaco_na_borda`** (o terceiro que vem do
+    schema do F3, e o único que nasce de uma **constraint** e não de uma leitura do payload:
+    os três CHECKs `ck_movimentos_*_sem_espaco_nas_bordas` rejeitam `cliente_id`,
+    `instrumento_id` ou `ref_externa` com espaço, tab ou newline na borda. **O caminho não é
+    hipotético e não é um erro nosso:** se Operações publicar um `tradeId` com espaço na
+    borda, a `ref_externa` do movimento **principal** de todas as famílias da V3 é o
+    `tradeId` **nu**, sem papel nem perna — então o espaço cai na borda dela e o CHECK
+    dispara. Como as linhas do fato nascem na **mesma transação**, nada é gravado e a chave
+    de dedupe **não é consumida**, o que preserva o I13; o que faltava era o **nome**, sem o
+    qual o handler do F4 deixaria essa `PostgresException` cair no tratamento genérico —
+    500 em vez de estacionar legível. *Nas linhas **derivadas** (`ir:<tradeId>`,
+    `<tradeId>:brl`) o mesmo espaço fica **interno** e não é pego por este CHECK: é a linha
+    nua que fecha o caminho, e é por isso que ela existe em toda família.*).
+    **São TREZE nesta fase, e a lista é fechada e sem default**; duas fases
     seguintes acrescentam **um valor cada**, e os dois já estão nomeados aqui para a regra
     "sem default" não ser furada por uma fase que só diz "com motivo nomeado": o **F7**
     acrescenta **`intervalo_acima_do_teto`** (o handler de `eod.ready` recusando um intervalo
     de materialização acima do teto configurado, em vez de entrar em laço de reentrega que
-    nunca fecha) e o **F9** acrescenta **`acao_desconhecida`**. **Com os dois, são CATORZE no
+    nunca fecha) e o **F9** acrescenta **`acao_desconhecida`**. **Com os dois, são QUINZE no
     roadmap inteiro** — recontados contra este arquivo, não copiados. *Eram dez e doze até
-    2026-09-09; a V6 acrescentou dois, e a recontagem é o próprio procedimento que o
+    2026-09-09; a V6 acrescentou dois, e os CHECKs de borda do F3 acrescentaram o décimo
+    terceiro em 2026-09-10. A recontagem é o próprio procedimento que o
     parágrafo abaixo exige — uma lista declarada fechada que cresce em um lugar só é uma
     lista com default informal.* Os dois últimos a entrar,
     com a decisão que os criou: **`estorno_divergente`** é a dispensa declarada do estorno
@@ -3765,11 +3836,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      origem_recurso_ausente (valorOrigemSaldo faltando num aplicacao/aporte — AUSENTE NAO
      E ZERO) e origem_recurso_invalida (nao-decimal, negativo, ou maior que o
      valorFinanceiro). Os dois vem da V6 do F3.
-     SAO DOZE NESTA FASE. A LISTA E FECHADA E SEM DEFAULT; duas fases seguintes acrescentam
+     E identificador_com_espaco_na_borda, que vem do SCHEMA do F3 e nao de leitura de
+     payload: os tres CHECKs ck_movimentos_*_sem_espaco_nas_bordas rejeitam cliente_id,
+     instrumento_id ou ref_externa com espaco, tab ou newline na borda. O caminho: se
+     Operacoes publicar tradeId com espaco na borda, a ref_externa do movimento PRINCIPAL
+     de toda familia da V3 e o tradeId NU, entao o espaco cai na borda dela e o CHECK
+     dispara. As linhas do fato nascem na MESMA TRANSACAO, entao nada e gravado e a chave
+     de dedupe NAO e consumida (I13 preservado) — o que faltava era o NOME, sem o qual a
+     PostgresException cai no tratamento genERICO e vira 500 em vez de estacionar legivel.
+     SAO TREZE NESTA FASE. A LISTA E FECHADA E SEM DEFAULT; duas fases seguintes acrescentam
      UM VALOR CADA, os dois ja nomeados aqui: o F7 acrescenta intervalo_acima_do_teto (o
      handler de eod.ready recusando intervalo de materializacao acima do teto, em vez de
      entrar em laco de reentrega que nunca fecha) e o F9 acrescenta acao_desconhecida. COM
-     OS DOIS, SAO CATORZE NO ROADMAP INTEIRO.
+     OS DOIS, SAO QUINZE NO ROADMAP INTEIRO.
      Os dois ultimos a entrar, com a decisao que os criou: `estorno_divergente` e a
      dispensa declarada do estorno na V2 do F3 (os tres campos proprios do payload sao
      CONFERIDOS contra o movimento original); `retry_indisponivel` e o ramo de CONFIRM
@@ -3941,7 +4020,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
       (-> estorno_divergente), APLICACAO/APORTE SEM valorOrigemSaldo
       (-> origem_recurso_ausente; AUSENTE NAO E ZERO), APLICACAO/APORTE COM
       valorOrigemSaldo nao-decimal, negativo ou MAIOR QUE O valorFinanceiro
-      (-> origem_recurso_invalida), envelope `v` nao
+      (-> origem_recurso_invalida), tradeId OU clienteId OU instrumentoId COM ESPACO, TAB
+      OU NEWLINE NA BORDA (-> identificador_com_espaco_na_borda; os tres CHECKs de borda do
+      schema do F3 disparam na linha PRINCIPAL, cuja ref_externa e o tradeId nu, e como as
+      linhas do fato nascem na mesma transacao nada e gravado e a chave de dedupe NAO e
+      consumida), envelope `v` nao
       suportado (-> versao_nao_suportada), ou decimal fora da escala da coluna. Cada um
       com desfecho NOMEADO e DISTINGUIVEL — nunca "algo deu errado", e nunca dois casos
       com o mesmo nome.

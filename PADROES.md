@@ -1505,10 +1505,43 @@ de `now()`/`current_date`, que é o que obriga a guarda de data a ser trigger (�
 comportamento: aceita `caixa:BRL`, `caixa:a_liquidar` e um id do Hub (`td:tesouro-selic-2029`);
 recusa `caixa:brl`, `Caixa:BRL`, `CAIXA:BRL`, `caixa:` (prefixo sem sufixo) e `caixa:USD`.
 
-**Guarda:** para toda allow-list com detecção por prefixo, o teste tem de exercitar **as variações
-de caixa do prefixo** — minúsculo, capitalizado e maiúsculo —, não só a que motivou a constraint.
-Uma variação só é o antipadrão da §10.19 em forma de dado: verde num caixa não é evidência sobre os
-outros. E inclua `'prefixo:'` puro, que é o caso que nenhum autor lembra.
+**SEGUNDO VETOR, achado na rodada seguinte — e a versão anterior deste item ensinava uma receita
+que não o previne.** `lower()` fecha o eixo do caixa e **não** fecha o do espaço:
+`lower(' caixa:BRL')` é `' caixa:brl'`, que **não** começa com `'caixa:'`, então o antecedente fica
+verdadeiro outra vez e o valor entra pela mesma porta. Quem seguisse a receita "ponha `lower()` na
+detecção" continuaria com o furo. Verificado contra Postgres 16: `' caixa:BRL'`, `'  caixa:BRL'` e
+`' caixa:brl'` **aceitos**; e a mesma falha atinge id que não é do domínio —
+`' td:tesouro-selic-2029 '` entra e vira um segundo instrumento **para sempre**, que é a §10.24
+literal. Assimetria que vale saber: espaço **à direita** já era recusado (o prefixo casa e o `IN`
+falha); só o da **esquerda** dribla.
+
+A forma completa põe **os dois** do lado da detecção — `lower(btrim(instrumento_id)) NOT LIKE
+'prefixo:%'` — e, melhor que isso, soma um CHECK de borda **independente** por coluna de
+identificador, que fecha a classe em vez do sintoma:
+
+```sql
+CHECK (instrumento_id !~ '^\s|\s$')
+```
+
+**REGEX, não `x = btrim(x)`, e a razão não se adivinha:** `btrim(text)` no Postgres tira **só o
+caractere espaço** por default, enquanto `Trim()` no .NET tira tab, newline e CR. Com `btrim`,
+`'td:x' + TAB` **passa** no banco e é trimado pelo Domínio — Domínio e banco dando **vereditos
+opostos para a mesma entrada**, que é exatamente o modo de falha da §10.24. `textregexne` também é
+`provolatile = 'i'`, logo o regex é legal em CHECK.
+
+**Guarda:** para toda allow-list com detecção por prefixo, o teste tem de exercitar **os dois
+eixos**: as **variações de caixa** do prefixo — minúsculo, capitalizado, maiúsculo — e as de
+**espaço** — à esquerda, à direita e **TAB** —, não só a que motivou a constraint. Uma variação só
+é o antipadrão da §10.19 em forma de dado: verde num caixa não é evidência sobre os outros, e verde
+no caixa não é evidência **nenhuma** sobre o espaço. O caso do **TAB** é o único que separa o regex
+de um `btrim`; sem ele as duas implementações empatam. E inclua `'prefixo:'` puro, que é o caso que
+nenhum autor lembra.
+
+*Nota de método sobre este item:* ele nasceu com um vetor e precisou de um segundo. Item de catálogo
+que ensina uma **receita** ("ponha `lower()`") envelhece pior que item que ensina o **critério**
+("a detecção do domínio é a metade frágil; enumere os vetores que a fazem falhar"), porque a receita
+parece completa. Ao escrever guarda de catálogo, prefira o critério e liste as receitas como
+instâncias dele.
 
 **Onde isto NÃO se aplica, e a distinção é a da §10.24:** a allow-list em si continua comparando
 **exato**. Baixar caixa no lado comparado transformaria o valor, e o valor é identidade de outro
