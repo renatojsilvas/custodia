@@ -2863,8 +2863,13 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
      (BICONDICIONAL: (tipo = 'ajuste') = (ref_estorno IS NOT NULL));
      ck_movimentos_estorno_nao_auto; ck_movimentos_ref_externa_nao_vazia
      (btrim(ref_externa) <> ''); ck_movimentos_instrumento_caixa_valido (allow-list
-     derivada de InstrumentosCaixa: instrumento_id NOT LIKE 'caixa:%' OR instrumento_id IN
-     ('caixa:BRL','caixa:a_liquidar')); ck_movimentos_valor_nao_negativo
+     derivada de InstrumentosCaixa, e o `lower()` NAO E OPCIONAL:
+     lower(instrumento_id) NOT LIKE 'caixa:%' OR instrumento_id IN
+     ('caixa:BRL','caixa:a_liquidar') — sem ele o LIKE e case-sensitive, `Caixa:BRL` nao
+     casa com o prefixo, o antecedente fica falso e o valor ENTRA como se fosse id do Hub,
+     que e o proprio defeito que o CHECK existe para fechar; o lower() vai SO na deteccao
+     do prefixo, e a comparacao da allow-list continua EXATA, porque baixar caixa
+     transformaria identidade de outro contexto (PADROES 10.43 e 10.24)); ck_movimentos_valor_nao_negativo
      (tipo = 'ajuste' OR valor_financeiro >= 0 — e NAO endureca o ajuste para <= 0, porque
      o estorno DE estorno reverte um ajuste de -600 com +600 e essa guarda fecharia a
      ultima porta de correcao); ck_movimentos_cupom_sem_quantidade
@@ -3043,7 +3048,13 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   anterior **aceito** (controle positivo — sem ele a constraint poderia estar fechando a
   última porta de correção, que é a exceção que a §10.21 nomeia);
   (n) **V4:** `INSERT` com `instrumento_id = 'caixa:brl'` (caixa baixa) **recusado** pelo
-  CHECK, e `'caixa:BRL'` e `'caixa:a_liquidar'` **aceitos** — controle negativo e positivo;
+  CHECK, e `'caixa:BRL'` e `'caixa:a_liquidar'` **aceitos** — controle negativo e positivo.
+  **E o negativo é plural, não singular:** `'Caixa:BRL'` (capitalizado), `'CAIXA:BRL'`
+  (maiúsculo), `'caixa:'` (prefixo puro) e `'caixa:USD'` **também recusados**, mais um id do
+  Hub (`'td:tesouro-selic-2029'`) **aceito**. Exercitar só `'caixa:brl'` é o antipadrão da
+  §10.19 em forma de dado — verde num caixa não é evidência sobre os outros —, e é
+  exatamente o teste que **passava** com o predicado sem `lower()`, que aceita `Caixa:BRL`
+  por engano (§10.43);
   (o) `INSERT` de `tipo = 'aporte'` **aceito**, com `instrumento_id` **do título** e
   `qtd_delta > 0` (é a prova de que o desvio por correção da V1 chegou ao banco e de que o
   `aporte` não virou linha de caixa, que era o erro da versão anterior deste arquivo);

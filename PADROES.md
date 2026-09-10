@@ -571,6 +571,32 @@ idêntico com e sem ela.
 E note por que a sonda continua necessária mesmo com o metadado declarado: **`HasTrigger`
 registra intenção, não confere existência** — é exatamente a distinção da §10.18.
 
+**Terceiro membro da família, e ele é o mais tentador dos três: `migrations
+has-pending-model-changes` NÃO prova que a migration produz o schema do modelo.** Ele compara o
+modelo com o **`ModelSnapshot`** — e o snapshot é **gerado a partir do modelo**, então os dois
+concordam por construção. O que fica de fora é justamente o artefato que o banco realmente
+executa: o `Up()`, que **se edita à mão** sempre que a migration precisa de algo que o EF não
+gera (trigger, função, `Sql` cru). Um `Up()` divergente do modelo passa por
+`has-pending-model-changes` **sem uma palavra**.
+
+Achado no F3 da `custodia` (2026-09-10), e não como hipótese: ao corrigir o predicado de um CHECK
+na Configuration, a `Configuration`, o `.Designer.cs` e o `ModelSnapshot` ficaram com o texto
+novo e o `Up()` com o antigo por uma janela — `has-pending-model-changes` respondia "No changes"
+com o banco recebendo o predicado velho. (Ali a divergência fechou porque a migration foi
+regenerada; o ponto é que **nada** a teria denunciado.) Corolário de despacho: **mutar a
+`Configuration` para provar um teste não tem efeito nenhum em runtime** quando a fixture aplica
+`MigrateAsync()` sobre migration existente — `OnModelCreating` não é consultado para produzir DDL
+de migration já gerada, e a mutação tem de ser no `Up()`.
+
+**Guarda:** a sonda de `db.Model` já fecha o caso de **tabela e trigger** declaradas no modelo e
+ausentes no banco construído pela migration — é a razão de ela existir. Para **CHECK**, a
+comparação textual direta é mais caro do que parece: o `pg_get_constraintdef` devolve o predicado
+**canonizado** (`= ANY (ARRAY[...])`, casts `::text`, parênteses reescritos), então comparar com o
+texto de `HasCheckConstraint` exige normalizar N predicados heterogêneos, não uma consulta de uma
+linha. O que **é** barato e resolve na prática: provar cada CHECK por **comportamento** (`INSERT`
+aceito/recusado) contra o banco que a **migration** construiu, e comparar por **conjunto
+parseado** — nunca por string — os CHECKs cuja lista tem dono no Domínio.
+
 **Erro que este item quase carregou:** a primeira versão deste texto afirmava que "o EF não
 tem metadado de trigger, então não dá para derivar de `db.Model`". Falso — `HasTrigger`
 existe desde o EF Core 7, e a versão em uso aqui é a 8.0.11. Ou seja, a regra escrita para
