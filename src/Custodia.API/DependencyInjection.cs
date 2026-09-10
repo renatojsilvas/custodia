@@ -20,6 +20,7 @@ public static class DependencyInjection
         });
         services.AddHealthChecks()
             .AddDbContextCheck<AppDbContext>()
+            .AddCheck<PendingMigrationsHealthCheck>("migrations-pendentes")
             .ForwardToPrometheus();
         services.AddSingleton<IDatabaseInitializer, DatabaseInitializer>();
         services.AddScoped<IDatabaseMigrator, EfCoreDatabaseMigrator>();
