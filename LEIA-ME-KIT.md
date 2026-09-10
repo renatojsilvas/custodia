@@ -1214,3 +1214,95 @@ produtor tinha 0 linhas. A fase era preventiva.
 Errar para o lado do alarme parece o lado seguro e não é: ele **desloca prioridade**, e o
 número inventado é herdado pela fase seguinte como se fosse medido. Antes de escrever
 "perdemos", abra a tabela que registra o que foi publicado.
+
+## O critério de Pronto que passa com a implementação errada — e o sinal do fuso é onde isso acontece
+
+Achado ao abrir o F3 da `custodia` (2026-09-10), no meu próprio texto, antes de existir código.
+
+O F3 decidiu o fuso de negócio (`America/Sao_Paulo`) e escreveu, como "o teste que **separa** as
+duas implementações": *com a sessão do Postgres em `SET TIME ZONE 'UTC'` e o relógio dentro da
+janela 00:00–03:00 BRT, o `INSERT` com a data BRT de hoje tem de ser **aceito** — com
+`current_date` ele seria recusado como futuro.* A `PADROES` §10.34 dizia o mesmo.
+
+Está errado duas vezes, e uma conferência de dez segundos contra o banco mostra:
+
+```
+utc = 2026-09-10 10:16:42     brt = 2026-09-10 07:16:42
+```
+
+`America/Sao_Paulo` é UTC**−3**: o relógio BRT lê **mais cedo**, e o dia BRT vira **três horas
+depois** do dia UTC. Logo (1) a janela em que as datas divergem é **21:00–24:00 BRT**, não
+00:00–03:00 BRT; e (2) nela `data_utc = D` e `data_brt = D − 1`, então `current_date` em UTC
+**nunca é estrito demais — é permissivo demais**: ele aceita `data_evento` de *amanhã em BRT*, que
+é justamente o dado sem conserto que a guarda existe para barrar.
+
+**O que isso custava, e é o motivo de estar aqui:** com o sinal invertido, o critério vira
+**tautologia**. Na janela real `hoje_BRT = D − 1 ≤ current_date = D`, então a implementação com
+`current_date` **também aceita** — o teste fecha verde sobre exatamente o defeito que ele foi
+escrito para pegar. É a §10.22 (afirmar cobertura que não existe) dentro do item que a invoca, e
+nenhuma das duas revisões estava apontada para o texto do condutor.
+
+**Duas regras saem disso.**
+
+A primeira é sobre fuso: **o sinal de um offset não se deduz, se mede.** "BRT está três horas
+atrás de UTC" e "o dia BRT vira antes" soam compatíveis e são opostos. Antes de escrever qualquer
+critério que nomeie uma janela de relógio, rode a comparação no motor que vai decidir o dado —
+`SELECT (now() AT TIME ZONE '<fuso>')::date, (now() AT TIME ZONE 'UTC')::date` — e cole a saída no
+arquivo. O custo é um container descartável.
+
+A segunda é mais geral, e vale para todo Pronto: **um critério que depende de o relógio estar numa
+janela não é um critério, é uma loteria.** `now()` não é injetável de fora do banco, e a janela
+dura três horas por dia: a suíte só discrimina de madrugada, e verde às 10:00 não é evidência
+nenhuma. A saída não é esperar pela janela — é achar a alavanca que você **controla**. Aqui ela
+existe e é barata: `current_date` **respeita** `SET TIME ZONE` e `(now() AT TIME ZONE '<fuso>')::date`
+**não**, então mover a **sessão** separa as duas implementações a qualquer hora. Com duas direções
+(`Pacific/Kiritimati` um dia à frente, `Etc/GMT+12` um dia atrás) e a **precondição afirmada dentro
+do teste**, as janelas se sobrepõem e cobrem as 24 h — e o teste **falha** quando a precondição não
+vale, em vez de passar por vacuidade, que é o defeito de novo com outra roupa.
+
+## A lista de desvios que o próprio prompt manda ampliar não pode ser declarada fechada
+
+Mesmo F3, mesma abertura. O corpo da fase enumerava **dois** "desvios por correção" da DDL
+canônica (`aporte` no enum, `ref_externa` NOT NULL) — e o bloco de prompt da mesma fase mandava,
+literalmente, *"confira coluna a coluna contra a 7.1 antes de implementar; se discordar de alguma,
+levante ANTES de escrever"*.
+
+As duas frases não convivem. Fazer a varredura que a segunda pede achou **mais dois** (a coluna de
+valor era nullable na DDL e não tem uma única linha sem valor no vocabulário fechado; e uma coluna
+`NOT NULL DEFAULT 0` numa tabela append-only converte "esqueci a coluna no SQL cru" em zero gravado
+em silêncio). Um executor obediente teria lido "os desvios são dois" como teto e implementado a DDL
+literal, com o segundo defeito passando por fidelidade.
+
+**Regra:** enumeração de desvios **descreve o estado do texto**, nunca autoriza o próximo leitor a
+parar de procurar. Escreva-a com a data e com o motivo de cada item, num lugar só — para poder ser
+conferida inteira —, e nunca com "são N". E se a fase manda varrer, o resultado da varredura tem de
+ter para onde ir: no F3 os dois desvios novos viraram **critério de Pronto executável** (o `INSERT`
+que omite a coluna é recusado), não nota de rodapé.
+
+## Agente que muta para provar, e depois "volta ao limpo", apaga o trabalho do agente paralelo
+
+Erro meu no F3 da `custodia`, pego antes de morder — e é a variante do "rodar o revisor contra
+entrega não commitada" que sobrevive ao commit.
+
+Despachei duas subtarefas em paralelo com posse de arquivos disjunta (uma na sonda de
+`/health/ready`, outra nos testes de schema) e pedi à segunda uma **prova por mutação**: mute a
+implementação, confirme que o teste falha, desfaça. O critério de "desfiz" que eu escrevi foi
+*"confirme com `git status --short` que `src/` está limpo"*.
+
+`src/` **não** estava limpo, e não podia estar: a outra subtarefa tinha dois arquivos novos e um
+editado lá, **não commitados**. Um `git checkout -- src/` ou um `git stash` para satisfazer o meu
+critério apagaria o trabalho dela em silêncio — o arquivo continua existindo, compila, e os testes
+passam.
+
+**Regra:** restauração pós-mutação é **por caminho**, com o commit de referência explícito
+(`git checkout <sha> -- <arquivo>`), e a conferência é `git diff <sha> --stat -- <só os diretórios
+que são do agente>`. Nunca `-- src/`, nunca `git status` como critério de limpeza, enquanto houver
+qualquer trabalho não commitado de outro agente na árvore. E o corolário de despacho: **antes de
+pedir prova por mutação, commite** — o commit é o que dá ao agente um ponto de restauração que não
+depende de o resto da árvore estar quiescente.
+
+Segundo item do mesmo despacho, mais barato e igualmente meu: dois agentes rodando `dotnet build`
+na mesma solução travam arquivo em `obj/`, e o erro (`MSB3021`, "being used by another process")
+chega ao executor como se fosse defeito do código dele. Avise no prompt que existe build
+concorrente, diga para repetir em vez de consertar, e **proíba `dotnet clean`** — que é o conserto
+"óbvio" e derruba a compilação do outro no meio.

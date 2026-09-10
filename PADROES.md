@@ -1376,3 +1376,49 @@ fase escreveu para o mesmo alvo. O primeiro era **linhas no corpo do endpoint** 
 objeto de sonda; o segundo, **séries ativas do job** na nuvem, incluindo as meta-séries de
 scrape (`up`, `scrape_*`). Só o segundo conta contra o teto do plano. Ao registrar custo de
 cardinalidade, diga **qual** grandeza você mediu, onde, e com quantos objetos.
+
+---
+
+### 10.43. Allow-list por CHECK que detecta o próprio domínio por prefixo tem de detectá-lo case-insensitive
+
+Quando um CHECK tem a forma *"se o valor pertence ao meu domínio, então ele é um destes N"*, a
+detecção do domínio é a metade frágil, e ela é o oposto da que parece. `LIKE 'prefixo:%'` é
+**case-sensitive**: um valor com o prefixo escrito em outro caixa **não casa**, o antecedente fica
+falso, e o valor **entra sem passar pela allow-list** — pela porta que o CHECK existe para fechar.
+
+**Por quê:** no F3 da `custodia`, `movimentos.instrumento_id` guarda o id do Hub **cru** (só
+`Trim()`, sem `ToLowerInvariant`, porque canonizar identidade de outro contexto é presumir regra
+alheia — §10.24). Caixa é instrumento local, com dois ids permitidos, e o CHECK escrito foi:
+
+```sql
+instrumento_id NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')
+```
+
+Ele rejeita `caixa:brl` — que era o caso que motivou a constraint — e **aceita** `Caixa:BRL` e
+`CAIXA:BRL`, porque nenhum dos dois casa com `'caixa:%'`. O efeito é exatamente o que a constraint
+prevenia: um **segundo** instrumento de caixa numa tabela append-only, para sempre, com o
+patrimônio somando duas linhas onde havia uma. A allow-list parecia fechada e tinha três buracos,
+e o teste que existia (`'caixa:brl'` recusado) passava.
+
+A forma correta põe o `lower()` **no lado da detecção** e mantém a comparação da allow-list
+**exata**, porque os ids canônicos têm caixa significativo:
+
+```sql
+lower(instrumento_id) NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')
+```
+
+Verificado contra Postgres 16 antes de adotar, e os dois pontos precisam ser conferidos juntos:
+`lower(text)` tem `provolatile = 'i'` (**IMMUTABLE**), logo é legal dentro de CHECK — ao contrário
+de `now()`/`current_date`, que é o que obriga a guarda de data a ser trigger (§10.34). E o
+comportamento: aceita `caixa:BRL`, `caixa:a_liquidar` e um id do Hub (`td:tesouro-selic-2029`);
+recusa `caixa:brl`, `Caixa:BRL`, `CAIXA:BRL`, `caixa:` (prefixo sem sufixo) e `caixa:USD`.
+
+**Guarda:** para toda allow-list com detecção por prefixo, o teste tem de exercitar **as variações
+de caixa do prefixo** — minúsculo, capitalizado e maiúsculo —, não só a que motivou a constraint.
+Uma variação só é o antipadrão da §10.19 em forma de dado: verde num caixa não é evidência sobre os
+outros. E inclua `'prefixo:'` puro, que é o caso que nenhum autor lembra.
+
+**Onde isto NÃO se aplica, e a distinção é a da §10.24:** a allow-list em si continua comparando
+**exato**. Baixar caixa no lado comparado transformaria o valor, e o valor é identidade de outro
+contexto. `lower()` entra **só** na pergunta "isto é do meu domínio?", nunca na pergunta "isto é
+qual dos meus valores?".
