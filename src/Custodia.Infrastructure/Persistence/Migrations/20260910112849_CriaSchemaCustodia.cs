@@ -49,11 +49,14 @@ namespace Custodia.Infrastructure.Persistence.Migrations
                     table.UniqueConstraint("ux_movimentos_id_cliente_instrumento", x => new { x.id, x.cliente_id, x.instrumento_id });
                     table.CheckConstraint("ck_movimentos_ajuste_coerente", "(tipo = 'ajuste') = (ref_estorno IS NOT NULL)");
                     table.CheckConstraint("ck_movimentos_cliente_id_nao_vazio", "btrim(cliente_id) <> ''");
+                    table.CheckConstraint("ck_movimentos_cliente_id_sem_espaco_nas_bordas", "cliente_id !~ '^\\s|\\s$'");
                     table.CheckConstraint("ck_movimentos_cupom_sem_quantidade", "tipo <> 'cupom' OR qtd_delta = 0");
                     table.CheckConstraint("ck_movimentos_estorno_nao_auto", "ref_estorno IS NULL OR ref_estorno <> id");
-                    table.CheckConstraint("ck_movimentos_instrumento_caixa_valido", "lower(instrumento_id) NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')");
+                    table.CheckConstraint("ck_movimentos_instrumento_caixa_valido", "lower(btrim(instrumento_id)) NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')");
                     table.CheckConstraint("ck_movimentos_instrumento_id_nao_vazio", "btrim(instrumento_id) <> ''");
+                    table.CheckConstraint("ck_movimentos_instrumento_id_sem_espaco_nas_bordas", "instrumento_id !~ '^\\s|\\s$'");
                     table.CheckConstraint("ck_movimentos_ref_externa_nao_vazia", "btrim(ref_externa) <> ''");
+                    table.CheckConstraint("ck_movimentos_ref_externa_sem_espaco_nas_bordas", "ref_externa !~ '^\\s|\\s$'");
                     table.CheckConstraint("ck_movimentos_tipo_valido", "tipo IN ('compra', 'venda', 'aporte', 'cupom', 'resgate', 'ir_retido', 'iof', 'a_liquidar', 'liquidacao', 'ajuste')");
                     table.CheckConstraint("ck_movimentos_valor_nao_negativo", "tipo = 'ajuste' OR valor_financeiro >= 0");
                     table.ForeignKey(

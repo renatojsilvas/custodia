@@ -32,7 +32,7 @@ public sealed class MovimentoConfiguration : IEntityTypeConfiguration<Movimento>
 
             t.HasCheckConstraint(
                 "ck_movimentos_instrumento_caixa_valido",
-                $"lower(instrumento_id) NOT LIKE '{InstrumentosCaixa.Prefixo}%' OR instrumento_id IN " +
+                $"lower(btrim(instrumento_id)) NOT LIKE '{InstrumentosCaixa.Prefixo}%' OR instrumento_id IN " +
                 $"({string.Join(", ", InstrumentosCaixa.Todos.Select(id => $"'{id}'"))})");
 
             t.HasCheckConstraint(
@@ -50,6 +50,18 @@ public sealed class MovimentoConfiguration : IEntityTypeConfiguration<Movimento>
             t.HasCheckConstraint(
                 "ck_movimentos_instrumento_id_nao_vazio",
                 "btrim(instrumento_id) <> ''");
+
+            t.HasCheckConstraint(
+                "ck_movimentos_cliente_id_sem_espaco_nas_bordas",
+                @"cliente_id !~ '^\s|\s$'");
+
+            t.HasCheckConstraint(
+                "ck_movimentos_instrumento_id_sem_espaco_nas_bordas",
+                @"instrumento_id !~ '^\s|\s$'");
+
+            t.HasCheckConstraint(
+                "ck_movimentos_ref_externa_sem_espaco_nas_bordas",
+                @"ref_externa !~ '^\s|\s$'");
         });
 
         builder.HasKey(m => m.Id);

@@ -105,15 +105,21 @@ namespace Custodia.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_movimentos_cliente_id_nao_vazio", "btrim(cliente_id) <> ''");
 
+                            t.HasCheckConstraint("ck_movimentos_cliente_id_sem_espaco_nas_bordas", "cliente_id !~ '^\\s|\\s$'");
+
                             t.HasCheckConstraint("ck_movimentos_cupom_sem_quantidade", "tipo <> 'cupom' OR qtd_delta = 0");
 
                             t.HasCheckConstraint("ck_movimentos_estorno_nao_auto", "ref_estorno IS NULL OR ref_estorno <> id");
 
-                            t.HasCheckConstraint("ck_movimentos_instrumento_caixa_valido", "lower(instrumento_id) NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')");
+                            t.HasCheckConstraint("ck_movimentos_instrumento_caixa_valido", "lower(btrim(instrumento_id)) NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')");
 
                             t.HasCheckConstraint("ck_movimentos_instrumento_id_nao_vazio", "btrim(instrumento_id) <> ''");
 
+                            t.HasCheckConstraint("ck_movimentos_instrumento_id_sem_espaco_nas_bordas", "instrumento_id !~ '^\\s|\\s$'");
+
                             t.HasCheckConstraint("ck_movimentos_ref_externa_nao_vazia", "btrim(ref_externa) <> ''");
+
+                            t.HasCheckConstraint("ck_movimentos_ref_externa_sem_espaco_nas_bordas", "ref_externa !~ '^\\s|\\s$'");
 
                             t.HasCheckConstraint("ck_movimentos_tipo_valido", "tipo IN ('compra', 'venda', 'aporte', 'cupom', 'resgate', 'ir_retido', 'iof', 'a_liquidar', 'liquidacao', 'ajuste')");
 
