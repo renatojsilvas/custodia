@@ -1467,9 +1467,16 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   INSTRUMENTO, não por lista de tipos) e na V3 (duas `ref_externa` novas). Quem contar
   "cinco" depois desta data está lendo a versão anterior.*
 
-  Cinco decisões que se sustentam umas às outras. Corrigir uma sem as outras **recria** as
+  **Seis** decisões que se sustentam umas às outras. Corrigir uma sem as outras **recria** as
   demais, e por isso elas estão num bloco só, com um nome só para cada linha. **Fase que
   usar nome diferente para a mesma linha é defeito**, e o `guardiao-padroes` reprova.
+  *Esta linha dizia "Cinco" até 2026-09-10 — cinco linhas depois do parágrafo acima, que já
+  dizia "são SEIS V, não cinco". Sobreviveu à varredura que fechou a pendência do `caixa:BRL`
+  porque a varredura procurou pelo NOME da pendência (`caixa:BRL`, `origemRecurso`) e este
+  numeral não o contém. Regra que sai daí, e ela é o complemento do item 4 do "Ao fechar cada
+  F": ao fechar uma pendência que ACRESCENTA um item a um conjunto declarado, varra também
+  pelo **numeral** do conjunto — "cinco", "quatro", "as três" —, não só pelo nome do item.
+  Numeral é a forma de afirmação de completude que nenhum `grep` por assunto alcança.*
 
   **V1 · O enum de `tipo`, enumerado literalmente — e a dobra das três colunas de
   `posicao_corrente` para cada um dos dez (segunda metade, logo abaixo do enum).**
@@ -2162,8 +2169,16 @@ para ela.
   por saldo (a perna do título e −`valorOrigemSaldo` em `caixa:BRL`). Com uma chave só (`liq:<tradeId>`) as duas linhas colidem no
   `UNIQUE (cliente_id, ref_externa)` — que é literalmente o defeito que esta decisão diz
   estar prevenindo, reintroduzido dentro dela. Por que a família de corpaction existe:
-  cupom e vencimento produzem, **por cliente**, o mesmo conjunto de 4–5 linhas que um
-  resgate, e nenhuma delas tem `tradeId`; sem a convenção aqui, ou colidem, ou o executor
+  cupom e vencimento produzem, **por cliente**, o mesmo tipo de conjunto que um resgate, e
+  nenhuma delas tem `tradeId`. **As contagens não são iguais entre as três famílias, e
+  declará-las é parte da convenção, porque é delas que um teste sai errado:** vencimento vai
+  a **6** (tem `iof:venc:`), resgate vai a **6**, e **cupom a 5 — ele não tem linha de
+  `iof:` na enumeração acima**, de propósito. Os pisos são menores pelas duas condições do
+  F5 (sem IOF em prazo ≥ 30 dias; sem `ir:` quando a base do IR é zero ou negativa), então a
+  faixa é **4–6** para resgate e vencimento e **4–5** para cupom. Quem contar linhas num
+  teste declara qual caso o fixture monta — é a mesma ressalva que a V2 faz no "até seis".
+  *Esta frase dizia "o mesmo conjunto de 4–5 linhas que um resgate" até 2026-09-10, o que
+  subcontava vencimento e contradizia o "até seis" da V2 cinco seções acima.* sem a convenção aqui, ou colidem, ou o executor
   do F9 inventa uma convenção nova dentro de uma tabela append-only depois de esta fase
   ter declarado a convenção fechada. Por que a chave do estorno usa o `tradeId` **do
   estorno** e não o do original: cada estorno é um fato, com uma chave de dedupe própria; a
@@ -2771,9 +2786,15 @@ DECIDIDO EM 2026-09-09 (era pendencia bloqueante) — caixa:BRL PASSA A SER DEBI
       com `liq:<tradeId>` as duas linhas COLIDEM no UNIQUE (cliente_id, ref_externa),
       que e o defeito que esta decisao existe para prevenir.
       POR QUE A FAMILIA DE CORPACTION EXISTE: cupom e vencimento produzem, POR CLIENTE,
-      o mesmo conjunto de 4-5 linhas que um resgate, e nenhuma tem tradeId.
+      o mesmo TIPO de conjunto que um resgate, e nenhuma tem tradeId.
+      AS CONTAGENS NAO SAO IGUAIS ENTRE AS TRES FAMILIAS, e e delas que um teste sai
+      errado: resgate vai a 6, vencimento vai a 6 (tem iof:venc:), e CUPOM A 5 — ele NAO
+      tem linha de iof: na enumeracao acima, de proposito. Os pisos sao menores pelas duas
+      condicoes do F5 (sem IOF em prazo >= 30 dias; sem ir: quando a base do IR e zero ou
+      negativa), entao a faixa e 4-6 para resgate e vencimento e 4-5 para cupom. Quem
+      contar linhas num teste declara qual caso o fixture monta.
       A chave e montada por concatenacao em ORDEM FIXA e NUNCA e lida de volta — nao
-      faca parsing dela. Um resgate vira 4-5 linhas; com a mesma chave elas colidem, e
+      faca parsing dela. Um resgate vira 4 a 6 linhas; com a mesma chave elas colidem, e
       com NULL o Postgres NAO CONSTRANGE — cada derivada duplicaria para sempre numa
       tabela sem DELETE.
 

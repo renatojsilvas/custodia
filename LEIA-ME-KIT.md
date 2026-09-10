@@ -1306,3 +1306,31 @@ na mesma solução travam arquivo em `obj/`, e o erro (`MSB3021`, "being used by
 chega ao executor como se fosse defeito do código dele. Avise no prompt que existe build
 concorrente, diga para repetir em vez de consertar, e **proíba `dotnet clean`** — que é o conserto
 "óbvio" e derruba a compilação do outro no meio.
+
+## Fechar pendência que ACRESCENTA item a um conjunto: varra pelo NUMERAL, não só pelo nome
+
+Complemento concreto do "varra o arquivo inteiro pelo nome da pendência — `grep`, não memória".
+Achado no fecho do F3 da `custodia` (2026-09-10), varrendo o que eu mesmo havia mudado.
+
+A pendência do `caixa:BRL` fechou acrescentando uma **sexta** seção a um vocabulário que o arquivo
+declarava ter **cinco**. A varredura que fechou a pendência procurou pelo **nome** dela
+(`caixa:BRL`, `origemRecurso`, `valorOrigemSaldo`) e corrigiu nove pontos — corretamente. Mas
+sobreviveram duas afirmações de completude que **não contêm o nome**:
+
+- `Cinco decisões que se sustentam umas às outras` — **cinco linhas depois** do parágrafo que
+  dizia "o vocabulário são SEIS V, não cinco". Contradição direta, no corpo da mesma fase.
+- `cupom e vencimento produzem o mesmo conjunto de 4–5 linhas que um resgate` — a enumeração
+  logo acima dava **6** para vencimento (ele tem a linha de IOF, o cupom não) e a seção anterior
+  dizia que um resgate produz "até seis". Três contagens diferentes para o mesmo conjunto, e é
+  dessa que um teste sai errado, porque contar linhas é o que o teste faz.
+
+**Regra:** quando uma pendência (ou qualquer decisão) **acrescenta** membro a um conjunto que o
+arquivo declara, varra também pelo **numeral** — "cinco", "as quatro", "os dez", "4–5" — e não só
+pelo assunto. Numeral é a forma de afirmação de completude que nenhum `grep` por tema alcança, e é
+a mais perigosa das duas: ele parece atual, não tem palavra-chave, e a próxima fase o copia para um
+`Assert.Equal(5, ...)`.
+
+**Corolário:** ao escrever contagem de conjunto heterogêneo, escreva **por membro**, com o piso e o
+teto e a condição que os separa, em vez de uma faixa única. "4–5 linhas" para duas famílias que têm
+5 e 6 é uma frase que envelhece na primeira leitura atenta; "resgate 4–6, vencimento 4–6, cupom
+4–5, porque cupom não tem linha de IOF" não envelhece nunca.
