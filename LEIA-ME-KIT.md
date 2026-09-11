@@ -1356,3 +1356,37 @@ Três coisas saem disso, e nenhuma é "tenha mais cuidado":
    pauta de auditoria; se o guardião fosse menos cuidadoso, ele teria auditado contra 15 e reportado
    "faltam três" — e eu teria mandado alguém "consertar" um schema correto. Numeral em prompt é
    afirmação como qualquer outra: ou você acabou de contar, ou você escreve "conte e me diga".
+
+**QUARTO caso, e com ele isto deixa de ser incidente e passa a ser padrão previsível.** No F6 do
+`operacoes` (2026-09-11) a entrada de fecho da fase declarou "Suíte 506 → **531**" quando a suíte
+tinha **540** — o número foi escrito depois da primeira rodada de correção e não reescrito quando a
+segunda acrescentou nove testes. A **mensagem do commit da mesma entrega já dizia 540**: o arquivo
+contradizia o commit que o gravou.
+
+Os quatro, para a forma ficar visível:
+
+| numeral escrito | valor real | quando envelheceu |
+|---|---|---|
+| "**Cinco** decisões que se sustentam" | seis | quando a V6 entrou |
+| "o mesmo conjunto de **4–5 linhas**" | 4–6 e 4–5, por família | quando as famílias foram enumeradas |
+| "**NOVE** CHECKs em movimentos" | doze | quando o achado do espaço acrescentou três |
+| "Suíte 506 → **531**" | 540 | quando a segunda rodada de correção acrescentou nove testes |
+
+**A forma é sempre a mesma, e é o que torna isto previsível em vez de azar:** quem escreve o numeral
+é a mesma pessoa que acabou de mudar a coisa contada, no mesmo commit ou no seguinte; o numeral não
+contém a palavra do assunto, então `grep` por tema não o alcança; e ele **parece atual**, porque foi
+escrito agora.
+
+**Duas regras operacionais, e nenhuma é "tenha cuidado":**
+
+1. **Contagem em documento normativo escreve-se POR ÚLTIMO**, depois da execução final. Enquanto
+   houver rodada de correção pendente, o número não pode ser escrito — nem no roadmap, nem na nota de
+   fecho, nem em prompt de subagente. Ordem de operação, não atenção.
+2. **No fim de toda rodada de correção, varra por numeral**, não por assunto:
+   `grep -niE "\b(um|dois|tr[êe]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quinze)\b|\b[0-9]+ ?(CHECKs?|testes?|desvios?|motivos?|linhas?|tabelas?|colunas?|fases?)\b"` nos arquivos que a rodada tocou. Leva segundos e pega os quatro casos acima.
+
+**E o corolário que custou uma auditoria quase desperdiçada:** numeral em **prompt de subagente** é
+afirmação como qualquer outra. Escrevi "são 15 CHECKs" numa pauta de auditoria quando eram 12; o
+guardião conferiu e me corrigiu, mas um menos cuidadoso teria auditado contra 15, reportado "faltam
+três", e eu mandaria alguém consertar um schema correto. Ou você acabou de contar, ou escreve "conte
+e me diga".
