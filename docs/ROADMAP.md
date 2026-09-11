@@ -70,7 +70,7 @@ nenhuma fase entrega?* Linha sem fase é lacuna; linha com fase é promessa conf
 | §7.1 tabela `preco_atual` | F3 (DDL) · F6 (escritor) | Pronto (a) e (c) do F6 |
 | §7.1 tabela `historico_precos` ("histórico local recomendado") | F3 (DDL) · F6 (escritor) | Pronto (a) do F6 |
 | §7.1 tabela `snapshots_posicao` (versionada) | F3 (DDL) · F7 (escritor) | Pronto (d) e (e) do F7 |
-| §7.1 convenção 1 — **caixa é instrumento** (`caixa:BRL`, `caixa:a_liquidar`) | F3 (V4) · F5 (escritura o limbo) · F7 (põe no snapshot) · F8 (mostra) | Pronto (n) do F3, (f) do F5, (j) do F7, (g) do F8 |
+| §7.1 convenção 1 — **caixa é instrumento** (`caixa:BRL`, `caixa:a_liquidar`) | F3 (V4 e **V6**) · **F4 (grava a perna de caixa)** · F5 (escritura o limbo) · F7 (põe no snapshot) · F8 (mostra) | Pronto (n) do F3, (f) do F5, (j) do F7, (g) do F8 |
 | §7.1 convenção 2 — **só há snapshot em dia com posição ≠ 0**, sem misturar com "repete o preço" | F7 | Pronto (b) e (k) do F7 |
 | §7.1 convenção 3 — **tributos são movimentos próprios**, nunca desconto embutido | F3 (V1/V2) · F5 (grava) | Pronto (a) do F5 |
 | §7.2 identidade e onboarding (resolução nome→id) | **nenhuma, e é decisão: acontece na borda, em Operações (ADR-10)** | F1 apaga a promessa herdada; F6 registra a negação |
@@ -135,8 +135,8 @@ terceiro.
 |---|---|
 | F1 | nenhuma (VPS, CI, Grafana Cloud — já existem) |
 | F2 | broker `plataforma-rabbitmq` alcançável (serviço do `hub-precos`) |
-| F3 | Postgres com schema (a instância já existe) — **e a decisão da PENDÊNCIA BLOQUEANTE do `caixa:BRL`, que é um campo opcional novo na §5.1 do `../plataforma-docs`, OUTRO repo** (ver a pendência dentro da V2) |
-| F4 | o `operacoes` publicando `trades.registered` — **já publica** |
+| F3 | Postgres com schema (a instância já existe). *A dependência que existia — a decisão do `caixa:BRL`, que exigia campo novo na §5.1 do `../plataforma-docs` — **fechou em 2026-09-09**: o campo `valorOrigemSaldo` existe, e a regra do livro está na V6.* |
+| F4 | o `operacoes` publicando `trades.registered` (**já publica**) **e o campo `valorOrigemSaldo` da V6 (ainda NÃO publica)** — sem o campo, todo `aplicacao`/`aporte` estaciona |
 | F5 | nenhuma |
 | F6 | o Hub publicando `prices.*` e respondendo `GET /prices/asof` |
 | F7 | o Hub publicando `eod.ready` |
@@ -189,7 +189,8 @@ tolerada em silêncio.
 a metade **comportamental** vai para o **F4** (consumidor).
 
 - F3: CHECK tornando `ref_estorno` obrigatório quando `tipo = 'ajuste'` e NULL nos demais
-  tipos, mais FK composta com `cliente_id` e CHECK de não-auto-referência. Um estorno
+  tipos, mais FK composta com `cliente_id` **e `instrumento_id`** e CHECK de
+  não-auto-referência. Um estorno
   órfão fica **impossível de nascer**, pelo banco e não pela disciplina do handler.
   *Rejeitado:* aceitar `ref_estorno = NULL` e preencher depois — o UPDATE que isso exige
   é barrado pela trigger, e o `UNIQUE (cliente_id, ref_externa)` torna a reentrega um
@@ -1406,8 +1407,13 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
 
 - [ ] **F3** — o schema do livro: as constraints que tornam o dado irreparável impossível
   de gravar. **Dependência externa nova: Postgres com schema (a instância já existe).**
-  **PENDÊNCIA BLOQUEANTE ABERTA: `caixa:BRL` nunca é debitado — leia a pendência dentro da V2
-  ANTES de despachar; ela depende de um campo novo na §5.1 do `../plataforma-docs`.**
+  **PENDÊNCIA FECHADA em 2026-09-09** — `caixa:BRL` nunca ser debitado dependia de um campo
+  novo na §5.1 do `../plataforma-docs`, e ele **existe**: **`valorOrigemSaldo`**, string
+  decimal opcional, presente se e somente se `operacao ∈ {aplicacao, aporte}`, com
+  `0 ≤ valorOrigemSaldo ≤ valorFinanceiro`. **O vocabulário passou de cinco V para SEIS:
+  leia a V6**, que registra a decisão, as alternativas rejeitadas, as seis colunas da perna
+  de caixa, o estorno das duas pernas e — o mais importante — **o que ela NÃO resolve**.
+  **O F3 está DESBLOQUEADO.**
 
   As **cinco** tabelas da §7.1 — o livro e as quatro projeções, e o "cinco" é sobre a §7.1,
   não sobre o schema inteiro do serviço — como migrations EF, snake_case, índices nomeados, no molde
@@ -1454,14 +1460,23 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   ---
 
   **O VOCABULÁRIO DO LIVRO — fechado aqui, repetido literalmente no F4, F5, F7 e F9.**
-  *Com uma exceção declarada, e ela é o motivo de a fase estar bloqueada: a **PENDÊNCIA
-  BLOQUEANTE do `caixa:BRL`** (dentro da V2) é a única peça deste vocabulário que ainda não
-  fechou, e "fechado aqui" só passa a ser verdade quando ela fechar. Não leia as cinco V como
-  completas enquanto o cabeçalho da fase trouxer o aviso.*
+  *A exceção que existia aqui — a **PENDÊNCIA do `caixa:BRL`** — **fechou em 2026-09-09**,
+  com o campo `valorOrigemSaldo` acrescentado à §5.1 do `../plataforma-docs`. **O
+  vocabulário são SEIS V, não cinco:** a decisão virou a **V6 · A perna de caixa**, seção
+  própria e normativa como as outras, e ela obriga correções na V1 (a dobra de caixa é por
+  INSTRUMENTO, não por lista de tipos) e na V3 (duas `ref_externa` novas). Quem contar
+  "cinco" depois desta data está lendo a versão anterior.*
 
-  Cinco decisões que se sustentam umas às outras. Corrigir uma sem as outras **recria** as
+  **Seis** decisões que se sustentam umas às outras. Corrigir uma sem as outras **recria** as
   demais, e por isso elas estão num bloco só, com um nome só para cada linha. **Fase que
   usar nome diferente para a mesma linha é defeito**, e o `guardiao-padroes` reprova.
+  *Esta linha dizia "Cinco" até 2026-09-10 — cinco linhas depois do parágrafo acima, que já
+  dizia "são SEIS V, não cinco". Sobreviveu à varredura que fechou a pendência do `caixa:BRL`
+  porque a varredura procurou pelo NOME da pendência (`caixa:BRL`, `origemRecurso`) e este
+  numeral não o contém. Regra que sai daí, e ela é o complemento do item 4 do "Ao fechar cada
+  F": ao fechar uma pendência que ACRESCENTA um item a um conjunto declarado, varra também
+  pelo **numeral** do conjunto — "cinco", "quatro", "as três" —, não só pelo nome do item.
+  Numeral é a forma de afirmação de completude que nenhum `grep` por assunto alcança.*
 
   **V1 · O enum de `tipo`, enumerado literalmente — e a dobra das três colunas de
   `posicao_corrente` para cada um dos dez (segunda metade, logo abaixo do enum).**
@@ -1614,7 +1629,12 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     O F4 admite `quantidade < 0` no livro e prescreve como conserto **exatamente** a compra
     que a zera: o caso está no caminho normal, não na borda.
   - **`quantidade` resultante < 0:** `preco_medio` fica **INALTERADO** — nunca recalculado,
-    portanto **nunca negativo** —, e `custo_total` acumula pela regra do tipo. Sem esta
+    portanto **nunca negativo** —, e `custo_total` acumula pela regra do tipo. *Isto continua
+    valendo para instrumento de título. Para **`caixa:*` a leitura do SINAL muda (V6)**: o
+    negativo transitório de uma reaplicação no mesmo dia é esperado, e o sinal de posição
+    negativa passa a ser sobre a **soma** `caixa:BRL + caixa:a_liquidar`, nunca por linha —
+    ver a V6, que explica por que ler linha a linha produziria alerta permanentemente falso
+    sobre uma linha que não tem "compra antiga" nenhuma.* Sem esta
     linha, `venda sem compra` de 10 seguida de `compra 4 @ 100` daria `custo_total = 400`,
     `quantidade = −6` e `preco_medio = −66,67`, e o F5 tributaria sobre preço médio negativo.
     *("Base = preço médio **do livro**", §7.3, é **elipse**: o preço médio é o **insumo** da
@@ -1673,10 +1693,16 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
      `valor_financeiro > 0` no instrumento do título: é **renda**, não custo de aquisição.
      Somar o `valor_financeiro` ao custo mudaria o preço médio **sem que a posição mudasse**
      — e, com a posição zerada no mesmo dia, seria **divisão por zero**.
-  3. **`caixa:*` é definição, não caso especial.** Para as quatro linhas de caixa a V4
-     fixa `preco_medio = 1,000000` e `custo_total = quantidade`; não há média ponderada a
-     manter, e a regra vale igual para `ir_retido`, `iof`, `a_liquidar` e `liquidacao`
-     porque **todas** escrevem em `caixa:*`.
+  3. **`caixa:*` é definição, não caso especial — e o critério é o INSTRUMENTO, nunca o
+     tipo.** Para toda linha que escreve em `caixa:*` a V4 fixa `preco_medio = 1,000000` e
+     `custo_total = quantidade`; não há média ponderada a manter. *A versão anterior desta
+     regra dizia "as **quatro** linhas de caixa" e listava `ir_retido`, `iof`, `a_liquidar`
+     e `liquidacao` — e a lista envelheceu no mesmo dia em que a **V6** fez `compra` e
+     `aporte` escreverem em `caixa:BRL` também. **Não são quatro tipos: é uma condição sobre
+     o `instrumento_id`**, e sempre foi — a própria frase antiga já dizia "porque todas
+     escrevem em `caixa:*`". Implementar a dobra por lista de tipos aplicaria
+     `custo_total += valor_financeiro` a uma linha de caixa, corrompendo a projeção; e a
+     lista quebraria de novo na próxima fase que escrevesse em caixa.*
   4. **`venda` e `resgate` mantêm o `preco_medio` e baixam o custo proporcionalmente** —
      que é o mesmo que dizer `custo_total = preco_medio × quantidade`, e é essa forma que
      torna o **invariante conferível**: depois de qualquer `compra`/`aporte`/`venda`/
@@ -1858,11 +1884,139 @@ para ela.
   constância é consequência do fixture que zera a posição, e tem de estar escrita **no
   fixture**.
 
-  ### PENDÊNCIA BLOQUEANTE DO F3 — `caixa:BRL` nunca é DEBITADO, e o vocabulário do livro não fecha sem decidir isto
+  ### V6 · A PERNA DE CAIXA — `caixa:BRL` passa a ser DEBITADO, e é o `valorOrigemSaldo` que diz quanto
 
-  **Estado:** aberta. **Bloqueia:** o F3 (e, por dependência, tudo que lê caixa: F5, F7, F8).
-  **Quem decide:** o dono, e a correção é na §5.1 do `../plataforma-docs` — **outro repo**.
-  **O F3 NÃO fecha o vocabulário do livro sem isto.**
+  **Estado: FECHADA em 2026-09-09.** Era pendência bloqueante; a decisão do dono foi a saída
+  **(1)** — campo no contrato, não workaround aqui —, e o campo está na §5.1 do
+  `../plataforma-docs`: **`valorOrigemSaldo`**, string decimal, **opcional**, presente se e
+  somente se `operacao ∈ {aplicacao, aporte}`, com `0 ≤ valorOrigemSaldo ≤ valorFinanceiro`.
+
+  **É VALOR e não booleano, e isso não é refinamento — o booleano estava errado.** Um enum
+  `externo | saldo_custodia` não expressa resgatar 900 e reaplicar 1000: como saldo debita
+  1000 e deixa caixa em −100; como externo não debita nada e deixa 900. Não há terceira
+  opção e a tabela não tem UPDATE. O valor subsome o enum (`0` = externo,
+  `= valorFinanceiro` = integral, entre os dois = misto) e traz uma guarda que ele não
+  tinha: `> valorFinanceiro` é detectável.
+
+  #### A REGRA — quatro desfechos, e o F4 grava exatamente isto
+
+  | `valorOrigemSaldo` | o que a `compra`/`aporte` grava |
+  |---|---|
+  | **ausente** | **nada** — estaciona com `origem_recurso_ausente` |
+  | não-decimal, `< 0`, ou `> valorFinanceiro` | **nada** — estaciona com `origem_recurso_invalida` |
+  | `= 0` | **uma** linha: a perna do título, como sempre |
+  | `> 0` | **duas** linhas: a perna do título **e** a perna de caixa |
+
+  **Ausente NÃO é `0`.** Tratar ausente como zero reintroduz o defeito em silêncio, numa
+  tabela sem UPDATE. Os **dois** motivos entram na lista fechada e sem default de
+  `x-custodia-motivo` do F4 — e "entram" significa nos três lugares que o próprio F4 exige
+  (a prosa, o prompt e o desfecho nomeado na direção estrita), não só aqui.
+
+  #### As seis colunas da perna de caixa, porque derivável não é escrito
+
+  | coluna | valor |
+  |---|---|
+  | `instrumento_id` | `caixa:BRL` |
+  | `tipo` | **o MESMO do movimento principal** (`compra` ou `aporte`) — não há tipo novo |
+  | `qtd_delta` | **`− valorOrigemSaldo`** (nunca `− valorFinanceiro`: é aqui que o misto se representa) |
+  | `valor_financeiro` | `valorOrigemSaldo`, magnitude bruta não negativa (convenção da V2) |
+  | `data_evento` | a `dataEvento` do fato, **a mesma** da perna do título |
+  | `ref_externa` | `<tradeId>:brl` — o `<papel>` da V3 para esta perna |
+
+  **O `tipo` reusa `compra`/`aporte` e NÃO cria valor novo no enum**, que a V1 declara
+  fechado e que o Pronto (j) compara literalmente. Mas isso obriga uma correção na V1, e ela
+  é normativa: **a dobra de `posicao_corrente` por tipo passa a ser sobre o
+  `instrumento_id`, não só sobre o `tipo`.** Linha de `caixa:*` — qualquer que seja o tipo —
+  dobra pela regra de caixa da V4 (`preco_medio = 1,000000`, `custo_total = quantidade`),
+  nunca pela regra de `custo_total += valor_financeiro`. A V1 item 3 dizia "as **quatro**
+  linhas de caixa… porque todas escrevem em `caixa:*`": o critério sempre foi o
+  instrumento, e agora são **seis** os tipos que podem escrever em `caixa:*`.
+
+  **`ref_externa = <tradeId>:brl` é obrigatória**, não conveniência: `UNIQUE (cliente_id,
+  ref_externa)` faria as duas linhas do mesmo `tradeId` colidirem, que é literalmente o
+  defeito que a V3 diz existir para prevenir. E ela entra na **enumeração completa** da V3,
+  que o F4, o F5 e o F9 copiam sem reescrever — uma convenção declarada fechada que ganha
+  membro em um lugar só é uma convenção com default informal.
+
+  #### O estorno reverte AS DUAS pernas
+
+  A V5 exige **um `ajuste` por linha revertida**, com `UNIQUE (ref_estorno) WHERE NOT NULL`.
+  Então o estorno de uma aplicação com perna de caixa grava **duas** linhas de `ajuste`:
+  `est:<estornaTradeId>` (o título) e `est:<estornaTradeId>:brl` (o caixa). Sem a segunda, o
+  estorno devolve o título e **não** devolve o dinheiro ao caixa — o patrimônio passa a
+  **deflacionar**, que é o defeito original com o sinal trocado, e igualmente permanente. O
+  lookup por `ref_externa = estornaTradeId` acha só a perna do título; o F4 tem que resolver
+  **as duas** ref_externas do trade estornado. E a conferência da "dispensa declarada do
+  estorno" (abaixo) é contra a perna do **título** — é dela que vêm `instrumentoId`,
+  `quantidade` e `valorFinanceiro` do payload.
+
+  #### O negativo transitório, e por que ele é limite declarado
+
+  O produto do resgate só chega a `caixa:BRL` na liquidação **D+1**; até lá está em
+  `caixa:a_liquidar`. Reaplicar no **mesmo dia** debita `caixa:BRL` com o dinheiro ainda no
+  limbo, e a linha fica **negativa** até a liquidação. A aritmética fecha (título 900 +
+  `a_liquidar` 900 + `caixa:BRL` −900 = 900); o que quebra são duas outras coisas, e as duas
+  têm regra:
+
+  1. **O sinal de posição negativa para `caixa:*` passa a ser sobre a SOMA**
+     `caixa:BRL + caixa:a_liquidar`, nunca por linha. Isso **substitui**, para `caixa:*`, a
+     regra `quantidade < 0` da V1 — que trata negativo como "falta lançar a compra antiga" e
+     produziria alerta permanentemente falso sobre uma linha que não tem compra antiga
+     nenhuma. Soma negativa persistente continua sendo sinal real: origem informada errada,
+     ou dinheiro que saiu por fora.
+  2. **O extrato de posição do F8 não exibe caixa negativo transitório ao cliente:** a linha
+     de caixa apresentada é a soma das duas ids. O livro e o extrato de **movimentação**
+     continuam com as duas separadas. *O rótulo e o formato são decisão de produto do F8; o
+     requisito — não mostrar negativo transitório — é daqui.*
+
+  *Rejeitado: debitar `caixa:a_liquidar` por precedência quando há saldo lá.* Não é só
+  "precisa de regra de precedência": em D+1 a perna 1 da liquidação é calculada pelo **saldo
+  do fato** (V2, invariante (1) do resgate), que não enxerga a linha da reaplicação — o
+  resultado seria `caixa:a_liquidar = −900` e `caixa:BRL = +900` **permanentes**, isto é, o
+  número inflado de volta noutra conta. Casar reaplicação com liquidação por FIFO dentro da
+  Custódia é máquina de alocação que ninguém pediu, que quebra com evento retroativo, e que
+  é re-derivar rio abaixo (§10.32).
+
+  #### O QUE ISTO **NÃO** RESOLVE — e é a metade que quase virou asserção verde
+
+  `caixa:BRL` é o dinheiro que **entrou no livro por uma liquidação e ainda não foi
+  reaplicado**. **Não é o saldo em conta do cliente.** A igualdade da §7.5,
+  `Σ instrumentos + caixa = patrimônio`, é demonstrável **sob a hipótese, declarada, de que
+  nenhum dinheiro entra ou sai da custódia fora do livro** — e essa hipótese **não é
+  garantida por evento nenhum**: não existe tipo de saque, não existe `a_pagar`, não existe
+  evento de depósito na §5.1. Um saque de 900 deixa `caixa:BRL = 900` para sempre, e o
+  patrimônio superestima em 900 — o mesmo erro de 100%, pela outra porta.
+
+  **A V6 eliminou o erro da REAPLICAÇÃO, não o do SAQUE.** `caixa:BRL` continua sendo um
+  livro-caixa **parcial** — que era a alternativa (b) rejeitada abaixo, menos a dupla
+  contagem. Quem ler "a pendência fechou" e concluir que a igualdade voltou a valer está
+  repetindo, com um passo a menos, o erro que esta seção existe para registrar.
+
+  **AUSÊNCIA DECIDIDA E NOMEADA — saque e depósito.** Eles não existem: nem tipo no enum da
+  V1, nem evento na §5.1. **Consequência aceita:** cliente que retira dinheiro da custódia
+  fica com `caixa:BRL` superestimado no valor retirado, para sempre. Quando isso deixar de
+  ser aceitável, a correção é um **evento de movimentação de caixa publicado por quem move o
+  dinheiro** — nunca um endpoint aqui (ADR-10), nunca re-derivação (§10.32). *Nota de
+  compatibilidade: no dia em que esse evento existir, `valorOrigemSaldo` passa a ser sempre
+  `= valorFinanceiro`, a perna vira simétrica, e a alternativa (a) rejeitada abaixo passa a
+  estar **certa**. O desenho de hoje não fecha essa porta.*
+
+  #### O que Operações tem que fazer — pré-requisito do F4, não consequência
+
+  Publicar o campo. Enquanto não publicar, **todo** `aplicacao`/`aporte` estaciona, que é o
+  desfecho certo (ruidoso e reversível) em vez do errado (silencioso e gravado para sempre)
+  — mas é dependência entre repos, e ela **muda a linha do F4 na tabela de dependência
+  externa**, que dizia "já publica".
+
+  **PENDÊNCIA DE CONFIRMAÇÃO, e é do dono:** confirmar com Operações que ela consegue
+  publicar o **rateio**, não só o booleano. Se a resposta for não, o financiamento misto é
+  irrepresentável em qualquer desenho e a escolha passa a ser **de produto** (rejeitar o
+  misto no `POST /operacoes`), não de arquitetura.
+
+  ---
+
+  **O registro do problema que a decisão resolveu, preservado porque a próxima pessoa vai
+  perguntar por que o campo existe:**
 
   **O fato, e ele é conferível por varredura deste arquivo:** nenhuma linha deste roadmap
   debita `caixa:BRL`. A única linha que o escreve é a `liquidação, perna 2`, sempre
@@ -1898,14 +2052,17 @@ para ela.
   recusa no `campoPosicao` (F6) e na distinção `sem_preco_ate_a_data` ×
   `instrumento_desconhecido`.
 
-  **A correção, quando o dono decidir:** campo **OPCIONAL** no `TradeRegistered` da §5.1
-  dizendo se a aplicação consumiu saldo em custódia. É a **mesma forma** do `estornaTradeId`,
+  **A correção, FEITA em 2026-09-09:** campo **OPCIONAL** no `TradeRegistered` da §5.1
+  dizendo **quanto** da aplicação saiu de saldo em custódia — `valorOrigemSaldo`, e ele cobre
+  **`aplicacao` E `aporte`**, porque o `aporte` é aplicação adicional no título (V2: "a
+  diferença contra `aplicacao` é SÓ O RÓTULO") e consome dinheiro do mesmo jeito; cobrir só
+  `aplicacao` deixaria metade do buraco aberto. É a **mesma forma** do `estornaTradeId`,
   que o F3 do `../operacoes` acrescentou à §5.1 **antes** do código que monta o payload, e que
   o roadmap de lá registra como **"pré-requisito, não consequência"**. Campo novo opcional é
   o que a própria §5.1 autoriza sem incrementar `v`.
 
-  **As duas saídas alternativas — se o dono decidir não mexer na §5.1 —, com o custo de cada
-  uma escrito, porque nenhuma é de graça:**
+  **As duas alternativas REJEITADAS, com o custo de cada uma — foi contra elas que a saída
+  (1) foi escolhida:**
 
   - **(a) perna simétrica:** `compra` e `aporte` debitam `caixa:BRL`. Fecha a conta da
     reaplicação e **mostra caixa NEGATIVO em toda aplicação com dinheiro novo** — porque não
@@ -1962,7 +2119,11 @@ para ela.
   **Guarda estrita do mapeamento, e ela é do invariante I3:** **nenhum campo do
   `TradeRegistered` pode ser descartado sem regra escrita nesta V2** — e "conferido contra o
   original e não usado", acima, **é** uma regra escrita, que o teste estrito afirma como
-  tal (não como dispensa implícita). Foi exatamente um
+  tal (não como dispensa implícita). *`valorOrigemSaldo` (V6) NÃO é uma segunda dispensa:
+  ele não vai para coluna nenhuma da perna do título, mas **determina se existe uma segunda
+  linha e qual é o `qtd_delta` dela** — está usado, não descartado. A frase "a ÚNICA
+  dispensa é a do estorno" continua verdadeira, e o teste da direção estrita tem que
+  distinguir os dois casos em vez de tratá-los como o mesmo.* Foi exatamente um
   descarte silencioso (`instrumentoId` e `quantidade` do `aporte`) que passou pela versão
   anterior deste arquivo. O teste que prova I3 na direção estrita tem de afirmar isso — que
   cada campo do payload ou aparece numa coluna do movimento, ou tem aqui a regra escrita que
@@ -1997,18 +2158,27 @@ para ela.
 
   | Fato | Linhas e suas `ref_externa` |
   |---|---|
-  | trade (aplicacao/resgate/aporte) | `<tradeId>` · `ir:<tradeId>` · `iof:<tradeId>` · `aliq:<tradeId>` · `liq:<tradeId>:aliq` · `liq:<tradeId>:brl` |
+  | trade (aplicacao/resgate/aporte) | `<tradeId>` · **`<tradeId>:brl`** (a perna de caixa da V6, só quando `valorOrigemSaldo > 0`) · `ir:<tradeId>` · `iof:<tradeId>` · `aliq:<tradeId>` · `liq:<tradeId>:aliq` · `liq:<tradeId>:brl` |
   | cupom | `cupom:<instrumentoId>:<data>` · `ir:cupom:<instrumentoId>:<data>` · `aliq:cupom:<instrumentoId>:<data>` · `liq:cupom:<instrumentoId>:<data>:aliq` · `liq:cupom:<instrumentoId>:<data>:brl` |
   | vencimento | `venc:<instrumentoId>:<data>` · `ir:venc:...` · `iof:venc:...` · `aliq:venc:...` · `liq:venc:...:aliq` · `liq:venc:...:brl` |
-  | estorno (o `<fato>` é o `tradeId` DO ESTORNO) | `<tradeIdEstorno>` · `est:ir:<tradeIdEstorno>` · `est:iof:<tradeIdEstorno>` · `est:aliq:<tradeIdEstorno>` · `est:liq:<tradeIdEstorno>:aliq` · `est:liq:<tradeIdEstorno>:brl` |
+  | estorno (o `<fato>` é o `tradeId` DO ESTORNO) | `<tradeIdEstorno>` · **`<tradeIdEstorno>:brl`** (reverte a perna de caixa da V6, só quando o movimento estornado tinha uma) · `est:ir:<tradeIdEstorno>` · `est:iof:<tradeIdEstorno>` · `est:aliq:<tradeIdEstorno>` · `est:liq:<tradeIdEstorno>:aliq` · `est:liq:<tradeIdEstorno>:brl` |
 
-  Por que a **perna** entra no sufixo: a liquidação é intrinsecamente de **duas pernas**
-  (−Y em `caixa:a_liquidar`, +Y em `caixa:BRL`) e `movimentos` tem **um** `instrumento_id`
-  por linha. Com uma chave só (`liq:<tradeId>`) as duas linhas colidem no
+  Por que a **perna** entra no sufixo: há **dois** movimentos intrinsecamente de duas
+  pernas, e `movimentos` tem **um** `instrumento_id` por linha. A liquidação (−Y em
+  `caixa:a_liquidar`, +Y em `caixa:BRL`) e, desde a **V6**, a `compra`/`aporte` financiada
+  por saldo (a perna do título e −`valorOrigemSaldo` em `caixa:BRL`). Com uma chave só (`liq:<tradeId>`) as duas linhas colidem no
   `UNIQUE (cliente_id, ref_externa)` — que é literalmente o defeito que esta decisão diz
   estar prevenindo, reintroduzido dentro dela. Por que a família de corpaction existe:
-  cupom e vencimento produzem, **por cliente**, o mesmo conjunto de 4–5 linhas que um
-  resgate, e nenhuma delas tem `tradeId`; sem a convenção aqui, ou colidem, ou o executor
+  cupom e vencimento produzem, **por cliente**, o mesmo tipo de conjunto que um resgate, e
+  nenhuma delas tem `tradeId`. **As contagens não são iguais entre as três famílias, e
+  declará-las é parte da convenção, porque é delas que um teste sai errado:** vencimento vai
+  a **6** (tem `iof:venc:`), resgate vai a **6**, e **cupom a 5 — ele não tem linha de
+  `iof:` na enumeração acima**, de propósito. Os pisos são menores pelas duas condições do
+  F5 (sem IOF em prazo ≥ 30 dias; sem `ir:` quando a base do IR é zero ou negativa), então a
+  faixa é **4–6** para resgate e vencimento e **4–5** para cupom. Quem contar linhas num
+  teste declara qual caso o fixture monta — é a mesma ressalva que a V2 faz no "até seis".
+  *Esta frase dizia "o mesmo conjunto de 4–5 linhas que um resgate" até 2026-09-10, o que
+  subcontava vencimento e contradizia o "até seis" da V2 cinco seções acima.* sem a convenção aqui, ou colidem, ou o executor
   do F9 inventa uma convenção nova dentro de uma tabela append-only depois de esta fase
   ter declarado a convenção fechada. Por que a chave do estorno usa o `tradeId` **do
   estorno** e não o do original: cada estorno é um fato, com uma chave de dedupe própria; a
@@ -2048,10 +2218,11 @@ para ela.
      ("extrato de posição batendo com a soma dos snapshots vigentes, **incluindo as linhas
      de caixa**") inalcançável, e o "soma dos instrumentos + caixa = patrimônio diário" da
      §7.5 sem parcela de caixa. *Esta consequência afirma só que **sem preço por definição
-     não existe linha de caixa no snapshot**, e isso vale sob qualquer desfecho da
-     **PENDÊNCIA BLOQUEANTE do `caixa:BRL`** (V2, acima). A **igualdade** da §7.5 citada aqui
-     é justamente o que aquela pendência deixa em aberto — não a leia como asserção fechada,
-     e é por isso que o F8 Pronto (g) não a afirma mais.*
+     não existe linha de caixa no snapshot**, e ela valia sob qualquer desfecho da decisão do
+     `caixa:BRL` — que **fechou** (V6). Com a perna de caixa condicional, a **igualdade** da
+     §7.5 volta a ser defensável para o cliente cuja carteira inteira nasceu depois do campo
+     `valorOrigemSaldo`; ela continua **não afirmada** pelo F8 Pronto (g), e essa reavaliação é
+     do F8, não desta fase.*
 
   Coerente com isso: em `posicao_corrente`, uma linha de `caixa:*` com **`quantidade > 0`**
   tem `preco_medio = 1,000000` e `custo_total = quantidade`.
@@ -2099,11 +2270,80 @@ para ela.
 
   **Decisões desta fase:**
 
+  - **OS QUATRO DESVIOS POR CORREÇÃO DA §7.1, num lugar só — porque desvio que cada seção
+    declara sozinha não tem onde ser conferido inteiro.** A §7.1 escreve o contrário nos
+    quatro, e nos quatro o motivo está na própria decisão:
+    1. **`aporte` no enum de `tipo`** (V1) — a §7.1 omite; a §7.3, três seções adiante,
+       descreve o handler gravando "compra/venda/**aporte**".
+    2. **`ref_externa` NOT NULL** (V3) — o Postgres **não constrange NULL**, e cada linha
+       derivada duplicaria para sempre numa tabela sem DELETE.
+    3. **`valor_financeiro` NOT NULL** — o "quando houver" da §7.1 **não tem testemunha no
+       vocabulário fechado**: toda linha enumerada na V2, na V6 e nas famílias de
+       corpaction tem valor, `cupom` inclusive (`qtd_delta = 0`, `valor > 0`). E o
+       argumento decisivo é o mesmo do item 2, com outro nome: **`SUM` ignora `NULL`**, então
+       uma linha nula quebra **em silêncio** os dois invariantes independentes de preço do
+       Pronto (k) e a simetria do par `ajuste`, numa tabela sem UPDATE. *Rejeitado:*
+       nullable por fidelidade literal — no dia em que um tipo de fase 2 não tiver valor,
+       `DROP NOT NULL` é uma linha sem rewrite (§10.21).
+    4. **`qtd_delta` SEM `DEFAULT 0`** (a §7.1 o escreve) — o default **não protege
+       ninguém**: o EF emite toda coluna mapeada em todo INSERT, então o único caminho que
+       ele alcança é o **SQL cru** (fixture, migration de dados, os próprios `INSERT` dos
+       Prontos), e ali ele converte "esqueci a coluna" em **quantidade zero gravada em
+       silêncio**, sendo 0 legítimo apenas para `cupom`. **`registrado_em` mantém o
+       `now()`**, e a distinção é a que decide: ali o default **é o produtor do valor**
+       ("quando entrou aqui", §7.1), não há valor correto que um escritor possa omitir, e
+       o molde o reproduz — note que `quantidade`, no molde, **não** tem default.
+       *Rejeitado:* manter por fidelidade — a §10.21 não se aplica (`SET`/`DROP DEFAULT`
+       são simétricos e instantâneos nos dois sentidos); a assimetria está no **dado**.
+    Os dois primeiros já estavam declarados nas suas seções; **os dois últimos saíram da
+    varredura coluna a coluna que o próprio prompt desta fase manda fazer** ("confira
+    coluna a coluna contra a 7.1 antes de implementar; se discordar de alguma, levante
+    ANTES de escrever") — a enumeração de desvios descrevia o texto de então, não um teto
+    de decisões.
+  - **OS DOZE CHECKs de `movimentos`, e os SETE que entram pela §10.21 e não pela §7.1.**
+    A DDL canônica não tem CHECK nenhum além do enum de `tipo`; os outros onze são desta
+    fase, pela assimetria da §10.21 (sair de um CHECK sobrando é `DROP CONSTRAINT`, uma
+    linha, sem rewrite; sair de um que faltou exige `DISABLE TRIGGER` e perícia manual).
+    Cinco são prescritos pelos critérios de pronto — `tipo_valido`, `ajuste_coerente`,
+    `estorno_nao_auto`, `ref_externa_nao_vazia`, `instrumento_caixa_valido`. Os **sete**
+    restantes entram por decisão, e os **três últimos** por um **achado grave de revisão
+    adversarial**, não por desenho: `valor_nao_negativo` (a convenção de sinal da V2, com
+    o `ajuste` como única exceção — e **não** endurecido para `≤ 0`, porque o estorno *de*
+    estorno reverte −600 com +600 e isso fecharia a última porta de correção),
+    `cupom_sem_quantidade` (sem ele `Σ qtd_delta = quantidade` fica falso e a reconciliação
+    do F7 alerta sem ter o que consertar), `cliente_id_nao_vazio` e
+    `instrumento_id_nao_vazio` (§10.24: normalize os identificadores **todos**, não um), e
+    os **três de borda** `ck_movimentos_{cliente_id,instrumento_id,ref_externa}_sem_espaco_nas_bordas`,
+    todos `x !~ '^\s|\s$'`.
+    **Os três de borda são o registro de um defeito, e é por isso que estão aqui e não só
+    no commit:** `lower(instrumento_id) NOT LIKE 'caixa:%'` deixava `' caixa:BRL'` entrar,
+    porque com espaço à esquerda o valor não casa com o prefixo, o antecedente do OR fica
+    verdadeiro, e ele é aceito **como se fosse id do Hub** — um segundo instrumento de
+    caixa, permanente. E o furo não era do caixa: `' td:tesouro-selic-2029 '` também
+    entrava, e aí são dois instrumentos do Hub para sempre. **Regex e não `x = btrim(x)`**,
+    porque `btrim(text)` no Postgres tira só o caractere espaço e o `Trim()` do .NET tira
+    tab e newline — com `btrim`, Domínio e banco dariam **vereditos opostos para a mesma
+    entrada**, que é a §10.24 literal. Consequência para o F4, já registrada na lista
+    fechada de `x-custodia-motivo`: a violação dos três entra como
+    **`identificador_com_espaco_na_borda`**.
   - **Decisão A, a metade irreversível:** `ref_estorno` NOT NULL quando `tipo = 'ajuste'`,
-    e NULL obrigatório nos demais tipos, por CHECK; mais FK composta com `cliente_id` (o
-    ajuste não cruza cliente) e CHECK de não-auto-referência. Consequência deliberada: um
+    e NULL obrigatório nos demais tipos, por CHECK; mais FK composta com `cliente_id`
+    **e `instrumento_id`** (o ajuste não cruza cliente **nem instrumento**, V2),
+    sustentada pela chave alternada `ux_movimentos_id_cliente_instrumento`; e CHECK de
+    não-auto-referência. Consequência deliberada: um
     estorno órfão **não pode ser gravado**. O custo aceito é explícito e é o F4: o
     consumidor precisa de política para o evento fora de ordem.
+    **A terceira coluna não é fidelidade ao molde por fidelidade — ela é a V2 virando
+    schema.** A V2 afirma que a linha de reversão é `tipo = 'ajuste'` no **mesmo
+    `instrumento_id`** da linha revertida; com a FK de duas colunas, um `ajuste`
+    apontando para linha do mesmo cliente e de **outro** instrumento passa, **consome o
+    slot único de reversão** daquela linha (o índice parcial da V5) e, como não há UPDATE
+    nem DELETE, o `ajuste` correto fica impossível **para sempre** — é o incidente da
+    §10.21 com a terceira coluna faltando. A dobra, além disso, tiraria da chave errada
+    uma das duas linhas do par. *A versão anterior desta alínea dizia só "FK composta com
+    `cliente_id` (o ajuste não cruza cliente)", e o molde `operacoes` já usava as três:
+    `(estorna_operacao_id, cliente_id, instrumento_id)` → `(id, cliente_id,
+    instrumento_id)`.*
   - **`ref_externa`: a convenção completa é a V3 acima**, e o que ela compra é isto — o
     adiamento das consequências contábeis para o F5 vira **recorte de escopo** em vez de
     dívida sem prazo, porque com a chave definida o backfill do F5 é idempotente por
@@ -2144,11 +2384,37 @@ para ela.
     futura compara contra `(now() AT TIME ZONE 'America/Sao_Paulo')::date`, **nunca** contra
     `current_date`; "hoje", "dia útil" e "12:00" das fases seguintes são nesse fuso; e a
     regra do alerta das 12:00 do F7 **carrega o offset explicitamente**, porque o avaliador
-    roda em UTC. *O caso concreto que a ausência produzia é diário, não teórico:* entre 00:00
-    e 03:00 BRT o dia BRT já virou e o UTC não, então o job de **ciclo curto** do F5 — que
-    roda 24 h por dia por decisão daquela fase — tentaria inserir `data_evento = hoje_BRT` e
-    a trigger o **rejeitaria como data futura**, todo dia, por três horas, com um desfecho
-    que não tem nome em lugar nenhum (o job só tem `COMPLETUDE` e `LIMITE`). *Rejeitado:*
+    roda em UTC.
+
+    *O caso concreto que a ausência produzia é diário, não teórico — mas o SINAL dele estava
+    escrito ao contrário aqui e na §10.34, e a versão anterior derivava disso um teste que
+    não separa as duas implementações. Conferido contra Postgres real em 2026-09-10:*
+
+    ```
+    utc = 2026-09-10 10:16:42     brt = 2026-09-10 07:16:42
+    ```
+
+    `America/Sao_Paulo` é UTC**−3**, então o relógio BRT lê **mais cedo** e o dia BRT vira
+    **três horas depois** do dia UTC. A janela em que as duas datas divergem é, portanto,
+    **21:00–24:00 BRT** (= 00:00–03:00 **UTC**), e nela `data_utc = D` enquanto
+    `data_brt = D − 1`. **Não é** "o dia BRT já virou e o UTC não": é o inverso.
+
+    **A consequência inverte o modo de falha, e é ela que importa:** `current_date` num
+    servidor/sessão em UTC **nunca é estrito demais — é permissivo demais**. Entre 21:00 e
+    24:00 BRT ele vale `D`, então aceita `data_evento = D`, que **em BRT é amanhã**: a
+    trigger deixa entrar no livro append-only, todo dia, por três horas, exatamente o fato
+    que ainda não aconteceu que ela existe para barrar. O job de **ciclo curto** do F5 nunca
+    é rejeitado por isto (`hoje_BRT ≤ current_date` em qualquer hora); quem passa é o
+    **movimento com data futura**, que é o dado sem conserto.
+
+    **E é por isso que o teste de fronteira do Pronto (p) teve de ser reescrito:** a forma
+    anterior ("sessão em `SET TIME ZONE 'UTC'`, relógio na janela 00:00–03:00 BRT, o
+    `INSERT` com a data BRT de hoje tem de ser **aceito**") é **tautologia** — na janela real
+    `hoje_BRT = D − 1 ≤ current_date = D`, então a implementação errada **também** aceita, e
+    o teste fecha verde sobre ela. É a §10.22 dentro do item que a invoca. A forma que
+    separa as duas está no Pronto (p), e ela move a **sessão**, não o relógio.
+
+    *Rejeitado:*
     fixar `TZ=America/Sao_Paulo` no container e continuar usando `current_date` — resolve por
     configuração de ambiente o que é regra de **dado**, some no primeiro compose que esquecer
     a variável (e as cinco listas não a carregam), e não alcança o avaliador do Grafana, que
@@ -2459,16 +2725,23 @@ para ela.
       verdade porque o exemplo ZERA a posicao. Escreva (3) no FIXTURE, nunca no
       invariante.
 
-      PENDENCIA BLOQUEANTE — caixa:BRL NUNCA E DEBITADO. NENHUMA linha deste roadmap
-      debita caixa:BRL: a unica que o escreve e a liquidacao perna 2, sempre +(Y-t-f).
-      Nao ha saque, nao ha a_pagar, e aplicacao -> compra grava UMA linha, no instrumento
-      do titulo, sem contrapartida. A CONTA: D0 compra 10@100 (patrimonio 1000); D1
+DECIDIDO EM 2026-09-09 (era pendencia bloqueante) — caixa:BRL PASSA A SER DEBITADO,
+      e quem diz QUANTO e o campo `valorOrigemSaldo` da 5.1 (string decimal, opcional,
+      presente sse operacao esta em {aplicacao, aporte}, com 0 <= v <= valorFinanceiro).
+      A REGRA COMPLETA ESTA NA V6 DO CORPO DA FASE — leia de la, sao quatro desfechos e
+      seis colunas, e nao cabem aqui sem virar copia que envelhece. O resumo: ausente
+      estaciona; invalido estaciona; zero grava UMA linha; maior que zero grava DUAS, e o
+      qtd_delta da perna de caixa e -valorOrigemSaldo, NUNCA -valorFinanceiro. AUSENTE NAO
+      E ZERO — tratar como zero reintroduz o defeito em silencio, numa tabela sem UPDATE. O problema que isso resolveu, preservado porque voce vai perguntar por que o
+      campo existe: a unica linha que escrevia caixa:BRL era a liquidacao perna 2, sempre
+      +(Y-t-f); nao havia saque, nao havia a_pagar, e aplicacao -> compra gravava UMA
+      linha, no instrumento do titulo, sem contrapartida. A CONTA: D0 compra 10@100 (patrimonio 1000); D1
       resgate 10 com Y=1000 e t=100 (patrimonio 900); D2 liquidacao (900 em caixa:BRL);
       D3 reaplica 9@100 -> o extrato diz 9x100 + 900 = 1800 e o cliente tem 900.
-      SE VOCE ABRIU ESTA FASE E ESTA PENDENCIA AINDA ESTA ABERTA, PARE E PERGUNTE: o F3
-      NAO FECHA O VOCABULARIO DO LIVRO SEM ISTO, e movimentos e append-only (nao ha como
-      apendar depois a perna que deveria ter nascido junto).
-      POR QUE VOCE NAO PODE DECIDIR: o modelo e COERENTE se `aplicacao` significa
+      NAO PERGUNTE SE ISTO AINDA ESTA ABERTO: fechou em 2026-09-09, e a regra que voce
+      implementa esta na V6 do corpo da fase. O paragrafo abaixo e o REGISTRO do porque a
+      decisao nao podia ser sua — leia para entender o campo, nao para decidir de novo.
+      POR QUE VOCE NAO PODIA DECIDIR: o modelo e COERENTE se `aplicacao` significa
       "dinheiro entrou de fora e virou titulo" e ERRADO se a aplicacao consumiu o produto
       de uma liquidacao anterior — as duas leituras sao legitimas, e o TradeRegistered da
       5.1 NAO DIZ QUAL E. Operacoes sabe e nao publica. Escolher aqui e re-derivar rio
@@ -2539,9 +2812,15 @@ para ela.
       com `liq:<tradeId>` as duas linhas COLIDEM no UNIQUE (cliente_id, ref_externa),
       que e o defeito que esta decisao existe para prevenir.
       POR QUE A FAMILIA DE CORPACTION EXISTE: cupom e vencimento produzem, POR CLIENTE,
-      o mesmo conjunto de 4-5 linhas que um resgate, e nenhuma tem tradeId.
+      o mesmo TIPO de conjunto que um resgate, e nenhuma tem tradeId.
+      AS CONTAGENS NAO SAO IGUAIS ENTRE AS TRES FAMILIAS, e e delas que um teste sai
+      errado: resgate vai a 6, vencimento vai a 6 (tem iof:venc:), e CUPOM A 5 — ele NAO
+      tem linha de iof: na enumeracao acima, de proposito. Os pisos sao menores pelas duas
+      condicoes do F5 (sem IOF em prazo >= 30 dias; sem ir: quando a base do IR e zero ou
+      negativa), entao a faixa e 4-6 para resgate e vencimento e 4-5 para cupom. Quem
+      contar linhas num teste declara qual caso o fixture monta.
       A chave e montada por concatenacao em ORDEM FIXA e NUNCA e lida de volta — nao
-      faca parsing dela. Um resgate vira 4-5 linhas; com a mesma chave elas colidem, e
+      faca parsing dela. Um resgate vira 4 a 6 linhas; com a mesma chave elas colidem, e
       com NULL o Postgres NAO CONSTRANGE — cada derivada duplicaria para sempre numa
       tabela sem DELETE.
 
@@ -2556,10 +2835,11 @@ para ela.
       (3) snapshots_posicao.preco e NOT NULL, entao sem isto NAO NASCERIA linha de
       snapshot de caixa nenhuma — o F5 escrituraria o limbo D->D+1 no livro e o F7 o
       apagaria do documento, e o extrato de posicao do F8 ficaria sem a parcela de caixa.
-      NAO LEIA a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5) como
-      assercao fechada: e exatamente ela que a PENDENCIA BLOQUEANTE do caixa:BRL, acima,
-      deixa em aberto. O que este item (3) afirma e so que SEM PRECO POR DEFINICAO NAO
-      EXISTE LINHA DE CAIXA NO SNAPSHOT, e isso vale sob qualquer desfecho da pendencia.
+NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
+      nesta fase: com a perna de caixa (V6) ela volta a ser defensavel para carteira nascida
+      depois do campo `valorOrigemSaldo`, mas reavaliar isso e do F8, nao daqui. O que este
+      item (3) afirma e so que SEM PRECO POR DEFINICAO NAO EXISTE LINHA DE CAIXA NO
+      SNAPSHOT, e isso vale de qualquer jeito.
       Em posicao_corrente, linha de caixa COM quantidade > 0 tem preco_medio = 1,000000 e
       custo_total = quantidade.
       A REGRA DE FRONTEIRA DA V1 PRECEDE ESTA, INCLUSIVE PARA caixa:* — NAO ESCREVA a
@@ -2575,7 +2855,7 @@ para ela.
       parecer que elas nao se aplicavam.)
       CHECK ENUMERANDO os ids de caixa permitidos (caixa:BRL, caixa:a_liquidar), pela
       PADROES 10.21: como a identidade e gravada CRUA (sem ToLowerInvariant — item 4 de
-      DECISOES JA TOMADAS, mais abaixo; o vocabulario vai de V1 a V5 e nao existe "V6"), um
+      DECISOES JA TOMADAS, mais abaixo; o vocabulario vai de V1 a V6 desde 2026-09-09), um
       `caixa:brl` digitado uma vez viraria um SEGUNDO instrumento de caixa para sempre,
       e o patrimonio passaria a somar duas linhas onde havia uma. Um caixa:USD futuro
       custa uma migration de uma linha.
@@ -2602,11 +2882,68 @@ para ela.
      Estorno de estorno continua PERMITIDO de proposito (PADROES 10.21, a excecao).
 
   2. DECISAO A, metade irreversivel: CHECK tornando ref_estorno NOT NULL quando
-     tipo = 'ajuste' e NULL nos demais tipos; FK COMPOSTA com cliente_id (ajuste nao
-     cruza cliente); CHECK de nao-auto-referencia. Um estorno orfao tem que ser
-     IMPOSSIVEL de nascer. Ao declarar a FK composta, nomeie o indice de cobertura com
+     tipo = 'ajuste' e NULL nos demais tipos; FK COMPOSTA com cliente_id E
+     instrumento_id (o ajuste nao cruza cliente NEM instrumento — a V2 afirma que a
+     linha de reversao tem o MESMO instrumento_id da revertida), sustentada pela chave
+     alternada ux_movimentos_id_cliente_instrumento; CHECK de nao-auto-referencia. Um
+     estorno orfao tem que ser IMPOSSIVEL de nascer. SAO TRES COLUNAS, como no molde
+     operacoes: com duas, um ajuste apontando para linha de OUTRO instrumento do mesmo
+     cliente passa, consome o slot unico de reversao daquela linha (indice parcial da
+     V5), e sem UPDATE nem DELETE o ajuste correto fica impossivel PARA SEMPRE. Ao
+     declarar a FK composta, nomeie o indice de cobertura com
      HasDatabaseName, senao o EF gera um IX_ em PascalCase que ninguem escreveu
      (PADROES 10.23).
+
+  2b. OS QUATRO DESVIOS POR CORRECAO DA 7.1, e a lista e fechada — nao invente um quinto,
+     nao suprima nenhum: (1) `aporte` no enum de tipo; (2) ref_externa NOT NULL;
+     (3) valor_financeiro NOT NULL (o "quando houver" da 7.1 nao tem testemunha no
+     vocabulario fechado, e SUM ignora NULL, o que quebra em silencio os invariantes de
+     soma do livro); (4) qtd_delta SEM DEFAULT 0 (o EF emite toda coluna mapeada em todo
+     INSERT, entao o default so alcanca SQL cru — fixture, migration de dados — e ali ele
+     vira quantidade zero gravada em silencio, sendo 0 legitimo so para cupom).
+     registrado_em MANTEM o now(): la o default E o produtor do valor. A lista inteira, com
+     o motivo de cada um, esta em DECISOES DESTA FASE, no corpo da fase.
+
+  2c. DOZE CHECKs em movimentos, e os SETE ultimos entram pela 10.21 (em append-only o
+     lado estrito e o reversivel): ck_movimentos_tipo_valido (os dez, predicado DERIVADO
+     de TipoMovimento.All, nunca a lista escrita duas vezes); ck_movimentos_ajuste_coerente
+     (BICONDICIONAL: (tipo = 'ajuste') = (ref_estorno IS NOT NULL));
+     ck_movimentos_estorno_nao_auto; ck_movimentos_ref_externa_nao_vazia
+     (btrim(ref_externa) <> ''); ck_movimentos_instrumento_caixa_valido (allow-list
+     derivada de InstrumentosCaixa, e o `lower(btrim(...))` NAO E OPCIONAL:
+     lower(btrim(instrumento_id)) NOT LIKE 'caixa:%' OR instrumento_id IN
+     ('caixa:BRL','caixa:a_liquidar'). SAO DOIS VETORES, e cada um foi achado numa rodada
+     diferente. Sem o lower(), o LIKE e case-sensitive e `Caixa:BRL` nao casa com o
+     prefixo; sem o btrim(), ` caixa:BRL` nao casa TAMPOUCO, porque comeca com espaco.
+     Nos dois casos o antecedente do OR fica verdadeiro e o valor ENTRA como se fosse id
+     do Hub — um SEGUNDO instrumento de caixa, permanente, que e o proprio defeito que o
+     CHECK existe para fechar. Assimetria util: espaco A DIREITA (`caixa:BRL `) ja era
+     recusado, porque o prefixo casa e o IN falha; so o da ESQUERDA driblava. E lower() e
+     btrim() vao SO na deteccao do prefixo — a comparacao da allow-list continua EXATA,
+     porque baixar caixa ou trimar ali transformaria identidade de outro contexto
+     (PADROES 10.43 e 10.24)); ck_movimentos_valor_nao_negativo
+     (tipo = 'ajuste' OR valor_financeiro >= 0 — e NAO endureca o ajuste para <= 0, porque
+     o estorno DE estorno reverte um ajuste de -600 com +600 e essa guarda fecharia a
+     ultima porta de correcao); ck_movimentos_cupom_sem_quantidade
+     (tipo <> 'cupom' OR qtd_delta = 0 — senao I4 fica falso e a reconciliacao do F7
+     alerta sem ter o que consertar); ck_movimentos_cliente_id_nao_vazio e
+     ck_movimentos_instrumento_id_nao_vazio (a 10.24 manda normalizar os identificadores
+     TODOS, nao um: em append-only "cli-1" e "cli-1 " sao dois clientes para sempre); e os
+     TRES DE BORDA — ck_movimentos_cliente_id_sem_espaco_nas_bordas,
+     ck_movimentos_instrumento_id_sem_espaco_nas_bordas e
+     ck_movimentos_ref_externa_sem_espaco_nas_bordas —, todos `x !~ '^\s|\s$'`, um por
+     coluna de identificador. Eles fecham a CLASSE do vetor de espaco, e nao so o caixa:
+     ` td:tesouro-selic-2029 ` tambem entrava, e ai sao dois instrumentos do Hub para
+     sempre. E O REGEX NAO E CAPRICHO — NAO use `x = btrim(x)`: `btrim(text)` no Postgres
+     tira SO O CARACTERE ESPACO por default, enquanto o Trim() do .NET tira tab, newline e
+     CR. Com btrim, `'td:x' + TAB` PASSARIA no banco e seria trimado pelo Dominio, e
+     Dominio e banco dariam VEREDITOS OPOSTOS para a mesma entrada, que e o modo de falha
+     que a 10.24 registra. Conferido: `textregexne`, `lower` e `btrim` tem
+     provolatile = 'i' (IMMUTABLE), logo os tres sao legais em CHECK — ao contrario de
+     now()/current_date, que e o que obriga a guarda de data a ser trigger.
+     NAO ponha CHECK em posicao_corrente: as tres colunas sao gravadas na MESMA TRANSACAO
+     do livro pelo handler do F4, e um CHECK numa projecao DESCARTAVEL transformaria
+     defeito de projecao em rollback da escrita do LIVRO, que nao e descartavel.
 
   3. ref_externa: implemente exatamente a V3 acima (NOT NULL, chave por MOVIMENTO, com
      as pernas e a familia de corpaction). Nao reescreva a convencao.
@@ -2653,10 +2990,23 @@ para ela.
      current_date e o dia no fuso do SERVIDOR, que num container padrao e UTC. TODA coluna
      `date` deste schema e uma data nesse fuso, e F5 e F7 HERDAM a regra ("hoje", "dia
      util" e "12:00" sao nesse fuso; a regra do alerta das 12:00 do F7 carrega o offset,
-     porque o avaliador do Grafana roda em UTC). SEM ISSO, entre 00:00 e 03:00 BRT o dia
-     BRT ja virou e o UTC nao, e o job de CICLO CURTO do F5 — que roda 24 h por dia —
-     tentaria inserir data_evento = hoje_BRT e a trigger o REJEITARIA como data futura,
-     todo dia, por tres horas, com um desfecho que nao tem nome em lugar nenhum.
+     porque o avaliador do Grafana roda em UTC).
+     O SINAL DA JANELA, conferido contra Postgres real em 2026-09-10 (utc = 10:16:42,
+     brt = 07:16:42): America/Sao_Paulo e UTC-3, o relogio BRT le MAIS CEDO, e o dia BRT
+     vira TRES HORAS DEPOIS do dia UTC. A janela em que as duas datas divergem e
+     21:00-24:00 BRT (= 00:00-03:00 UTC), e nela data_utc = D e data_brt = D-1. NAO
+     ESCREVA "entre 00:00 e 03:00 BRT o dia BRT ja virou e o UTC nao" — e o inverso, e
+     era o que esta linha dizia.
+     E O MODO DE FALHA E O INVERSO TAMBEM: current_date em UTC nunca e estrito demais, e
+     PERMISSIVO DEMAIS. Entre 21:00 e 24:00 BRT ele vale D e aceita data_evento = D, que
+     EM BRT E AMANHA — a trigger deixa entrar no livro append-only o fato que ainda nao
+     aconteceu, que e o dado sem conserto que ela existe para barrar. O job de ciclo
+     curto do F5 NAO e rejeitado por isso em hora nenhuma (hoje_BRT <= current_date
+     sempre); quem passa e o movimento com data futura.
+     CONSEQUENCIA PARA O SEU TESTE, e ela e a razao de este paragrafo existir: o teste
+     "sessao em UTC + data BRT de hoje tem de ser ACEITA" e TAUTOLOGIA — na janela real
+     hoje_BRT = D-1 <= current_date = D, entao a implementacao com current_date TAMBEM
+     aceita. O teste que separa as duas move a SESSAO, nao o relogio: ver Pronto (p).
      NAO "resolva" isso com TZ=America/Sao_Paulo no container: isso poe em configuracao de
      ambiente o que e regra de DADO, some no primeiro compose que esquecer a variavel, e
      nao alcanca o avaliador do Grafana, que e de outro repo.
@@ -2693,9 +3043,33 @@ para ela.
   (b) `INSERT` de `tipo='ajuste'` com `ref_estorno IS NULL` **recusado** — é a prova de que
   a decisão A ficou no schema e não na disciplina;
   (c) `INSERT` de ajuste apontando para movimento de **outro cliente** recusado;
+  (c2) `INSERT` de ajuste apontando para movimento do **mesmo cliente** e de **outro
+  instrumento** recusado — é a **terceira** coluna da FK composta, e sem este gêmeo ela
+  entra sem teste. Sem ela o dado é irreparável: o ajuste no instrumento errado consome o
+  slot único de reversão da linha (o índice parcial da V5) e o ajuste correto fica
+  impossível para sempre;
   (d) `INSERT` com `ref_estorno = id` recusado;
   (e) `INSERT` com `ref_externa` nula, vazia ou só espaços recusado — entrada malformada
-  não é sinônimo de ausente (§10.24);
+  não é sinônimo de ausente (§10.24). **E o mesmo para `cliente_id` e `instrumento_id`**:
+  a §10.24 manda normalizar os identificadores **todos, não um** ("foi a seção 'Normalizar
+  de um lado só' acontecendo dentro do código que a combatia"), e numa tabela append-only
+  `"cli-1"` e `"cli-1 "` seriam dois clientes distintos para sempre;
+  (e2) **os dois CHECKs de valor que entram pela §10.21**, cada um com controle negativo
+  **e** positivo: `INSERT` de `compra` com `valor_financeiro < 0` **recusado** e com
+  `valor_financeiro = 0` **aceito** (a convenção de sinal da V2 — magnitude bruta não
+  negativa, e a **única** exceção é o `ajuste`), mais `INSERT` de `ajuste` com
+  `valor_financeiro` **negativo aceito** e com `valor_financeiro` **positivo também
+  aceito** — o segundo é o controle que impede endurecer o `ajuste` para `≤ 0`, porque o
+  estorno **de** estorno reverte um ajuste de −600 com +600 e essa guarda fecharia a última
+  porta de correção (a exceção nomeada da §10.21); e `INSERT` de `cupom` com
+  `qtd_delta ≠ 0` **recusado** e com `qtd_delta = 0` **aceito** — sem ele
+  `Σ qtd_delta = quantidade` (I4) fica falso e a reconciliação do F7, único detector
+  automático do sistema, alerta sem ter o que consertar na projeção;
+  (e3) **os dois desvios novos, provados e não afirmados:** `INSERT` **omitindo**
+  `valor_financeiro` **recusado** (a coluna é NOT NULL — desvio 3), e `INSERT` **omitindo**
+  `qtd_delta` **recusado** em vez de gravar `0` em silêncio (a coluna não tem DEFAULT —
+  desvio 4). O segundo é o único critério desta fase que reprova a DDL literal da §7.1, e é
+  por isso que ele é teste e não nota de rodapé;
   (f) as **constantes** de precisão/escala batendo com `numeric_precision`/`numeric_scale`
   lidos do `information_schema`, e o banco rejeitando (magnitude) ou **arredondando em
   silêncio** (escala) exatamente como a constante prevê — `qtd_delta` com escala 9 e com 11
@@ -2738,7 +3112,27 @@ para ela.
   anterior **aceito** (controle positivo — sem ele a constraint poderia estar fechando a
   última porta de correção, que é a exceção que a §10.21 nomeia);
   (n) **V4:** `INSERT` com `instrumento_id = 'caixa:brl'` (caixa baixa) **recusado** pelo
-  CHECK, e `'caixa:BRL'` e `'caixa:a_liquidar'` **aceitos** — controle negativo e positivo;
+  CHECK, e `'caixa:BRL'` e `'caixa:a_liquidar'` **aceitos** — controle negativo e positivo.
+  **E o negativo é plural, não singular:** `'Caixa:BRL'` (capitalizado), `'CAIXA:BRL'`
+  (maiúsculo), `'caixa:'` (prefixo puro) e `'caixa:USD'` **também recusados**, mais um id do
+  Hub (`'td:tesouro-selic-2029'`) **aceito**. Exercitar só `'caixa:brl'` é o antipadrão da
+  §10.19 em forma de dado — verde num caixa não é evidência sobre os outros —, e é
+  exatamente o teste que **passava** com o predicado sem `lower()`, que aceita `Caixa:BRL`
+  por engano (§10.43).
+  **E o plural tem DOIS eixos, não um:** além das variações de caixa, `' caixa:BRL'`,
+  `'  caixa:BRL'` e `' caixa:brl'` **recusados** — o eixo do **espaço**, que passou pela
+  primeira rodada inteira porque o critério só listava o eixo do caixa. `'caixa:BRL '`
+  (espaço à direita) já era recusado antes da correção, e por isso **não** serve de prova:
+  o prefixo casa e o `IN` falha. **O que separa as duas implementações é o espaço à
+  ESQUERDA**, e ele tem de estar no critério nomeadamente;
+  (n2) **os TRÊS CHECKs de borda**, um por coluna de identificador, com controle negativo e
+  positivo: `instrumento_id`, `cliente_id` e `ref_externa` com espaço **à esquerda**, **à
+  direita**, e com **TAB** (`E'td:x\t'`, `E'\ttd:x'`) **recusados**; os mesmos valores sem
+  espaço **aceitos**. O caso do **TAB** é o que separa o regex de um `x = btrim(x)`:
+  `btrim(text)` no Postgres tira **só o caractere espaço**, o `Trim()` do .NET tira tab e
+  newline, então com `btrim` o banco aceitaria o que o Domínio trimaria — Domínio e banco
+  com **vereditos opostos para a mesma entrada**, que é o modo de falha que a §10.24
+  registra. Sem o caso do TAB, as duas implementações empatam no teste;
   (o) `INSERT` de `tipo = 'aporte'` **aceito**, com `instrumento_id` **do título** e
   `qtd_delta > 0` (é a prova de que o desvio por correção da V1 chegou ao banco e de que o
   `aporte` não virou linha de caixa, que era o erro da versão anterior deste arquivo);
@@ -2746,24 +3140,56 @@ para ela.
   **recusado** pela trigger, e a **mesma expressão sem o `+ 1`** **aceita** — controle
   negativo e positivo do dado sem conserto, a §10.21 aplicada ao futuro e não só ao passado.
   **E o fuso faz parte da asserção, não é enfeite:** um teste escrito com `current_date`
-  passaria com a trigger comparando em UTC, que é o defeito que a decisão do fuso fecha. O
-  teste que **separa** as duas implementações é o de fronteira: com a sessão do Postgres em
-  `SET TIME ZONE 'UTC'` e o relógio dentro da janela 00:00–03:00 BRT (injetada, não
-  esperada), o `INSERT` com a data **BRT de hoje** tem de ser **aceito** — com
-  `current_date` ele seria recusado como futuro;
+  passaria com a trigger comparando em UTC, que é o defeito que a decisão do fuso fecha.
+  **O teste que SEPARA as duas implementações move a SESSÃO do Postgres, não o relógio** —
+  `now()` não é injetável de fora e a janela real dura três horas por dia, então esperar por
+  ela é ter suíte que só discrimina de madrugada. `current_date` **respeita**
+  `SET TIME ZONE`; a expressão `(now() AT TIME ZONE 'America/Sao_Paulo')::date` **não**.
+  Essa é a alavanca, e são **duas direções**, cada uma com a sua precondição afirmada no
+  próprio teste (o teste falha se a precondição não valer, em vez de passar por vacuidade):
+  - **sessão um dia À FRENTE do BRT** — `SET TIME ZONE 'Pacific/Kiritimati'` (UTC+14, 17 h
+    à frente de BRT; precondição `current_date > (now() AT TIME ZONE
+    'America/Sao_Paulo')::date`, verdadeira das 07:00 às 24:00 BRT). `INSERT` com
+    `data_evento = current_date` tem de ser **RECUSADO**: é amanhã em BRT. A implementação
+    com `current_date` **aceita** — e é este o caso que ela erra na vida real, porque
+    `current_date` é permissivo demais, não estrito demais.
+  - **sessão um dia ATRÁS do BRT** — `SET TIME ZONE 'Etc/GMT+12'` (UTC−12, 9 h atrás de
+    BRT; precondição `current_date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`,
+    verdadeira das 00:00 às 09:00 BRT). `INSERT` com
+    `data_evento = (now() AT TIME ZONE 'America/Sao_Paulo')::date` tem de ser **ACEITO**:
+    é hoje em BRT. A implementação com `current_date` **recusa** como futuro.
+
+  As duas janelas se sobrepõem entre 07:00 e 09:00 BRT e **cobrem as 24 horas juntas**, então
+  o teste exercita **toda direção cuja precondição valer** e afirma que **ao menos uma** valeu
+  — nenhuma hora do dia deixa a suíte sem o discriminante. *Verificado contra Postgres 16 em
+  2026-09-10, às 07:16 BRT, quando as duas precondições valiam: `Kiritimati` deu
+  `current_date = 2026-09-11` contra `data_brt = 2026-09-10`, e `Etc/GMT+12` deu
+  `2026-09-09`.* *A versão anterior deste item pedia "sessão em UTC e relógio na janela
+  00:00–03:00 BRT, com o `INSERT` da data BRT de hoje **aceito**", e ela era **tautologia**:
+  além de a janela ser 21:00–24:00 BRT e não 00:00–03:00, nela `hoje_BRT = D − 1 ≤
+  current_date = D`, então a implementação errada também aceita. O critério fechava verde
+  sobre o defeito que existia para pegar — §10.22 dentro do item que a invoca.*
 
 - [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
-  de ordem. **Dependência externa nova: o `operacoes` publicando — e ele já publica.**
+  de ordem. **Dependência externa nova: o `operacoes` publicando `valorOrigemSaldo` (V6) —
+  e isso ele AINDA NÃO faz.** *Ele publica `trades.registered`; o que falta é o campo. Sem
+  ele, **todo** `aplicacao`/`aporte` estaciona com `origem_recurso_ausente` — desfecho
+  correto, e inútil como serviço. Combine com Operações ANTES de abrir esta fase.*
 
   `BackgroundService` consumindo a `custodia.prices`, **ack manual** após persistir o
   efeito, `BasicQos(prefetchCount: 1)`, processamento serial, uma instância.
   Redeclaração da topologia no boot com os **mesmos** argumentos do F2 (406 se divergirem,
-  que é falha desejável). Handler de `TradeRegistered`: uma linha em `movimentos` com o
-  **fato**, traduzida pelo **mapeamento V2 do F3** — `aplicacao → compra`,
-  `resgate → venda`, `aporte → aporte` **no instrumento do evento** (não em `caixa:BRL`:
-  nenhum campo do payload se descarta sem regra escrita na V2), `estorno → ajuste` com
-  `ref_estorno` resolvido por lookup de `ref_externa = estornaTradeId` do **mesmo**
-  cliente —, mais
+  que é falha desejável). Handler de `TradeRegistered`: o movimento do **fato** em
+  `movimentos`, traduzido pelo **mapeamento V2 do F3** — `aplicacao → compra`,
+  `resgate → venda`, `aporte → aporte` **no instrumento do evento** (o movimento principal
+  nunca é em `caixa:BRL`: gravar assim descartaria `instrumentoId` e `quantidade`, e nenhum
+  campo do payload se descarta sem regra escrita na V2), `estorno → ajuste` com
+  `ref_estorno` resolvido por lookup —, **mais a PERNA DE CAIXA da V6 quando
+  `valorOrigemSaldo > 0`**, que faz `compra` e `aporte` gravarem **DUAS** linhas na mesma
+  transação; e o estorno de uma aplicação que teve perna grava **dois** `ajuste`, um por
+  linha revertida (V5), resolvendo as **duas** `ref_externa` do trade estornado. *Não leia
+  "uma linha" em lugar nenhum desta fase: a V6 mudou isso, e `movimentos` é append-only —
+  a perna que não nascer junto não se apenda depois.* Mais
   `posicao_corrente` atualizada **na mesma transação, nas TRÊS colunas**. Dedupe por
   `UNIQUE (cliente_id, ref_externa)`. Validação de magnitude **e escala** dos `numeric` no
   Domínio (§10.25), agora que existe escritor. Métricas de consumo, e o alerta de
@@ -2867,14 +3293,44 @@ para ela.
     esquecer de marcar, em silêncio"). Valores desta fase: `tipo_nao_tratado_prices`,
     `tipo_nao_tratado_corpactions`, `tipo_nao_tratado_eod`, `estorno_orfao_expirado`,
     `estorno_cliente_divergente`, `estorno_duplicado`, `estorno_divergente`,
-    `retry_indisponivel`, `versao_nao_suportada`,
-    `payload_invalido`. **São DEZ nesta fase, e a lista é fechada e sem default**; duas fases
+    `retry_indisponivel`, `versao_nao_suportada`, `payload_invalido`,
+    **`origem_recurso_ausente`** e **`origem_recurso_invalida`** (os dois da **V6** do F3: o
+    primeiro quando `valorOrigemSaldo` não vem num `aplicacao`/`aporte` — e ausente **não é
+    zero** —, o segundo quando ele vem não-decimal, negativo, ou maior que o
+    `valorFinanceiro`), e **`identificador_com_espaco_na_borda`** (o terceiro que vem do
+    schema do F3, e o único que nasce de uma **constraint** e não de uma leitura do payload:
+    os três CHECKs `ck_movimentos_*_sem_espaco_nas_bordas` rejeitam `cliente_id`,
+    `instrumento_id` ou `ref_externa` com espaço, tab ou newline na borda. **O caminho não é
+    hipotético e não é um erro nosso:** se Operações publicar um `tradeId` com espaço na
+    borda, a `ref_externa` do movimento **principal** das famílias que **têm** `tradeId` — trade e
+    estorno, as duas únicas — é o
+    `tradeId` **nu**, sem papel nem perna — então o espaço cai na borda dela e o CHECK
+    dispara. Como as linhas do fato nascem na **mesma transação**, nada é gravado e a chave
+    de dedupe **não é consumida**, o que preserva o I13; o que faltava era o **nome**, sem o
+    qual o handler do F4 deixaria essa `PostgresException` cair no tratamento genérico —
+    500 em vez de estacionar legível. *Nas linhas **derivadas** (`ir:<tradeId>`,
+    `<tradeId>:brl`) o mesmo espaço fica **interno** e não é pego pelo CHECK de
+    `ref_externa`: é a linha **nua** que fecha o caminho.*
+    **E para as famílias de corpaction — `cupom` e `vencimento` — quem fecha é OUTRO CHECK, e
+    vale escrever porque a leitura descuidada deixaria um caminho aberto:** elas **não têm
+    `tradeId`** (a V3 diz isso literalmente), então a `ref_externa` principal delas é
+    `cupom:<instrumentoId>:<data>` / `venc:<instrumentoId>:<data>` e um espaço na borda do
+    `instrumentoId` cai no **meio** dessa chave, escapando do CHECK de `ref_externa`. O caminho
+    fecha de todo modo porque **o mesmo `instrumentoId` cru também vai para a coluna
+    `instrumento_id`**, que tem CHECK de borda próprio — e é essa a razão de os três CHECKs serem
+    por **coluna** e não um só sobre `ref_externa`. *A versão anterior desta alínea dizia "de todas
+    as famílias da V3", o que é falso para duas das quatro.*).
+    **São TREZE nesta fase, e a lista é fechada e sem default**; duas fases
     seguintes acrescentam **um valor cada**, e os dois já estão nomeados aqui para a regra
     "sem default" não ser furada por uma fase que só diz "com motivo nomeado": o **F7**
     acrescenta **`intervalo_acima_do_teto`** (o handler de `eod.ready` recusando um intervalo
     de materialização acima do teto configurado, em vez de entrar em laço de reentrega que
-    nunca fecha) e o **F9** acrescenta **`acao_desconhecida`**. **Com os dois, são DOZE no
-    roadmap inteiro** — recontados contra este arquivo, não copiados. Os dois últimos a entrar,
+    nunca fecha) e o **F9** acrescenta **`acao_desconhecida`**. **Com os dois, são QUINZE no
+    roadmap inteiro** — recontados contra este arquivo, não copiados. *Eram dez e doze até
+    2026-09-09; a V6 acrescentou dois, e os CHECKs de borda do F3 acrescentaram o décimo
+    terceiro em 2026-09-10. A recontagem é o próprio procedimento que o
+    parágrafo abaixo exige — uma lista declarada fechada que cresce em um lugar só é uma
+    lista com default informal.* Os dois últimos a entrar,
     com a decisão que os criou: **`estorno_divergente`** é a dispensa declarada do estorno
     na V2 do F3 — os três campos próprios do payload de estorno são **conferidos** contra o
     movimento original, e divergência não pode ser aplicada em silêncio; **`retry_indisponivel`**
@@ -3195,17 +3651,25 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   - Redeclaracao da topologia no boot com os MESMOS argumentos do F2 (divergencia
     devolve 406 PRECONDITION_FAILED, que e falha alta e desejavel). E a SEGUNDA linha de
     defesa; a primeira e o passo de deploy do F2.
-  - Handler de TradeRegistered: UMA linha em movimentos com o fato, traduzida pelo
-    MAPEAMENTO V2 FECHADO NO F3 (copie literalmente, nao reescreva):
+  - Handler de TradeRegistered: o movimento do fato em movimentos, traduzido pelo
+    MAPEAMENTO V2 FECHADO NO F3 (copie literalmente, nao reescreva) — MAIS a PERNA DE
+    CAIXA da V6 quando valorOrigemSaldo > 0, que faz compra e aporte gravarem DUAS linhas
+    na MESMA transacao. A regra completa da perna (os quatro desfechos, as seis colunas,
+    a ref_externa `<tradeId>:brl` e o estorno das duas pernas) esta na V6 do F3: leia de
+    la, nao reescreva aqui. NAO EXISTE "uma linha por fato" nesta fase.
       aplicacao -> compra   instrumento do evento, qtd_delta = +quantidade,
                             valor = valorFinanceiro (bruto)
       resgate   -> venda    instrumento do evento, qtd_delta = -quantidade,
                             valor = valorFinanceiro (bruto)
       aporte    -> aporte   INSTRUMENTO DO EVENTO, qtd_delta = +quantidade,
-                            valor = valorFinanceiro (bruto). NAO e caixa:BRL e NAO e
-                            +valorFinanceiro: gravar assim DESCARTARIA o instrumentoId e
-                            a quantidade numa tabela sem UPDATE. A diferenca contra
-                            `aplicacao` e SO O ROTULO no extrato.
+                            valor = valorFinanceiro (bruto). O MOVIMENTO PRINCIPAL nao e
+                            caixa:BRL e nao e +valorFinanceiro: gravar assim DESCARTARIA
+                            o instrumentoId e a quantidade numa tabela sem UPDATE. A
+                            diferenca contra `aplicacao` e SO O ROTULO no extrato.
+                            ISTO NAO PROIBE A PERNA DE CAIXA DA V6: ela e uma SEGUNDA
+                            linha, em caixa:BRL, com qtd_delta = -valorOrigemSaldo e
+                            ref_externa `<tradeId>:brl` — o que a frase acima proibe e o
+                            movimento PRINCIPAL ir para caixa, nao a perna existir.
       estorno   -> ajuste   instrumento do movimento estornado (LOOKUP de
                             ref_externa = estornaTradeId DO MESMO CLIENTE),
                             qtd_delta e valor SIMETRICOS ao estornado (o par soma zero
@@ -3378,12 +3842,29 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      faz um produtor futuro esquecer de marcar, em silencio). Valores desta fase:
      tipo_nao_tratado_prices, tipo_nao_tratado_corpactions, tipo_nao_tratado_eod,
      estorno_orfao_expirado, estorno_cliente_divergente, estorno_duplicado,
-     estorno_divergente, retry_indisponivel, versao_nao_suportada, payload_invalido.
-     SAO DEZ NESTA FASE. A LISTA E FECHADA E SEM DEFAULT; duas fases seguintes acrescentam
+     estorno_divergente, retry_indisponivel, versao_nao_suportada, payload_invalido,
+     origem_recurso_ausente (valorOrigemSaldo faltando num aplicacao/aporte — AUSENTE NAO
+     E ZERO) e origem_recurso_invalida (nao-decimal, negativo, ou maior que o
+     valorFinanceiro). Os dois vem da V6 do F3.
+     E identificador_com_espaco_na_borda, que vem do SCHEMA do F3 e nao de leitura de
+     payload: os tres CHECKs ck_movimentos_*_sem_espaco_nas_bordas rejeitam cliente_id,
+     instrumento_id ou ref_externa com espaco, tab ou newline na borda. O caminho: se
+     Operacoes publicar tradeId com espaco na borda, a ref_externa do movimento PRINCIPAL
+     das familias que TEM tradeId (trade e estorno, as duas unicas) e o tradeId NU, entao o
+     espaco cai na borda dela e o CHECK dispara. NAO ESCREVA "de toda familia da V3": cupom e
+     vencimento NAO tem tradeId, a ref_externa principal delas e cupom:<instrumentoId>:<data> /
+     venc:<instrumentoId>:<data>, e um espaco na borda do instrumentoId cai no MEIO dessa chave.
+     Nessas duas quem fecha o caminho e o CHECK de borda da COLUNA instrumento_id, porque o
+     mesmo valor cru vai para la tambem — e e essa a razao de os tres CHECKs serem por COLUNA e
+     nao um so sobre ref_externa.
+     As linhas do fato nascem na MESMA TRANSACAO, entao nada e gravado e a chave
+     de dedupe NAO e consumida (I13 preservado) — o que faltava era o NOME, sem o qual a
+     PostgresException cai no tratamento genERICO e vira 500 em vez de estacionar legivel.
+     SAO TREZE NESTA FASE. A LISTA E FECHADA E SEM DEFAULT; duas fases seguintes acrescentam
      UM VALOR CADA, os dois ja nomeados aqui: o F7 acrescenta intervalo_acima_do_teto (o
      handler de eod.ready recusando intervalo de materializacao acima do teto, em vez de
      entrar em laco de reentrega que nunca fecha) e o F9 acrescenta acao_desconhecida. COM
-     OS DOIS, SAO DOZE NO ROADMAP INTEIRO.
+     OS DOIS, SAO QUINZE NO ROADMAP INTEIRO.
      Os dois ultimos a entrar, com a decisao que os criou: `estorno_divergente` e a
      dispensa declarada do estorno na V2 do F3 (os tres campos proprios do payload sao
      CONFERIDOS contra o movimento original); `retry_indisponivel` e o ramo de CONFIRM
@@ -3552,14 +4033,25 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
       (-> estorno_cliente_divergente), estornaTradeId inexistente (-> orfao/retry),
       segundo estorno do MESMO movimento (-> estorno_duplicado), ESTORNO CUJO
       instrumentoId/quantidade/valorFinanceiro DIVERGEM do movimento original
-      (-> estorno_divergente), envelope `v` nao
+      (-> estorno_divergente), APLICACAO/APORTE SEM valorOrigemSaldo
+      (-> origem_recurso_ausente; AUSENTE NAO E ZERO), APLICACAO/APORTE COM
+      valorOrigemSaldo nao-decimal, negativo ou MAIOR QUE O valorFinanceiro
+      (-> origem_recurso_invalida), tradeId OU clienteId OU instrumentoId COM ESPACO, TAB
+      OU NEWLINE NA BORDA (-> identificador_com_espaco_na_borda; os tres CHECKs de borda do
+      schema do F3 disparam na linha PRINCIPAL, cuja ref_externa e o tradeId nu, e como as
+      linhas do fato nascem na mesma transacao nada e gravado e a chave de dedupe NAO e
+      consumida), envelope `v` nao
       suportado (-> versao_nao_suportada), ou decimal fora da escala da coluna. Cada um
       com desfecho NOMEADO e DISTINGUIVEL — nunca "algo deu errado", e nunca dois casos
       com o mesmo nome.
     ESTRITA, A SEGUNDA METADE, e ela e a que pega erro de MAPEAMENTO: NENHUM CAMPO DO
       TradeRegistered E DESCARTADO SEM REGRA ESCRITA NA V2 DO F3. O teste percorre os
       campos do payload e exige, para cada um, ou uma coluna do movimento que o recebeu,
-      ou a regra escrita que o dispensa. A UNICA DISPENSA E A DO ESTORNO
+      ou a regra escrita que o dispensa. A UNICA DISPENSA CONTINUA SENDO A DO ESTORNO —
+      valorOrigemSaldo NAO e uma segunda dispensa: ele nao vai para coluna nenhuma da
+      perna do titulo, mas DETERMINA se existe uma segunda linha e qual e o qtd_delta
+      dela (V6), entao esta USADO, nao descartado. O teste tem que distinguir os dois
+      casos em vez de trata-los como o mesmo. A UNICA DISPENSA E A DO ESTORNO
       (instrumentoId/quantidade/valorFinanceiro "conferidos e nao usados"), e o teste a
       afirma COMO DISPENSA DECLARADA — provando a CONFERENCIA, com um caso divergente que
       tem que virar estorno_divergente. "Vem do lookup" nao e dispensa; e origem. Foi um descarte silencioso (instrumentoId e
@@ -4942,8 +5434,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   documento, e o "soma dos instrumentos + caixa = patrimônio diário" da §7.5 ficaria sem a
   parcela de caixa — derrubando o Pronto do F8. *O que esta fase precisa é só isto: **a
   linha de caixa existe no snapshot**. A **igualdade** "soma dos instrumentos + caixa =
-  patrimônio" é o que a PENDÊNCIA BLOQUEANTE do `caixa:BRL` (F3, V2) deixa em aberto, e o F8
-  Pronto (g) já deixou de afirmá-la — não a reintroduza aqui como critério.*
+  patrimônio" era o que a pendência do `caixa:BRL` deixava em aberto; ela **fechou** (F3, V6)
+  e a igualdade volta a ser defensável, mas **reavaliá-la é do F8** — o Pronto (g) de lá
+  ainda não a afirma, e esta fase não a reintroduz como critério.*
 
   **ESTA É A FASE QUE MUDA O PERFIL DE RECURSO — MEDIR DE NOVO.** O teto de **192m** foi
   medido na VPS em 2026-09-07 para um perfil de API pequena **sem worker** (o próprio
@@ -5627,8 +6120,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     NASCERIA linha de caixa nenhuma: o F5 escritura o limbo D->D+1 no livro e esta fase o
     apagaria do documento, deixando o extrato de posicao do F8 sem a parcela de caixa. NAO
     USE a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5) como criterio:
-    e ela que a PENDENCIA BLOQUEANTE do caixa:BRL (F3, V2) deixa em aberto, e o F8 Pronto (g)
-    ja deixou de afirma-la. O que esta fase precisa e so que A LINHA DE CAIXA EXISTA no
+    era ela que a pendencia do caixa:BRL deixava em aberto; a pendencia FECHOU (F3, V6) e a
+    igualdade volta a ser defensavel, mas reavalia-la e do F8, cujo Pronto (g) ainda nao a
+    afirma. O que esta fase precisa e so que A LINHA DE CAIXA EXISTA no
     snapshot.
   - snapshots_posicao versionado: marca vigente=false e INSERE a nova com calculado_em.
     Versiona SO SE o valor DIFERE do vigente.
@@ -6290,8 +6784,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   registrado_em)` e **não** define desempate para `registrado_em` empatado; o `id` fecha essa
   ordem sem trocar nenhuma das duas chaves que ela prescreve. **Posição:** leitura de `snapshots_posicao WHERE vigente`,
   agregável por dia. *A §7.5 escreve essa agregação como "soma dos instrumentos + caixa =
-  patrimônio diário"; **enquanto a PENDÊNCIA BLOQUEANTE do `caixa:BRL` (F3, V2) estiver
-  aberta, essa igualdade NÃO é afirmada por esta fase** — o campo de total chama-se
+  patrimônio diário". *A pendência do `caixa:BRL` **fechou** (F3, V6) e a igualdade volta a
+  ser defensável — mas **esta fase continua não a afirmando**, e a reavaliação é uma decisão
+  a tomar aqui, com número na mão, não uma herança: o campo de total chama-se
   `somaDosValores` e o Pronto (g) diz exatamente o que ele afirma.* Erro em
   problem+json com `code`, leitura via **Dapper** com SQL explícito (leitura via EF é
   defeito, não estilo — §3), portas devolvendo `Result<T>`, `X-Api-Key` exigida,
@@ -6355,9 +6850,12 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     cursor dela é sobre `instrumento_id`, que é chave única dentro de `(cliente, data)`.
     **O CAMPO DE TOTAL DA POSIÇÃO CHAMA-SE `somaDosValores`, NÃO `patrimonio`, e o nome é a
     decisão:** ele é, literalmente, a soma dos `valor` das linhas devolvidas — nada além
-    disso. Chamá-lo de patrimônio afirmaria a igualdade da §7.5 que a **PENDÊNCIA BLOQUEANTE
-    do `caixa:BRL`** (F3, V2) deixa em aberto, e afirmá-la num nome de campo é pior que num
-    critério de teste, porque o nome vai para o cliente e não sai mais.
+    disso. Chamá-lo de patrimônio afirmaria a igualdade da §7.5 que a **V6 do F3** deixa
+    **explicitamente não afirmada** — `caixa:BRL` é o dinheiro que entrou por liquidação e
+    não foi reaplicado, não o saldo do cliente, porque não existe saque nem depósito na
+    §5.1 —, e afirmá-la num nome de campo é pior que num critério de teste, porque o nome
+    vai para o cliente e não sai mais. *A decisão do `caixa:BRL` fechou em 2026-09-09 e
+    **isto não mudou**: ela eliminou o erro da reaplicação, não o do saque.*
     *Rejeitado:* `clienteId` na rota (`/v1/clientes/{id}/extratos/...`) — sugere um recurso
     "cliente" que esta casa **não tem** (não há tabela de clientes, por I11/ADR-4) e convida o
     `GET /v1/clientes` que a fase seguinte acrescentaria. *Rejeitado:* um endpoint só com
@@ -6470,8 +6968,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   auditabilidade que faz o livro ser a verdade. Tributos e liquidacoes aparecem como
   LINHAS PROPRIAS.
   POSICAO: leitura de snapshots_posicao WHERE vigente, agregavel por dia. A 7.5 escreve
-  essa agregacao como "soma dos instrumentos + caixa = patrimonio diario", MAS NAO A AFIRME:
-  e ela que a PENDENCIA BLOQUEANTE do caixa:BRL (F3, V2) deixa em aberto. O campo de total
+  essa agregacao como "soma dos instrumentos + caixa = patrimonio diario", MAS NAO A AFIRME
+  sem decidir: era ela que a pendencia do caixa:BRL deixava em aberto, a pendencia FECHOU
+  (F3, V6) e a igualdade volta a ser defensavel — reavaliar isso e desta fase, com numero na
+  mao, e nao se herda por omissao. Ate decidir, o campo de total
   chama-se `somaDosValores` e e, literalmente, a soma dos `valor` das linhas devolvidas.
 
   O CONTRATO DOS DOIS ENDPOINTS ESTA DECIDIDO — implemente-o, nao o invente:
@@ -6636,16 +7136,23 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   soma dos `valor` das linhas que ela mesma devolveu**, conferido item a item. É a ponta em
   que a V4 do F3 e o snapshot de caixa do F7 são conferidos por quem lê.
   **Esta alínea DEIXOU DE AFIRMAR "soma dos instrumentos + caixa = patrimônio", e a troca é
-  deliberada:** enquanto a **PENDÊNCIA BLOQUEANTE do `caixa:BRL`** (F3, V2) estiver aberta,
-  aquela igualdade **fecharia VERDE com o número errado** — o extrato diria 1800 para um
+  deliberada.** *A pendência do `caixa:BRL` **fechou** no F3 (V6) e a igualdade volta a ser
+  defensável para carteira escriturada com a perna de caixa — mas a alínea continua como
+  está até alguém **decidir aqui**, com número na mão, porque enquanto a pendência esteve
+  aberta* aquela igualdade **fecharia VERDE com o número errado** — o extrato diria 1800 para um
   cliente que tem 900, no dia seguinte a uma reaplicação, que é o ciclo de vida normal do
   produto. Dos três estados possíveis (certo, errado e visível, errado e verde), o pior é o
   terceiro, e era esse que o critério anterior produzia. O que ficou é uma asserção de
-  **consistência interna da resposta**, que não depende da decisão pendente e continua
-  valendo sob qualquer desfecho dela. *Quando a pendência fechar, é AQUI que a igualdade
-  volta como critério — e a redação dela dependerá da saída escolhida: com a perna simétrica,
-  "soma das linhas = patrimônio"; com o livro-caixa parcial, "soma dos instrumentos =
-  patrimônio, e caixa é o não-reinvestido conhecido".* (h) o contrato de
+  **consistência interna da resposta**, que não dependia da decisão pendente e continua
+  valendo. *A pendência **fechou** em 2026-09-09 (F3, V6), e a redação futura que este
+  parágrafo antecipava está **obsoleta**: as duas que ele oferecia eram as saídas (a) e (b),
+  **rejeitadas**; a escolhida foi a (1), campo no contrato. **E a igualdade continua NÃO
+  afirmável**, agora por outro motivo, escrito na V6: `caixa:BRL` é o dinheiro que entrou
+  por liquidação e não foi reaplicado, **não é o saldo do cliente** — não existe saque nem
+  depósito na §5.1, então um saque deixa o caixa superestimado para sempre. A V6 eliminou o
+  erro da REAPLICAÇÃO, não o do SAQUE. Esta alínea fica como está; reafirmar a igualdade
+  exige o evento de movimentação de caixa que a V6 nomeia como ausência decidida, e é aí
+  que a redação volta a ser discutível.* (h) o contrato de
   paginação conferido como **desvio declarado**: `X-Total-Count` **ausente**, header `Link`
   com `next` e **sem** `prev`, e `pageSize` acima de 500 **clampado**.
 
@@ -6918,7 +7425,7 @@ que o próximo repo lê. A memória em arquivo carrega sozinha no início da ses
 só aparece se alguém buscar, então fato que a próxima sessão precisa saber sem perguntar vai
 nos **dois**.
 
-Três coisas que este roadmap pede em toda fase, e que não são cerimônia:
+Quatro coisas que este roadmap pede em toda fase, e que não são cerimônia:
 
 1. **`guardiao-padroes` e DEPOIS `revisor`, em série, nunca em paralelo** — o revisor muta a
    implementação de propósito para provar que um teste é vácuo, e o guardião lendo esse
@@ -6934,20 +7441,31 @@ Três coisas que este roadmap pede em toda fase, e que não são cerimônia:
    `git status --short`: `git ls-files` e `git diff` não mostram o que ainda não foi
    rastreado.
 
-6. **Antes de despachar uma fase, releia as PENDÊNCIAS dela — elas estão no cabeçalho da
-   fase e nas decisões, com o nome, o estado, quem decide e as opções.** Há **três** abertas
-   neste arquivo: `caixa:BRL` nunca ser debitado (**bloqueia o F3**, e a correção é um campo
-   novo na §5.1 do `../plataforma-docs`), a definição de `prazo` (**bloqueia o F5 e, por
-   herança, o F9**) e a reversão de corpaction (**aberta no F9**, não bloqueante até o Hub
-   publicar `corpactions.td`). Fechar uma delas é editar a fase dona **e** os critérios de
-   Pronto que a citam — o Pronto (g) do F8 diz, dentro dele, o que volta a valer quando a
-   primeira fechar.
+4. **Antes de despachar uma fase, releia as PENDÊNCIAS dela — elas estão no cabeçalho da
+   fase e nas decisões, com o nome, o estado, quem decide e as opções.** Há **duas** abertas
+   neste arquivo: a definição de `prazo` (**bloqueia o F5 e, por herança, o F9**) e a
+   reversão de corpaction (**aberta no F9**, não bloqueante até o Hub publicar
+   `corpactions.td`).
 
-E duas do dado, que valem enquanto este livro for append-only:
+   *A terceira — `caixa:BRL` nunca ser debitado — **fechou em 2026-09-09** com o campo
+   `valorOrigemSaldo` na §5.1 do `../plataforma-docs`, e o que ela custou para fechar é o
+   procedimento que as outras duas vão exigir: **nove** pontos deste arquivo a citavam, e
+   três deles estavam DENTRO de blocos de prompt, que é o texto que o executor lê como
+   instrução. Fechar uma pendência é editar a fase dona **e** varrer o arquivo inteiro pelo
+   nome dela — `grep`, não memória. Um Pronto que ainda diga "enquanto a pendência estiver
+   aberta" depois de ela fechar é pior que antes: ele parece atual.*
 
-4. **Toda prova em produção grava linha que não sai.** Decida a limpeza (`TRUNCATE`) **antes**
+   **E fechar não é o mesmo que reabrir o que a pendência congelou.** O Pronto (g) do F8
+   deixou de afirmar "soma dos instrumentos + caixa = patrimônio" **por causa** desta
+   pendência; com ela fechada a igualdade volta a ser defensável, mas voltar a afirmá-la é
+   uma **decisão do F8, com número na mão** — não uma consequência automática. Está escrito
+   assim nos cinco pontos que a citavam.
+
+E duas do dado, que valem enquanto este livro for append-only (itens 5 e 6):
+
+5. **Toda prova em produção grava linha que não sai.** Decida a limpeza (`TRUNCATE`) **antes**
    do POST ou da publicação, conferindo as tabelas em 0/0 — depois do 201 a decisão já foi
    tomada por você. E saiba que o `TRUNCATE` deixa de ser saída no dia em que houver dado
    real ao lado.
-5. **Nunca purgue a `custodia.prices`.** Ela guarda backlog real desde o F2. Retire mensagem
+6. **Nunca purgue a `custodia.prices`.** Ela guarda backlog real desde o F2. Retire mensagem
    de prova com `basic.get` + ack da mensagem específica.

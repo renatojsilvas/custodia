@@ -545,9 +545,32 @@ desliga a desconfiança de quem lê depois.
 
 **Guarda:** some uma sonda de existência física, com a lista de tabelas derivada de
 `db.Model.GetEntityTypes()` — **nunca escrita à mão**, que desatualiza em silêncio quando
-entrar tabela nova. Uma consulta só, `unnest` + `to_regclass`, resolve todas. O que este check **não** cobre —
-coluna, índice ou CHECK alterados mantendo a tabela — fica registrado aqui, no catálogo, e
-não no código.
+entrar tabela nova. Uma consulta só, `unnest` + `to_regclass`, resolve todas.
+
+**O INVENTÁRIO DO QUE A SONDA NÃO COBRE, completo, e ele fica aqui e não no código** (afirmação
+escrita no código desliga a desconfiança de quem lê depois — é o agravante registrado acima). Na
+`custodia`, com a sonda cobrindo **ausência** de tabela, trigger, chave (PK e alternada), foreign
+key e índice, sobra de fora:
+
+1. **CHECK constraint, ausente ou alterada** — não por escolha, por impossibilidade: `db.Model`
+   **lança** para `GetCheckConstraints()`, e o `IDesignTimeModel` que a exceção recomenda não é
+   deployado. Detalhe medido no bloco sobre `db.Model` mais abaixo. É a lacuna mais incômoda das
+   quatro, porque CHECK é onde vivem as guardas de dado irreparável.
+2. **Coluna alterada, renomeada ou com o tipo/escala trocado**, mantendo a tabela. `to_regclass`
+   só responde "a relação existe".
+3. **Definição alterada** de qualquer objeto que a sonda confere **por nome**: índice que virou
+   não-único, FK que perdeu o `RESTRICT`, CHECK com o predicado reescrito. A sonda detecta
+   **ausência**, nunca mudança de semântica — e comparar definição exigiria normalizar o texto
+   canonizado pelo Postgres (`= ANY (ARRAY[...])`, casts `::text`), que é a lista à mão por outro
+   caminho.
+4. **Corpo da função de uma trigger substituído**, com o nome intacto:
+   `CREATE OR REPLACE FUNCTION ... BEGIN RETURN NEW; END;` deixa a trigger em `pg_trigger`, a sonda
+   responde **Healthy**, e o `UPDATE` volta a passar em silêncio. Medido: `UPDATE 1`. *`DROP
+   FUNCTION` sem `CASCADE` não é vetor — o Postgres recusa enquanto a trigger existir.* Fica de
+   fora porque o objeto está **presente** e só o comportamento mudou: pegá-lo exigiria uma
+   definição esperada escrita à mão. E exige privilégio de dono de schema, a mesma classe que já
+   pode `ALTER TABLE ... DISABLE TRIGGER` — superfície que a decisão de "imutabilidade por trigger,
+   não por REVOKE" aceita explicitamente.
 
 **E o inventário do "não cobre" também é uma afirmação — tem que estar completo.** Na
 revisão seguinte, dropar a **trigger de imutabilidade** por fora deixou o `/health/ready`
@@ -570,6 +593,75 @@ has-pending-model-changes` sem mudanças, nenhuma DDL gerada pela anotação, e 
 idêntico com e sem ela.
 E note por que a sonda continua necessária mesmo com o metadado declarado: **`HasTrigger`
 registra intenção, não confere existência** — é exatamente a distinção da §10.18.
+
+**O QUE `db.Model` CARREGA E O QUE ELE NÃO CARREGA — e a diferença não é adivinhável, é por
+categoria.** `db.Model` é o modelo **read-optimized**: ele guarda o que o pipeline de query e de
+`SaveChanges` precisa em runtime, e **descarta metadado que só serve para gerar migration**.
+Estender a sonda "para tudo que está no modelo" bate nessa parede sem aviso de compilação.
+
+Medido no F3 da `custodia` (2026-09-10), com o schema aplicado e a sonda instanciada direto:
+
+| derivação de `db.Model` | runtime |
+|---|---|
+| `GetEntityTypes()` → `GetTableName()` | **funciona** |
+| `GetDeclaredTriggers()` | **funciona** |
+| `GetKeys()` → `GetName()` (PK e alternada) | **funciona** |
+| `GetForeignKeys()` → `GetConstraintName()` | **funciona** |
+| `GetIndexes()` → `GetDatabaseName()` | **funciona** |
+| `GetCheckConstraints()` | **LANÇA** |
+
+```
+System.InvalidOperationException: The requested configuration is not stored in the
+read-optimized model, please use 'DbContext.GetService<IDesignTimeModel>().Model'.
+   at RelationalEntityTypeExtensions.GetCheckConstraints(IEntityType entityType)
+```
+
+**E a alternativa que a própria exceção recomenda não existe em runtime.** Conferido por reflexão
+nos dois assemblies que são deployados:
+
+```
+Microsoft.EntityFrameworkCore=NAO    Microsoft.EntityFrameworkCore.Relational=NAO
+```
+
+`IDesignTimeModel` vem em `Microsoft.EntityFrameworkCore.Design`, que o `.csproj` referencia com
+`<PrivateAssets>all</PrivateAssets>` — build-time, deliberadamente fora do runtime. Ou seja: pôr
+**nome de CHECK** numa sonda de readiness custa deployar o pacote de design em produção, ou
+escrever a lista à mão, que é o que este item proíbe. **Fica de fora, e fica de fora declarado.**
+
+*Duas armadilhas de método que isto ensinou.* A primeira: o `catch` externo da sonda transforma
+essa exceção em `Unhealthy("Falha ao verificar...")` — direção segura de falhar, e que **mascara o
+motivo**: doze testes caíram juntos, inclusive o de schema íntegro, e o sintoma não apontava para a
+camada culpada. Ao estender uma sonda, instancie-a direto num teste e imprima
+`result.Description` **e** `result.Exception` antes de debugar pelo status code. A segunda:
+`strings` numa DLL **não** prova que o tipo está lá — `IDesignTimeModel` aparece no
+`Microsoft.EntityFrameworkCore.dll` porque é o texto da **mensagem de erro**. Prove por reflexão
+(`Assembly.GetType`), não por busca de texto.
+
+**Terceiro membro da família, e ele é o mais tentador dos três: `migrations
+has-pending-model-changes` NÃO prova que a migration produz o schema do modelo.** Ele compara o
+modelo com o **`ModelSnapshot`** — e o snapshot é **gerado a partir do modelo**, então os dois
+concordam por construção. O que fica de fora é justamente o artefato que o banco realmente
+executa: o `Up()`, que **se edita à mão** sempre que a migration precisa de algo que o EF não
+gera (trigger, função, `Sql` cru). Um `Up()` divergente do modelo passa por
+`has-pending-model-changes` **sem uma palavra**.
+
+Achado no F3 da `custodia` (2026-09-10), e não como hipótese: ao corrigir o predicado de um CHECK
+na Configuration, a `Configuration`, o `.Designer.cs` e o `ModelSnapshot` ficaram com o texto
+novo e o `Up()` com o antigo por uma janela — `has-pending-model-changes` respondia "No changes"
+com o banco recebendo o predicado velho. (Ali a divergência fechou porque a migration foi
+regenerada; o ponto é que **nada** a teria denunciado.) Corolário de despacho: **mutar a
+`Configuration` para provar um teste não tem efeito nenhum em runtime** quando a fixture aplica
+`MigrateAsync()` sobre migration existente — `OnModelCreating` não é consultado para produzir DDL
+de migration já gerada, e a mutação tem de ser no `Up()`.
+
+**Guarda:** a sonda de `db.Model` já fecha o caso de **tabela e trigger** declaradas no modelo e
+ausentes no banco construído pela migration — é a razão de ela existir. Para **CHECK**, a
+comparação textual direta é mais caro do que parece: o `pg_get_constraintdef` devolve o predicado
+**canonizado** (`= ANY (ARRAY[...])`, casts `::text`, parênteses reescritos), então comparar com o
+texto de `HasCheckConstraint` exige normalizar N predicados heterogêneos, não uma consulta de uma
+linha. O que **é** barato e resolve na prática: provar cada CHECK por **comportamento** (`INSERT`
+aceito/recusado) contra o banco que a **migration** construiu, e comparar por **conjunto
+parseado** — nunca por string — os CHECKs cuja lista tem dono no Domínio.
 
 **Erro que este item quase carregou:** a primeira versão deste texto afirmava que "o EF não
 tem metadado de trigger, então não dá para derivar de `db.Model`". Falso — `HasTrigger`
@@ -989,10 +1081,28 @@ dia.
 
 O modo de falha concreto, achado ao abrir a `custodia` (2026-09-07) antes de existir código:
 um job de ciclo curto que roda 24 h por dia, um livro append-only com **trigger de data
-futura** comparando contra `current_date`, e a janela **00:00–03:00 BRT** — em que o dia BRT
-já virou e o UTC ainda não. Nessa janela o job tenta inserir `data_evento = hoje_BRT` e a
-trigger **rejeita como data futura**, todo dia, com um desfecho que o job não tem nome para
-classificar. A suíte fica verde: nenhum teste roda às 01:00 UTC−3.
+futura** comparando contra `current_date`. A suíte fica verde de qualquer jeito: nenhum teste
+roda dentro da janela crítica.
+
+**O SINAL DA JANELA — e a primeira versão deste item o escrevia INVERTIDO, o que é pior que
+não o escrever, porque dele saía um teste que não separa as duas implementações.** Conferido
+contra Postgres 16 em 2026-09-10, na `custodia`:
+
+```
+utc = 2026-09-10 10:16:42     brt = 2026-09-10 07:16:42
+```
+
+`America/Sao_Paulo` é UTC**−3**: o relógio BRT lê **mais cedo**, e o dia BRT vira **três horas
+depois** do dia UTC. A janela em que as duas datas divergem é **21:00–24:00 BRT** (= 00:00–03:00
+**UTC**), e nela `data_utc = D` enquanto `data_brt = D − 1`. **Não** é "00:00–03:00 BRT, em que
+o dia BRT já virou e o UTC ainda não" — é o inverso, e o texto anterior dizia isso.
+
+**Com o sinal certo, o modo de falha também se inverte, e é ele que importa:** `current_date`
+num servidor em UTC **nunca é estrito demais — é permissivo demais**. Entre 21:00 e 24:00 BRT
+ele vale `D` e **aceita** `data_evento = D`, que **em BRT é amanhã**: a guarda deixa entrar no
+livro append-only, três horas por dia, exatamente o fato que ainda não aconteceu que ela existe
+para barrar. O job de ciclo curto **nunca** é rejeitado (`hoje_BRT ≤ current_date` em qualquer
+hora); quem passa é o **movimento com data futura**, que é o dado sem conserto.
 
 **Regra:** o fuso de negócio é **decidido na fase do schema**, escrito no arquivo, e vale
 para toda `date` daquele banco. Comparações de "hoje" no banco usam
@@ -1004,10 +1114,26 @@ avaliador é de outro repo e roda em UTC.
 **dado**, some no primeiro compose que esquecer a variável (e a variável não está nas cinco
 listas da §10.33), e **não alcança** o avaliador de alerta, que não é seu.
 
-**Guarda:** o teste de fronteira roda com a sessão do banco em `SET TIME ZONE 'UTC'` e o
-relógio **injetado** dentro da janela crítica, e exige que a data de negócio de hoje seja
-**aceita**. Escrito com `current_date` dos dois lados, o teste passa com a implementação
-errada — é a mesma tautologia da §10.22.
+**Guarda — e ela move a SESSÃO, não o relógio.** `now()` não é injetável de fora, e a janela
+crítica dura três horas por dia: teste que espera por ela só discrimina de madrugada. A
+alavanca é que `current_date` **respeita** `SET TIME ZONE` e `(now() AT TIME ZONE '<fuso>')::date`
+**não**. São duas direções, cada uma com a **precondição afirmada no próprio teste** (que falha
+se ela não valer, em vez de passar por vacuidade):
+
+- **sessão um dia à frente do fuso de negócio** — para BRT, `SET TIME ZONE 'Pacific/Kiritimati'`
+  (UTC+14, 17 h à frente; precondição vale das 07:00 às 24:00 BRT). `INSERT` com
+  `data_evento = current_date` tem de ser **RECUSADO** (é amanhã no fuso de negócio). A
+  implementação com `current_date` **aceita** — é o erro real, o de ser permissivo demais.
+- **sessão um dia atrás** — `SET TIME ZONE 'Etc/GMT+12'` (UTC−12, 9 h atrás; precondição vale
+  das 00:00 às 09:00 BRT). `INSERT` com `data_evento = (now() AT TIME ZONE '<fuso>')::date` tem
+  de ser **ACEITO** (é hoje). A implementação com `current_date` **recusa** como futuro.
+
+As duas janelas se sobrepõem e **cobrem as 24 horas juntas**: o teste exercita toda direção cuja
+precondição valer e afirma que **ao menos uma** valeu. *A versão anterior desta guarda pedia
+"sessão em `SET TIME ZONE 'UTC'`, relógio injetado na janela, data de hoje **aceita**" — e era
+**tautologia**: na janela real `hoje_BRT = D − 1 ≤ current_date = D`, então a implementação errada
+também aceita. Fechava verde sobre o defeito que existia para pegar, que é a §10.22 dentro do item
+que a invoca.*
 
 ---
 
@@ -1342,3 +1468,93 @@ fase escreveu para o mesmo alvo. O primeiro era **linhas no corpo do endpoint** 
 objeto de sonda; o segundo, **séries ativas do job** na nuvem, incluindo as meta-séries de
 scrape (`up`, `scrape_*`). Só o segundo conta contra o teto do plano. Ao registrar custo de
 cardinalidade, diga **qual** grandeza você mediu, onde, e com quantos objetos.
+
+---
+
+### 10.43. Allow-list por CHECK que detecta o próprio domínio por prefixo tem de detectá-lo case-insensitive
+
+Quando um CHECK tem a forma *"se o valor pertence ao meu domínio, então ele é um destes N"*, a
+detecção do domínio é a metade frágil, e ela é o oposto da que parece. `LIKE 'prefixo:%'` é
+**case-sensitive**: um valor com o prefixo escrito em outro caixa **não casa**, o antecedente fica
+falso, e o valor **entra sem passar pela allow-list** — pela porta que o CHECK existe para fechar.
+
+**Por quê:** no F3 da `custodia`, `movimentos.instrumento_id` guarda o id do Hub **cru** (só
+`Trim()`, sem `ToLowerInvariant`, porque canonizar identidade de outro contexto é presumir regra
+alheia — §10.24). Caixa é instrumento local, com dois ids permitidos, e o CHECK escrito foi:
+
+```sql
+instrumento_id NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')
+```
+
+Ele rejeita `caixa:brl` — que era o caso que motivou a constraint — e **aceita** `Caixa:BRL` e
+`CAIXA:BRL`, porque nenhum dos dois casa com `'caixa:%'`. O efeito é exatamente o que a constraint
+prevenia: um **segundo** instrumento de caixa numa tabela append-only, para sempre, com o
+patrimônio somando duas linhas onde havia uma. A allow-list parecia fechada e tinha três buracos,
+e o teste que existia (`'caixa:brl'` recusado) passava.
+
+A forma correta põe o `lower()` **no lado da detecção** e mantém a comparação da allow-list
+**exata**, porque os ids canônicos têm caixa significativo:
+
+```sql
+lower(instrumento_id) NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')
+```
+
+Verificado contra Postgres 16 antes de adotar, e os dois pontos precisam ser conferidos juntos:
+`lower(text)` tem `provolatile = 'i'` (**IMMUTABLE**), logo é legal dentro de CHECK — ao contrário
+de `now()`/`current_date`, que é o que obriga a guarda de data a ser trigger (§10.34). E o
+comportamento: aceita `caixa:BRL`, `caixa:a_liquidar` e um id do Hub (`td:tesouro-selic-2029`);
+recusa `caixa:brl`, `Caixa:BRL`, `CAIXA:BRL`, `caixa:` (prefixo sem sufixo) e `caixa:USD`.
+
+**SEGUNDO VETOR, achado na rodada seguinte — e a versão anterior deste item ensinava uma receita
+que não o previne.** `lower()` fecha o eixo do caixa e **não** fecha o do espaço:
+`lower(' caixa:BRL')` é `' caixa:brl'`, que **não** começa com `'caixa:'`, então o antecedente fica
+verdadeiro outra vez e o valor entra pela mesma porta. Quem seguisse a receita "ponha `lower()` na
+detecção" continuaria com o furo. Verificado contra Postgres 16: `' caixa:BRL'`, `'  caixa:BRL'` e
+`' caixa:brl'` **aceitos**; e a mesma falha atinge id que não é do domínio —
+`' td:tesouro-selic-2029 '` entra e vira um segundo instrumento **para sempre**, que é a §10.24
+literal. Assimetria que vale saber: espaço **à direita** já era recusado (o prefixo casa e o `IN`
+falha); só o da **esquerda** dribla.
+
+A forma completa põe **os dois** do lado da detecção — `lower(btrim(instrumento_id)) NOT LIKE
+'prefixo:%'` — e, melhor que isso, soma um CHECK de borda **independente** por coluna de
+identificador, que fecha a classe em vez do sintoma:
+
+```sql
+CHECK (instrumento_id !~ '^\s|\s$')
+```
+
+**REGEX, não `x = btrim(x)`, e a razão não se adivinha:** `btrim(text)` no Postgres tira **só o
+caractere espaço** por default, enquanto `Trim()` no .NET tira tab, newline e CR. Com `btrim`,
+`'td:x' + TAB` **passa** no banco e é trimado pelo Domínio — Domínio e banco dando **vereditos
+opostos para a mesma entrada**, que é exatamente o modo de falha da §10.24. `textregexne` também é
+`provolatile = 'i'`, logo o regex é legal em CHECK.
+
+**Guarda:** para toda allow-list com detecção por prefixo, o teste tem de exercitar **os dois
+eixos**: as **variações de caixa** do prefixo — minúsculo, capitalizado, maiúsculo — e as de
+**espaço** — à esquerda, à direita e **TAB** —, não só a que motivou a constraint. Uma variação só
+é o antipadrão da §10.19 em forma de dado: verde num caixa não é evidência sobre os outros, e verde
+no caixa não é evidência **nenhuma** sobre o espaço. O caso do **TAB** é o único que separa o regex
+de um `btrim`; sem ele as duas implementações empatam. E inclua `'prefixo:'` puro, que é o caso que
+nenhum autor lembra.
+
+**LIMITE DECLARADO — o terceiro eixo, HOMÓGLIFO, fica FORA e é de propósito.** Medido na
+`custodia`: `'caıxa:BRL'`, com `ı` (U+0131, LATIN SMALL LETTER DOTLESS I) no lugar do `i` ASCII, é
+**aceito** — `lower()` e `LIKE` são byte-exatos e não normalizam homóglifo. O valor entra como um
+`instrumento_id` novo e permanente. **Não** entra na guarda, por três razões que valem escrever
+juntas: exige um caractere Unicode deliberado, não uma variação de digitação plausível; o conjunto
+de homóglifos não é enumerável de forma estável (ao contrário dos 25 codepoints de espaço, que são
+uma lista fechada); e fechá-lo exigiria normalização Unicode (NFKC + skeleton), que é
+**transformar** identidade de outro contexto — o que a §10.24 proíbe. Fica como limite conhecido:
+a guarda cobre **caixa** e **espaço**, que são os eixos com lista fechada, e **não** cobre
+confusão visual.
+
+*Nota de método sobre este item:* ele nasceu com um vetor e precisou de um segundo. Item de catálogo
+que ensina uma **receita** ("ponha `lower()`") envelhece pior que item que ensina o **critério**
+("a detecção do domínio é a metade frágil; enumere os vetores que a fazem falhar"), porque a receita
+parece completa. Ao escrever guarda de catálogo, prefira o critério e liste as receitas como
+instâncias dele.
+
+**Onde isto NÃO se aplica, e a distinção é a da §10.24:** a allow-list em si continua comparando
+**exato**. Baixar caixa no lado comparado transformaria o valor, e o valor é identidade de outro
+contexto. `lower()` entra **só** na pergunta "isto é do meu domínio?", nunca na pergunta "isto é
+qual dos meus valores?".
