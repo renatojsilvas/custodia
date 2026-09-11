@@ -1405,8 +1405,9 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   guarda `-z` reprova e o `guarda-deploy` marca o commit como não deployado.
 
 
-- [ ] **F3** — o schema do livro: as constraints que tornam o dado irreparável impossível
-  de gravar. **Dependência externa nova: Postgres com schema (a instância já existe).**
+- [x] **F3** — o schema do livro: as constraints que tornam o dado irreparável impossível
+  de gravar. **FECHADA em 2026-09-11, PR #4** — ver a nota de fecho no fim desta fase.
+  **Dependência externa nova: Postgres com schema (a instância já existe).**
   **PENDÊNCIA FECHADA em 2026-09-09** — `caixa:BRL` nunca ser debitado dependia de um campo
   novo na §5.1 do `../plataforma-docs`, e ele **existe**: **`valorOrigemSaldo`**, string
   decimal opcional, presente se e somente se `operacao ∈ {aplicacao, aporte}`, com
@@ -3213,6 +3214,51 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   além de a janela ser 21:00–24:00 BRT e não 00:00–03:00, nela `hoje_BRT = D − 1 ≤
   current_date = D`, então a implementação errada também aceita. O critério fechava verde
   sobre o defeito que existia para pegar — §10.22 dentro do item que a invoca.*
+
+  ---
+
+  ### Nota de fecho do F3 — 2026-09-11, PR #4
+
+  **Entregue:** as cinco tabelas da §7.1 como migrations EF, o vocabulário do livro fechado no
+  Domínio em **uma cópia cada** (`TipoMovimento.All` → o CHECK de `tipo`; `InstrumentosCaixa` → a
+  allow-list de caixa; `SchemaNumericLimits` → toda coluna `numeric`), **12 CHECKs**, duas
+  triggers, FK de três colunas, `/health/ready` com cinco camadas derivadas de `db.Model`.
+  **353 testes, 0 falhas.**
+
+  **O que esta fase ensinou, e está registrado onde o próximo repo lê** — `PADROES.md` §10.43
+  (allow-list por prefixo), §10.34 corrigida (o sinal do fuso), §10.22 com dois membros novos
+  (`has-pending-model-changes` não olha o `Up()`; `db.Model` é read-optimized e CHECK não sai
+  dele), e seis erros de condução no `LEIA-ME-KIT.md`. **Não repita a leitura aqui** — o valor
+  daqueles arquivos é serem o único lugar.
+
+  **O padrão que vale nomear, porque é o resumo da fase:** o CHECK de identidade foi furado
+  **três vezes**, cada uma por um vetor que a correção anterior não cobria — `Caixa:BRL` (caixa
+  alta), `' caixa:BRL'` (espaço à esquerda) e NBSP (o `\s` do Postgres não cobre quatro dos 25
+  codepoints que o `Trim()` do .NET remove). A primeira fui eu antes de escrever, a segunda a
+  revisão adversarial, a terceira eu medindo. **A lição não é "teste mais": é que guarda escrita
+  como RECEITA ("ponha `lower()`") envelhece pior que guarda escrita como CRITÉRIO ("a detecção do
+  domínio é a metade frágil; enumere os vetores que a fazem falhar")** — a receita parece completa.
+
+  **Dois achados graves da revisão adversarial**, os dois corrigidos e com prova por mutação: o
+  espaço driblando a allow-list, e os **testes da aritmética do livro serem vácuos** (montavam o
+  esperado a partir dos parâmetros do próprio `INSERT`; trocar o sinal só no `INSERT` passava). A
+  regra que ficou: **lado esquerdo do assert vem do banco, lado direito vem de literal.**
+
+  **Estado das pendências:** a do `caixa:BRL` fechou no F3 (V6); a **pendência de confirmação**
+  dela resolveu em 2026-09-11, e a pergunta **estava mal posta** — Operações não tem o número
+  (zero ocorrência de `saldo|caixa|posicao|patrimonio` no `src` dela, e nenhum campo de origem na
+  entrada), então ela é **pass-through** e o decimal fica. Continuam abertas as **duas** de sempre:
+  `prazo` (bloqueia F5 e, por herança, F9) e reversão de corpaction (F9).
+
+  **O que o F4 precisa antes de abrir, e não é desta casa:** `../operacoes` tem de **(1) aceitar
+  `valorOrigemSaldo` no `POST /v1/operacoes`** — o campo não existe nem na entrada — **e (2)
+  repassá-lo no `TradeRegistered`**. São duas mudanças, não uma.
+
+  **Alerta de ambiente, medido nesta fase:** `dotnet ef` travou **três vezes** contra Postgres em
+  container (dois subagentes mortos em 600 s por watchdog, e um timeout de 120 s no orquestrador).
+  `dotnet test` com Testcontainers nunca travou. **O F4 inteiro depende de migrations** — investigue
+  antes de despachar executores lá, e prefira `psql -f` sobre o SQL do `Up()` para inspecionar
+  schema.
 
 - [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
   de ordem. **Dependência externa nova: o `operacoes` aceitando E publicando `valorOrigemSaldo`
