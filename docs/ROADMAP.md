@@ -2283,6 +2283,32 @@ para ela.
   aplicavam.* Consequência no F5: o Pronto (e) afirma `preco_medio = 0` para
   `caixa:a_liquidar` depois da liquidação, e é esse o valor, não `1,000000`.
 
+  **E a fronteira `< 0`, para `caixa:*`, devolve `preco_medio = 1,000000` — não o
+  "inalterado" literal da V1. Só o `= 0` é da fronteira; a V4 vale para `quantidade ≠ 0`, com
+  sinal.** O "inalterado" existe para impedir que `custo_total / quantidade` produza preço
+  médio negativo — é o que a própria V1 escreve, "nunca recalculado, **portanto** nunca
+  negativo" —, e em `caixa:*` **não há divisão nenhuma para proteger**: o preço é `1,000000`
+  **por definição**, e um real não muda de preço porque o saldo ficou negativo. Aplicar o
+  "inalterado" aqui tornaria a coluna **dependente do caminho**: a chave que nasce negativa (a
+  primeira linha é a perna de −900, estado inicial zero) herdaria `pm 0`, e a mesma
+  `quantidade = −900` valeria `0` ou `1,000000` conforme a história — duas linhas idênticas de
+  `posicao_corrente` com preços médios diferentes, numa coluna que o F7 grava em **cada**
+  snapshot (P2) e sem nada no livro que justifique a diferença. E o negativo de `caixa:BRL`
+  não é borda: é a reaplicação no mesmo dia, que a **V6** declara normal. Com
+  `preco_medio = 1,000000`, `custo_total = quantidade` continua valendo **com o sinal**, e
+  `Σ preco_medio × quantidade` sobre `caixa:BRL + caixa:a_liquidar` — que é a linha única que o
+  F8 apresenta ao cliente (V6) — devolve **0** na reaplicação do mesmo dia. *Rejeitado:*
+  `preco_medio = 0` para caixa negativo — usa o número do estado **canônico** `= 0` para um
+  estado que não é canônico, faz o real valer `1` quando sobra e `0` quando falta, e devolve
+  **+900** naquela mesma soma (`0 × −900` + `1 × 900`), que é a inflação de 100% que a V6
+  existe para eliminar, entrando pela porta ao lado. **E nenhuma guarda de hoje o pega:**
+  `preco_medio ≥ 0` passa, e o invariante `custo_total = preco_medio × quantidade` **não é
+  afirmado** para `quantidade < 0` — por isso isto é regra escrita e teste nomeado, não
+  corolário. *A lacuna era real e não era de leitura: esta subseção decidia `= 0` e calava
+  sobre `< 0` para caixa, e a ressalva da V1 fala só do **SINAL** do alerta. A frase normativa
+  da V6 ("linha de `caixa:*` — qualquer que seja o tipo — dobra pela regra de caixa da V4")
+  não enuncia o sinal, então indicava a resposta sem fechá-la.*
+
   **CHECK enumerando os ids de caixa permitidos** (`caixa:BRL`, `caixa:a_liquidar`), pela
   §10.21: restringir é reversível (`DROP CONSTRAINT`, uma linha, sem rewrite), e não
   restringir é eterno. O motivo é a §10.24 combinada com a decisão de gravar identidade
@@ -4343,6 +4369,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   D0 → `custo_total 2400` e `preco_medio 150`, **jamais** `2600` / `162,50`. É o único teste
   que separa a cláusula do `data_evento ≥ MAX(data_evento)` da ausência dela, e sem ele I4
   fica falso em silêncio até a reconciliação do F7 alertar sobre dado correto;
+  (d5) **a linha de `caixa:*` NEGATIVA com `preco_medio = 1,000000`, e a asserção é sobre a
+  COLUNA DO PREÇO — não sobre quantidade e custo, que é onde a versão anterior deste Pronto
+  parava:** reaplicação no mesmo dia (`caixa:a_liquidar` +900 pela liquidação pendente e
+  `caixa:BRL` −900 pela perna da V6) tem de deixar as duas linhas com `preco_medio = 1,000000`,
+  e a **soma** `Σ preco_medio × quantidade` sobre as duas ids — que é a linha única que o F8
+  apresenta ao cliente — tem de dar **0**. **Com `preco_medio = 0` na linha negativa ela dá
+  +900**, e é por isso que este caso é teste nomeado: `preco_medio ≥ 0` aprova o valor errado,
+  e o invariante `custo_total = preco_medio × quantidade` **não é afirmado** para
+  `quantidade < 0`, então nenhuma das duas guardas existentes o pega. Mais o **controle de
+  caminho**: a mesma `quantidade = −900` chegando numa chave que nasce negativa (primeira linha
+  da chave é a perna) tem de dar o **mesmo** `preco_medio` que numa chave que vinha positiva —
+  a coluna não pode depender da história. Regra em `V4`, subseção "A REGRA DE FRONTEIRA DA V1
+  PRECEDE ESTA";
   (e) o comando de reconstrução rodado com a projeção propositalmente corrompida
   (`UPDATE` em `posicao_corrente`, permitido porque ela **não** é o livro) devolvendo **as
   três colunas** ao valor do livro;
