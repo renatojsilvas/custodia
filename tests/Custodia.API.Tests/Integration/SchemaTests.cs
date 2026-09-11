@@ -1319,6 +1319,89 @@ public sealed class SchemaTests
     }
 
     [Theory]
+    [InlineData(160, "cliente_id", "esquerda")]
+    [InlineData(160, "cliente_id", "direita")]
+    [InlineData(160, "instrumento_id", "esquerda")]
+    [InlineData(160, "instrumento_id", "direita")]
+    [InlineData(160, "ref_externa", "esquerda")]
+    [InlineData(160, "ref_externa", "direita")]
+    [InlineData(5760, "cliente_id", "esquerda")]
+    [InlineData(5760, "cliente_id", "direita")]
+    [InlineData(5760, "instrumento_id", "esquerda")]
+    [InlineData(5760, "instrumento_id", "direita")]
+    [InlineData(5760, "ref_externa", "esquerda")]
+    [InlineData(5760, "ref_externa", "direita")]
+    [InlineData(8199, "cliente_id", "esquerda")]
+    [InlineData(8199, "cliente_id", "direita")]
+    [InlineData(8199, "instrumento_id", "esquerda")]
+    [InlineData(8199, "instrumento_id", "direita")]
+    [InlineData(8199, "ref_externa", "esquerda")]
+    [InlineData(8199, "ref_externa", "direita")]
+    [InlineData(8239, "cliente_id", "esquerda")]
+    [InlineData(8239, "cliente_id", "direita")]
+    [InlineData(8239, "instrumento_id", "esquerda")]
+    [InlineData(8239, "instrumento_id", "direita")]
+    [InlineData(8239, "ref_externa", "esquerda")]
+    [InlineData(8239, "ref_externa", "direita")]
+    public async Task Movimentos_Insert_ColunaComCodepointQueOTrimDoDotNetRemoveMasABarraSDoPostgresNaoCasa_EhRecusadoPeloCheckDaBorda(
+        int codepoint, string coluna, string borda)
+    {
+        using var connection = await OpenConnectionAsync();
+
+        var valorBase = coluna switch
+        {
+            "cliente_id" => $"cli-codepoint-{Guid.NewGuid():N}",
+            "instrumento_id" => $"td:x-codepoint-{Guid.NewGuid():N}",
+            "ref_externa" => $"ref-codepoint-{Guid.NewGuid():N}",
+            _ => throw new ArgumentOutOfRangeException(nameof(coluna), coluna, "Coluna sem valor-base definido para este teste."),
+        };
+        var expressaoComCodepointNaBorda = borda == "esquerda"
+            ? $"(chr({codepoint}) || '{valorBase}')"
+            : $"('{valorBase}' || chr({codepoint}))";
+
+        var clienteIdSql = coluna == "cliente_id" ? expressaoComCodepointNaBorda : "@clienteId";
+        var instrumentoIdSql = coluna == "instrumento_id" ? expressaoComCodepointNaBorda : "@instrumentoId";
+        var refExternaSql = coluna == "ref_externa" ? expressaoComCodepointNaBorda : "@refExterna";
+
+        var exception = await Record.ExceptionAsync(() => connection.ExecuteAsync(
+            $"""
+            INSERT INTO movimentos (cliente_id, instrumento_id, tipo, data_evento, qtd_delta, valor_financeiro, ref_externa)
+            VALUES ({clienteIdSql}, {instrumentoIdSql}, @tipo, @dataEvento, @qtdDelta, @valorFinanceiro, {refExternaSql})
+            """,
+            new
+            {
+                clienteId = NovoClienteId(),
+                instrumentoId = "td:tesouro-selic-2029",
+                tipo = TipoMovimento.Compra.Name,
+                dataEvento = DataPassadaPadrao,
+                qtdDelta = 1m,
+                valorFinanceiro = 1m,
+                refExterna = NovaRefExterna(),
+            }));
+
+        Assert.NotNull(exception);
+        var pgException = Assert.IsType<PostgresException>(exception);
+        Assert.Equal($"ck_movimentos_{coluna}_sem_espaco_nas_bordas", pgException.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData("cliente_id")]
+    [InlineData("instrumento_id")]
+    [InlineData("ref_externa")]
+    public async Task Movimentos_Insert_ColunaComEspacoInterno_EhAceitoPoisOCheckDeBordaNaoAlcancaOMeioDoValor(string coluna)
+    {
+        using var connection = await OpenConnectionAsync();
+
+        var clienteId = coluna == "cliente_id" ? $"cli a b-{Guid.NewGuid():N}" : NovoClienteId();
+        var instrumentoId = coluna == "instrumento_id" ? $"td:a b-{Guid.NewGuid():N}" : "td:tesouro-selic-2029";
+        var refExterna = coluna == "ref_externa" ? $"ref a b-{Guid.NewGuid():N}" : NovaRefExterna();
+
+        var id = await InserirMovimentoBrutoAsync(
+            connection, clienteId, instrumentoId, TipoMovimento.Compra.Name, DataPassadaPadrao, 1m, 1m, refExterna);
+        Assert.True(id > 0);
+    }
+
+    [Theory]
     [InlineData("caixa:BRL")]
     [InlineData("caixa:a_liquidar")]
     [InlineData("td:tesouro-selic-2029")]
