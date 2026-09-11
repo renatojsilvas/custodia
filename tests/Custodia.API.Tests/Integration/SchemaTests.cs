@@ -1508,4 +1508,106 @@ public sealed class SchemaTests
             "Nenhuma das duas janelas horárias valeu (07:00-24:00 BRT para a sessão à frente, " +
             "00:00-09:00 BRT para a sessão atrás) — o teste não discriminou a implementação nesta hora.");
     }
+
+    [Theory]
+    [InlineData(true, "10.12345678")]
+    [InlineData(false, "12345678901.12345678")]
+    public async Task DominioEBanco_ConcordamSobreMagnitudeDeQtdDelta(bool esperaAceito, string qtdDeltaTexto)
+    {
+        var qtdDelta = decimal.Parse(qtdDeltaTexto, System.Globalization.CultureInfo.InvariantCulture);
+
+        var domainResult = Movimento.Create(
+            NovoClienteId(), "td:tesouro-selic-2029", TipoMovimento.Compra, DataPassadaPadrao, DateTimeOffset.UtcNow,
+            qtdDelta, 100m, NovaRefExterna());
+        Assert.Equal(esperaAceito, domainResult.IsSuccess);
+        if (!esperaAceito)
+        {
+            Assert.Equal(MovimentoErrors.QtdDeltaExcedePrecisaoSuportada, domainResult.Error);
+        }
+
+        using var connection = await OpenConnectionAsync();
+        var exception = await Record.ExceptionAsync(
+            () => InserirMovimentoAsync(connection, qtdDelta: qtdDelta, valorFinanceiro: 100m));
+
+        if (esperaAceito)
+        {
+            Assert.Null(exception);
+        }
+        else
+        {
+            Assert.NotNull(exception);
+            var pgException = Assert.IsType<PostgresException>(exception);
+            Assert.Equal(PostgresErrorCodes.NumericValueOutOfRange, pgException.SqlState);
+        }
+    }
+
+    [Fact]
+    public async Task DominioEBanco_DivergemSobreEscalaDeQtdDelta_DominioRejeitaAntesDeChegarNoArredondamentoSilenciosoDoBanco()
+    {
+        var qtdDeltaComEscalaExcedente = 1.123456789m;
+
+        var domainResult = Movimento.Create(
+            NovoClienteId(), "td:tesouro-selic-2029", TipoMovimento.Compra, DataPassadaPadrao, DateTimeOffset.UtcNow,
+            qtdDeltaComEscalaExcedente, 100m, NovaRefExterna());
+        Assert.True(domainResult.IsFailure);
+        Assert.Equal(MovimentoErrors.QtdDeltaExcedePrecisaoSuportada, domainResult.Error);
+
+        using var connection = await OpenConnectionAsync();
+        var id = await InserirMovimentoAsync(connection, qtdDelta: qtdDeltaComEscalaExcedente, valorFinanceiro: 100m);
+        var qtdDeltaGravado = await connection.ExecuteScalarAsync<decimal>(
+            "SELECT qtd_delta FROM movimentos WHERE id = @id", new { id });
+
+        Assert.NotEqual(qtdDeltaComEscalaExcedente, qtdDeltaGravado);
+    }
+
+    [Theory]
+    [InlineData(true, "1000.00")]
+    [InlineData(false, "20000000000000000")]
+    public async Task DominioEBanco_ConcordamSobreMagnitudeDeValorFinanceiro(bool esperaAceito, string valorFinanceiroTexto)
+    {
+        var valorFinanceiro = decimal.Parse(valorFinanceiroTexto, System.Globalization.CultureInfo.InvariantCulture);
+
+        var domainResult = Movimento.Create(
+            NovoClienteId(), "td:tesouro-selic-2029", TipoMovimento.Compra, DataPassadaPadrao, DateTimeOffset.UtcNow,
+            10m, valorFinanceiro, NovaRefExterna());
+        Assert.Equal(esperaAceito, domainResult.IsSuccess);
+        if (!esperaAceito)
+        {
+            Assert.Equal(MovimentoErrors.ValorFinanceiroExcedePrecisaoSuportada, domainResult.Error);
+        }
+
+        using var connection = await OpenConnectionAsync();
+        var exception = await Record.ExceptionAsync(
+            () => InserirMovimentoAsync(connection, qtdDelta: 10m, valorFinanceiro: valorFinanceiro));
+
+        if (esperaAceito)
+        {
+            Assert.Null(exception);
+        }
+        else
+        {
+            Assert.NotNull(exception);
+            var pgException = Assert.IsType<PostgresException>(exception);
+            Assert.Equal(PostgresErrorCodes.NumericValueOutOfRange, pgException.SqlState);
+        }
+    }
+
+    [Fact]
+    public async Task DominioEBanco_DivergemSobreEscalaDeValorFinanceiro_DominioRejeitaAntesDeChegarNoArredondamentoSilenciosoDoBanco()
+    {
+        var valorFinanceiroComEscalaExcedente = 100.005m;
+
+        var domainResult = Movimento.Create(
+            NovoClienteId(), "td:tesouro-selic-2029", TipoMovimento.Compra, DataPassadaPadrao, DateTimeOffset.UtcNow,
+            10m, valorFinanceiroComEscalaExcedente, NovaRefExterna());
+        Assert.True(domainResult.IsFailure);
+        Assert.Equal(MovimentoErrors.ValorFinanceiroExcedePrecisaoSuportada, domainResult.Error);
+
+        using var connection = await OpenConnectionAsync();
+        var id = await InserirMovimentoAsync(connection, qtdDelta: 10m, valorFinanceiro: valorFinanceiroComEscalaExcedente);
+        var valorFinanceiroGravado = await connection.ExecuteScalarAsync<decimal>(
+            "SELECT valor_financeiro FROM movimentos WHERE id = @id", new { id });
+
+        Assert.NotEqual(valorFinanceiroComEscalaExcedente, valorFinanceiroGravado);
+    }
 }
