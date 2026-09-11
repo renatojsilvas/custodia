@@ -1537,6 +1537,17 @@ no caixa não é evidência **nenhuma** sobre o espaço. O caso do **TAB** é o 
 de um `btrim`; sem ele as duas implementações empatam. E inclua `'prefixo:'` puro, que é o caso que
 nenhum autor lembra.
 
+**LIMITE DECLARADO — o terceiro eixo, HOMÓGLIFO, fica FORA e é de propósito.** Medido na
+`custodia`: `'caıxa:BRL'`, com `ı` (U+0131, LATIN SMALL LETTER DOTLESS I) no lugar do `i` ASCII, é
+**aceito** — `lower()` e `LIKE` são byte-exatos e não normalizam homóglifo. O valor entra como um
+`instrumento_id` novo e permanente. **Não** entra na guarda, por três razões que valem escrever
+juntas: exige um caractere Unicode deliberado, não uma variação de digitação plausível; o conjunto
+de homóglifos não é enumerável de forma estável (ao contrário dos 25 codepoints de espaço, que são
+uma lista fechada); e fechá-lo exigiria normalização Unicode (NFKC + skeleton), que é
+**transformar** identidade de outro contexto — o que a §10.24 proíbe. Fica como limite conhecido:
+a guarda cobre **caixa** e **espaço**, que são os eixos com lista fechada, e **não** cobre
+confusão visual.
+
 *Nota de método sobre este item:* ele nasceu com um vetor e precisou de um segundo. Item de catálogo
 que ensina uma **receita** ("ponha `lower()`") envelhece pior que item que ensina o **critério**
 ("a detecção do domínio é a metade frágil; enumere os vetores que a fazem falhar"), porque a receita

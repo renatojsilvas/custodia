@@ -3302,14 +3302,24 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
     os três CHECKs `ck_movimentos_*_sem_espaco_nas_bordas` rejeitam `cliente_id`,
     `instrumento_id` ou `ref_externa` com espaço, tab ou newline na borda. **O caminho não é
     hipotético e não é um erro nosso:** se Operações publicar um `tradeId` com espaço na
-    borda, a `ref_externa` do movimento **principal** de todas as famílias da V3 é o
+    borda, a `ref_externa` do movimento **principal** das famílias que **têm** `tradeId` — trade e
+    estorno, as duas únicas — é o
     `tradeId` **nu**, sem papel nem perna — então o espaço cai na borda dela e o CHECK
     dispara. Como as linhas do fato nascem na **mesma transação**, nada é gravado e a chave
     de dedupe **não é consumida**, o que preserva o I13; o que faltava era o **nome**, sem o
     qual o handler do F4 deixaria essa `PostgresException` cair no tratamento genérico —
     500 em vez de estacionar legível. *Nas linhas **derivadas** (`ir:<tradeId>`,
-    `<tradeId>:brl`) o mesmo espaço fica **interno** e não é pego por este CHECK: é a linha
-    nua que fecha o caminho, e é por isso que ela existe em toda família.*).
+    `<tradeId>:brl`) o mesmo espaço fica **interno** e não é pego pelo CHECK de
+    `ref_externa`: é a linha **nua** que fecha o caminho.*
+    **E para as famílias de corpaction — `cupom` e `vencimento` — quem fecha é OUTRO CHECK, e
+    vale escrever porque a leitura descuidada deixaria um caminho aberto:** elas **não têm
+    `tradeId`** (a V3 diz isso literalmente), então a `ref_externa` principal delas é
+    `cupom:<instrumentoId>:<data>` / `venc:<instrumentoId>:<data>` e um espaço na borda do
+    `instrumentoId` cai no **meio** dessa chave, escapando do CHECK de `ref_externa`. O caminho
+    fecha de todo modo porque **o mesmo `instrumentoId` cru também vai para a coluna
+    `instrumento_id`**, que tem CHECK de borda próprio — e é essa a razão de os três CHECKs serem
+    por **coluna** e não um só sobre `ref_externa`. *A versão anterior desta alínea dizia "de todas
+    as famílias da V3", o que é falso para duas das quatro.*).
     **São TREZE nesta fase, e a lista é fechada e sem default**; duas fases
     seguintes acrescentam **um valor cada**, e os dois já estão nomeados aqui para a regra
     "sem default" não ser furada por uma fase que só diz "com motivo nomeado": o **F7**
@@ -3840,8 +3850,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      payload: os tres CHECKs ck_movimentos_*_sem_espaco_nas_bordas rejeitam cliente_id,
      instrumento_id ou ref_externa com espaco, tab ou newline na borda. O caminho: se
      Operacoes publicar tradeId com espaco na borda, a ref_externa do movimento PRINCIPAL
-     de toda familia da V3 e o tradeId NU, entao o espaco cai na borda dela e o CHECK
-     dispara. As linhas do fato nascem na MESMA TRANSACAO, entao nada e gravado e a chave
+     das familias que TEM tradeId (trade e estorno, as duas unicas) e o tradeId NU, entao o
+     espaco cai na borda dela e o CHECK dispara. NAO ESCREVA "de toda familia da V3": cupom e
+     vencimento NAO tem tradeId, a ref_externa principal delas e cupom:<instrumentoId>:<data> /
+     venc:<instrumentoId>:<data>, e um espaco na borda do instrumentoId cai no MEIO dessa chave.
+     Nessas duas quem fecha o caminho e o CHECK de borda da COLUNA instrumento_id, porque o
+     mesmo valor cru vai para la tambem — e e essa a razao de os tres CHECKs serem por COLUNA e
+     nao um so sobre ref_externa.
+     As linhas do fato nascem na MESMA TRANSACAO, entao nada e gravado e a chave
      de dedupe NAO e consumida (I13 preservado) — o que faltava era o NOME, sem o qual a
      PostgresException cai no tratamento genERICO e vira 500 em vez de estacionar legivel.
      SAO TREZE NESTA FASE. A LISTA E FECHADA E SEM DEFAULT; duas fases seguintes acrescentam
