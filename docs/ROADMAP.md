@@ -136,7 +136,7 @@ terceiro.
 | F1 | nenhuma (VPS, CI, Grafana Cloud — já existem) |
 | F2 | broker `plataforma-rabbitmq` alcançável (serviço do `hub-precos`) |
 | F3 | Postgres com schema (a instância já existe). *A dependência que existia — a decisão do `caixa:BRL`, que exigia campo novo na §5.1 do `../plataforma-docs` — **fechou em 2026-09-09**: o campo `valorOrigemSaldo` existe, e a regra do livro está na V6.* |
-| F4 | o `operacoes` publicando `trades.registered` (**já publica**) **e o campo `valorOrigemSaldo` da V6 (ainda NÃO publica)** — sem o campo, todo `aplicacao`/`aporte` estaciona |
+| F4 | o `operacoes` publicando `trades.registered` (**já publica**) **e o campo `valorOrigemSaldo` da V6 (ainda NÃO publica, e o buraco é maior do que "não publica")** — conferido em 2026-09-11: o campo não existe **nem na entrada**, o `RegistrarOperacaoCommand` não o tem, e o `src` do `../operacoes` não tem noção de saldo (zero ocorrência de `saldo\|caixa\|posicao\|patrimonio`). São **duas** mudanças lá: aceitar no `POST /v1/operacoes` e repassar no evento. Sem o campo, todo `aplicacao`/`aporte` estaciona com `origem_recurso_ausente` |
 | F5 | nenhuma |
 | F6 | o Hub publicando `prices.*` e respondendo `GET /prices/asof` |
 | F7 | o Hub publicando `eod.ready` |
@@ -2008,10 +2008,33 @@ para ela.
   — mas é dependência entre repos, e ela **muda a linha do F4 na tabela de dependência
   externa**, que dizia "já publica".
 
-  **PENDÊNCIA DE CONFIRMAÇÃO, e é do dono:** confirmar com Operações que ela consegue
-  publicar o **rateio**, não só o booleano. Se a resposta for não, o financiamento misto é
-  irrepresentável em qualquer desenho e a escolha passa a ser **de produto** (rejeitar o
-  misto no `POST /operacoes`), não de arquitetura.
+  **PENDÊNCIA DE CONFIRMAÇÃO — RESOLVIDA em 2026-09-11, e a resposta não foi a que a pergunta
+  esperava.** A pergunta era "Operações consegue publicar o **rateio**, não só o booleano?", com
+  a ressalva de que um "não" tornaria o misto irrepresentável e a escolha passaria a ser de
+  produto. **A pergunta estava mal posta**, porque pressupunha que Operações tem o número e
+  escolhe não publicá-lo. Ela não tem (evidência no bloco "Por que a decisão NÃO é desta casa"
+  acima: zero ocorrência de `saldo|caixa|posicao|patrimonio` no `src` do `../operacoes`, e nenhum
+  campo de origem no contrato de entrada).
+
+  **Resposta, e ela é do dono:** Operações é **pass-through** — publicar o rateio é tão barato
+  quanto publicar um booleano, porque nos dois casos ela apenas repassa um campo que o
+  **chamador** preencheu. Logo **o `valorOrigemSaldo` decimal fica como está** na §5.1, e o misto
+  continua representável. Alternativa rejeitada: trocar por enum `origemRecurso`
+  (`externo | saldo_custodia`) e proibir o misto no `POST` — custa o mesmo para quem preenche,
+  entrega menos, **perde a guarda que só o valor tem** (`> valorFinanceiro` é detectável, então
+  entrada errada estaciona em vez de debitar caixa a mais para sempre), e exigiria três edições
+  (§5.1, esta V6 e o F4) para chegar a um resultado pior.
+
+  **O que continua faltando, e NÃO é decisão — é trabalho, no outro repo:** Operações precisa
+  (1) aceitar `valorOrigemSaldo` no `POST /v1/operacoes` — hoje o `RegistrarOperacaoCommand` não
+  tem o campo — e (2) repassá-lo no `TradeRegistered`. Enquanto isso não existir, o F4 grava nada
+  e estaciona todo `aplicacao`/`aporte` com `origem_recurso_ausente`: ruidoso e reversível, que é
+  o desfecho certo. **É o pré-requisito do F4, e ele é de `../operacoes`, não desta casa.**
+
+  *Ônus que o desenho aceita, declarado:* quem chama o `POST` precisa **saber** quanto saiu de
+  saldo, e Operações não ajuda a descobrir. Quem aplica com dinheiro novo manda `0` e está
+  correto sempre; quem **reaplica** precisa consultar o saldo antes — o que só fica confortável
+  quando o extrato de posição do **F8** existir. Até lá, o ônus é do chamador.
 
   ---
 
@@ -2047,10 +2070,24 @@ para ela.
   o dinheiro já estava no livro e passa a ser contado duas vezes. **As duas leituras são
   legítimas**, e a Custódia **não tem como distinguir uma da outra**: o `TradeRegistered` da
   §5.1 não diz se a aplicação trouxe dinheiro novo ou reinvestiu saldo em custódia.
-  **Operações sabe, e não publica.** Escolher entre as duas leituras aqui é **re-derivar rio
-  abaixo o que o produtor já sabe**, que é a §10.32 literal — o mesmo erro que este arquivo
-  recusa no `campoPosicao` (F6) e na distinção `sem_preco_ate_a_data` ×
-  `instrumento_desconhecido`.
+  **CORREÇÃO DE PREMISSA, 2026-09-11 — este parágrafo dizia "Operações sabe, e não publica", e
+  é FALSO.** Conferido no código do `../operacoes`: `grep -niE "saldo|caixa|posicao|patrimonio"`
+  em todo o `src` devolve **zero** ocorrências, e o contrato de entrada do `POST /v1/operacoes`
+  (`RegistrarOperacaoCommand`) é `ClienteId, InstrumentoId, Tipo, Quantidade, ValorFinanceiro,
+  DataEvento, EstornaOperacaoId, IdempotencyKey` — **não há campo de origem do dinheiro, e
+  Operações não tem noção de saldo nenhuma**. Ela grava o fato cru que o chamador manda, e o
+  chamador também não manda.
+  **Quem sabe é quem SUBMETE a operação**, e ninguém pergunta a ele hoje. A decisão continua
+  não sendo desta casa — mas por outro motivo: não é "o produtor já sabe e se recusa a
+  publicar", é **"a informação ainda não é coletada em lugar nenhum"**. O que a §10.32 proíbe
+  continua valendo na conclusão prática: a Custódia **não deve adivinhar** (casar reaplicação com
+  liquidação por FIFO é máquina de alocação que ninguém pediu, rejeitada mais abaixo) — e o
+  conserto é **coletar na borda**, não derivar no fim.
+  *Consequência que torna a decisão barata, e é o que fechou a pendência:* o lado de Operações é
+  **pass-through** — ela não calcula nada, só repassa o campo para o `TradeRegistered`. O custo
+  real está no **chamador** do `POST`, que precisa saber quanto do dinheiro saiu de saldo. Até o
+  extrato de posição do **F8** existir, quem aplica com dinheiro novo manda `0` e está correto;
+  quem **reaplica** precisa consultar o saldo antes.
 
   **A correção, FEITA em 2026-09-09:** campo **OPCIONAL** no `TradeRegistered` da §5.1
   dizendo **quanto** da aplicação saiu de saldo em custódia — `valorOrigemSaldo`, e ele cobre
@@ -2744,8 +2781,15 @@ DECIDIDO EM 2026-09-09 (era pendencia bloqueante) — caixa:BRL PASSA A SER DEBI
       POR QUE VOCE NAO PODIA DECIDIR: o modelo e COERENTE se `aplicacao` significa
       "dinheiro entrou de fora e virou titulo" e ERRADO se a aplicacao consumiu o produto
       de uma liquidacao anterior — as duas leituras sao legitimas, e o TradeRegistered da
-      5.1 NAO DIZ QUAL E. Operacoes sabe e nao publica. Escolher aqui e re-derivar rio
-      abaixo o que o produtor ja sabe (PADROES 10.32). A correcao e um campo OPCIONAL na
+      5.1 NAO DIZ QUAL E. NAO ESCREVA "Operacoes sabe e nao publica" — conferido em
+      2026-09-11 no codigo do ../operacoes e e FALSO: grep por saldo|caixa|posicao|patrimonio
+      em todo o src devolve ZERO, e o contrato de entrada do POST /v1/operacoes nao tem campo
+      de origem do dinheiro. Operacoes NAO SABE; quem sabe e quem SUBMETE a operacao, e
+      ninguem pergunta a ele hoje. A conclusao pratica nao muda: a Custodia nao deve ADIVINHAR
+      (casar reaplicacao com liquidacao por FIFO e maquina de alocacao que ninguem pediu), e o
+      conserto e COLETAR NA BORDA em vez de derivar no fim (PADROES 10.32). O lado de
+      Operacoes e PASS-THROUGH: ela nao calcula nada, so repassa o campo. A correcao e um
+      campo OPCIONAL na
       5.1 do ../plataforma-docs, OUTRO REPO — mesma forma do estornaTradeId, que o F3 do
       operacoes acrescentou a 5.1 ANTES do codigo, como pre-requisito e nao consequencia.
       AS DUAS SAIDAS ALTERNATIVAS, com o custo: (a) perna simetrica (compra e aporte
@@ -3171,10 +3215,17 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   sobre o defeito que existia para pegar — §10.22 dentro do item que a invoca.*
 
 - [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
-  de ordem. **Dependência externa nova: o `operacoes` publicando `valorOrigemSaldo` (V6) —
-  e isso ele AINDA NÃO faz.** *Ele publica `trades.registered`; o que falta é o campo. Sem
-  ele, **todo** `aplicacao`/`aporte` estaciona com `origem_recurso_ausente` — desfecho
-  correto, e inútil como serviço. Combine com Operações ANTES de abrir esta fase.*
+  de ordem. **Dependência externa nova: o `operacoes` aceitando E publicando `valorOrigemSaldo`
+  (V6) — e isso ele AINDA NÃO faz.** *Ele publica `trades.registered`; o que falta é o campo, e
+  **são duas mudanças lá, não uma** — conferido no código em 2026-09-11: o campo não existe **nem
+  na entrada** (`RegistrarOperacaoCommand` é `ClienteId, InstrumentoId, Tipo, Quantidade,
+  ValorFinanceiro, DataEvento, EstornaOperacaoId, IdempotencyKey`), e o `src` do `../operacoes`
+  não tem noção de saldo (zero ocorrência de `saldo|caixa|posicao|patrimonio`). Então Operações
+  precisa **(1) aceitar no `POST /v1/operacoes`** e **(2) repassar no evento** — ela é
+  pass-through, não calcula nada. **Quem tem de saber o número é o CHAMADOR do `POST`.** Sem o
+  campo, **todo** `aplicacao`/`aporte` estaciona com `origem_recurso_ausente` — desfecho
+  correto, e inútil como serviço. Faça as duas mudanças em `../operacoes` ANTES de abrir esta
+  fase.*
 
   `BackgroundService` consumindo a `custodia.prices`, **ack manual** após persistir o
   efeito, `BasicQos(prefetchCount: 1)`, processamento serial, uma instância.
@@ -7446,6 +7497,16 @@ Quatro coisas que este roadmap pede em toda fase, e que não são cerimônia:
    neste arquivo: a definição de `prazo` (**bloqueia o F5 e, por herança, o F9**) e a
    reversão de corpaction (**aberta no F9**, não bloqueante até o Hub publicar
    `corpactions.td`).
+
+   *A **pendência de confirmação** que a V6 deixou — "Operações consegue publicar o rateio, não só
+   o booleano?" — **resolveu em 2026-09-11**, e como ela resolveu vale mais que o resultado: a
+   pergunta **estava mal posta**. Ela pressupunha que Operações tem o número e escolhe não
+   publicá-lo; o código do `../operacoes` diz que ela **não tem** (zero ocorrência de
+   `saldo|caixa|posicao|patrimonio` no `src`, e nenhum campo de origem no contrato de entrada).
+   **Lição de procedimento:** pendência que afirma o que OUTRO REPO sabe ou faz é conferível por
+   `grep` naquele repo, e conferir antes de perguntar muda a pergunta. O desfecho: o decimal fica,
+   Operações é pass-through, e o que sobrou **não é decisão — é trabalho lá** (aceitar no `POST` e
+   repassar no evento), registrado como pré-requisito do F4.*
 
    *A terceira — `caixa:BRL` nunca ser debitado — **fechou em 2026-09-09** com o campo
    `valorOrigemSaldo` na §5.1 do `../plataforma-docs`, e o que ela custou para fechar é o
