@@ -1,3 +1,4 @@
+using System.Reflection;
 using Custodia.Application.Eventos;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
@@ -434,6 +435,133 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsFailure);
         Assert.Equal(erroGenerico, resultado.Error);
+    }
+
+    [Fact]
+    public async Task Handle_FalhaDeGravacaoPorMensagemDuplicada_TraduzParaEscrituradoComReplay_PoisEhReentregaDaMesmaMensagemEDedupeFuncionou()
+    {
+        var (handler, _, _, _, _) = CriarHandler(
+            saveChanges: _ => Result.Failure(MovimentoWriteErrors.MensagemDuplicada));
+
+        var evento = CriarEvento(valorOrigemSaldoBruto: "0");
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, resultado.Value.Tipo);
+        Assert.True(resultado.Value.Replay);
+    }
+
+    [Fact]
+    public async Task Handle_FalhaDeGravacaoPorValorNumericoExcedeMagnitudeOuEscala_EstacionaComPayloadInvalido()
+    {
+        var (handler, _, _, _, _) = CriarHandler(
+            saveChanges: _ => Result.Failure(MovimentoWriteErrors.ValorNumericoExcedeMagnitudeOuEscalaSuportada));
+
+        var evento = CriarEvento(valorOrigemSaldoBruto: "0");
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
+        Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+    }
+
+    [Fact]
+    public async Task Handle_FalhaDeGravacaoPorDataEventoFutura_EstacionaComPayloadInvalido_PoisOperacoesJaDeveriaTerRejeitadoNaBorda()
+    {
+        var (handler, _, _, _, _) = CriarHandler(
+            saveChanges: _ => Result.Failure(MovimentoWriteErrors.DataEventoFutura));
+
+        var evento = CriarEvento(valorOrigemSaldoBruto: "0");
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
+        Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+    }
+
+    [Fact]
+    public async Task Handle_FalhaDeGravacaoPorOperacaoNaoPermitidaSobreMovimentoImutavel_PropagaComoFalhaAltaEVisivel_PoisEhInalcancavelDesteHandlerQueSoFazInsertESeAparecerEhDefeitoNosso()
+    {
+        var erro = MovimentoWriteErrors.OperacaoNaoPermitidaSobreMovimentoImutavel;
+        var (handler, _, _, _, _) = CriarHandler(saveChanges: _ => Result.Failure(erro));
+
+        var evento = CriarEvento(valorOrigemSaldoBruto: "0");
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(erro, resultado.Error);
+    }
+
+    private static readonly IReadOnlyDictionary<string, Action<Result<ResultadoTradeRegistered>, Error>>
+        DesfechoEsperadoPorCampoDeMovimentoWriteErrors = new Dictionary<string, Action<Result<ResultadoTradeRegistered>, Error>>
+        {
+            [nameof(MovimentoWriteErrors.RefEstornoDuplicado)] = (resultado, _) =>
+            {
+                Assert.True(resultado.IsSuccess);
+                Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
+                Assert.Equal(MotivoEstacionamento.EstornoDuplicado, resultado.Value.Motivo);
+            },
+            [nameof(MovimentoWriteErrors.IdentificadorComEspacoNaBorda)] = (resultado, _) =>
+            {
+                Assert.True(resultado.IsSuccess);
+                Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
+                Assert.Equal(MotivoEstacionamento.IdentificadorComEspacoNaBorda, resultado.Value.Motivo);
+            },
+            [nameof(MovimentoWriteErrors.MensagemDuplicada)] = (resultado, _) =>
+            {
+                Assert.True(resultado.IsSuccess);
+                Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, resultado.Value.Tipo);
+                Assert.True(resultado.Value.Replay);
+            },
+            [nameof(MovimentoWriteErrors.ValorNumericoExcedeMagnitudeOuEscalaSuportada)] = (resultado, _) =>
+            {
+                Assert.True(resultado.IsSuccess);
+                Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
+                Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+            },
+            [nameof(MovimentoWriteErrors.DataEventoFutura)] = (resultado, _) =>
+            {
+                Assert.True(resultado.IsSuccess);
+                Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
+                Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+            },
+            [nameof(MovimentoWriteErrors.OperacaoNaoPermitidaSobreMovimentoImutavel)] = (resultado, erro) =>
+            {
+                Assert.True(resultado.IsFailure);
+                Assert.Equal(erro, resultado.Error);
+            },
+        };
+
+    [Fact]
+    public async Task ClassificarFalhaDeGravacao_TodoErroPublicoDeMovimentoWriteErrors_TemDesfechoExplicitamenteClassificado_NuncaOFallbackGenerico()
+    {
+        var camposDeErro = typeof(MovimentoWriteErrors)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(campo => campo.FieldType == typeof(Error))
+            .ToList();
+
+        Assert.NotEmpty(camposDeErro);
+
+        foreach (var campo in camposDeErro)
+        {
+            Assert.True(
+                DesfechoEsperadoPorCampoDeMovimentoWriteErrors.ContainsKey(campo.Name),
+                $"MovimentoWriteErrors.{campo.Name} não tem desfecho esperado registrado nesta guarda de " +
+                "totalidade — classifique-o em ClassificarFalhaDeGravacao e registre o desfecho aqui antes " +
+                "de liberar este Error.");
+
+            var erro = (Error)campo.GetValue(null)!;
+            var (handler, _, _, _, _) = CriarHandler(saveChanges: _ => Result.Failure(erro));
+            var evento = CriarEvento(valorOrigemSaldoBruto: "0");
+
+            var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+            DesfechoEsperadoPorCampoDeMovimentoWriteErrors[campo.Name](resultado, erro);
+        }
     }
 
     [Fact]

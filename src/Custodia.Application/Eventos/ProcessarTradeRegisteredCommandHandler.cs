@@ -337,6 +337,11 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
     private static Result<ResultadoTradeRegistered> ClassificarFalhaDeGravacao(Error erro)
     {
+        if (erro == MovimentoWriteErrors.MensagemDuplicada)
+        {
+            return ResultadoTradeRegistered.Escriturado(replay: true);
+        }
+
         if (erro == MovimentoWriteErrors.RefEstornoDuplicado)
         {
             return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.EstornoDuplicado);
@@ -345,6 +350,21 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         if (erro == MovimentoWriteErrors.IdentificadorComEspacoNaBorda)
         {
             return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.IdentificadorComEspacoNaBorda);
+        }
+
+        if (erro == MovimentoWriteErrors.ValorNumericoExcedeMagnitudeOuEscalaSuportada)
+        {
+            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+        }
+
+        if (erro == MovimentoWriteErrors.DataEventoFutura)
+        {
+            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+        }
+
+        if (erro == MovimentoWriteErrors.OperacaoNaoPermitidaSobreMovimentoImutavel)
+        {
+            return erro;
         }
 
         return erro;

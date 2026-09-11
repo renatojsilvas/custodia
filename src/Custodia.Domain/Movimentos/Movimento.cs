@@ -78,4 +78,24 @@ public sealed class Movimento
 
     private static bool ExcedePrecisaoSuportada(decimal valor, decimal limiteSuperiorExclusivo, int escala) =>
         Math.Abs(valor) >= limiteSuperiorExclusivo || decimal.Round(valor, escala) != valor;
+
+    public static Movimento Reconstituir(
+        long id,
+        string clienteId,
+        string instrumentoId,
+        TipoMovimento tipo,
+        DateOnly dataEvento,
+        DateTimeOffset registradoEm,
+        decimal qtdDelta,
+        decimal valorFinanceiro,
+        string refExterna,
+        long? refEstorno)
+    {
+        ArgumentNullException.ThrowIfNull(tipo);
+
+        return new Movimento(clienteId, instrumentoId, tipo, dataEvento, registradoEm, qtdDelta, valorFinanceiro, refExterna, refEstorno)
+        {
+            Id = id,
+        };
+    }
 }

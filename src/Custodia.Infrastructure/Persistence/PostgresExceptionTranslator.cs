@@ -6,9 +6,6 @@ namespace Custodia.Infrastructure.Persistence;
 
 internal static class PostgresExceptionTranslator
 {
-    private const string TriggerDataEventoFutura = "movimentos_bloqueia_data_futura";
-    private const string TriggerImutavel = "movimentos_bloqueia_update_delete";
-
     public static Error? Traduzir(PostgresException pg)
     {
         ArgumentNullException.ThrowIfNull(pg);
@@ -33,12 +30,12 @@ internal static class PostgresExceptionTranslator
             return MovimentoWriteErrors.ValorNumericoExcedeMagnitudeOuEscalaSuportada;
         }
 
-        if (pg.SqlState == PostgresErrorCodes.RaiseException && ContemFuncao(pg.Where, TriggerDataEventoFutura))
+        if (pg.SqlState == CustodiaSqlStates.MovimentosDataEventoFutura)
         {
             return MovimentoWriteErrors.DataEventoFutura;
         }
 
-        if (pg.SqlState == PostgresErrorCodes.RaiseException && ContemFuncao(pg.Where, TriggerImutavel))
+        if (pg.SqlState == CustodiaSqlStates.MovimentosOperacaoImutavel)
         {
             return MovimentoWriteErrors.OperacaoNaoPermitidaSobreMovimentoImutavel;
         }
@@ -50,7 +47,4 @@ internal static class PostgresExceptionTranslator
         constraintName is "ck_movimentos_cliente_id_sem_espaco_nas_bordas"
             or "ck_movimentos_instrumento_id_sem_espaco_nas_bordas"
             or "ck_movimentos_ref_externa_sem_espaco_nas_bordas";
-
-    private static bool ContemFuncao(string? where, string nomeDaFuncao) =>
-        where is not null && where.Contains(nomeDaFuncao, StringComparison.Ordinal);
 }

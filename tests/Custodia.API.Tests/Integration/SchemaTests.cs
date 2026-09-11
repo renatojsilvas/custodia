@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Text.RegularExpressions;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
+using Custodia.Infrastructure.Persistence;
 using Dapper;
 using Npgsql;
 
@@ -655,6 +656,7 @@ public sealed class SchemaTests
         Assert.NotNull(exception);
         var pgException = Assert.IsType<PostgresException>(exception);
         Assert.Contains("append-only", pgException.MessageText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(CustodiaSqlStates.MovimentosOperacaoImutavel, pgException.SqlState);
     }
 
     [Fact]
@@ -668,6 +670,32 @@ public sealed class SchemaTests
         Assert.NotNull(exception);
         var pgException = Assert.IsType<PostgresException>(exception);
         Assert.Contains("append-only", pgException.MessageText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(CustodiaSqlStates.MovimentosOperacaoImutavel, pgException.SqlState);
+    }
+
+    [Fact]
+    public async Task Movimentos_TriggerImutavelETriggerDeDataFutura_UsamCodigosDeErroDistintosEntreSiENaoOGenericoP0001DoPlpgsql()
+    {
+        using var connection = await OpenConnectionAsync();
+
+        var id = await InserirMovimentoAsync(connection);
+        var excecaoImutavel = await Record.ExceptionAsync(() => connection.ExecuteAsync(
+            "DELETE FROM movimentos WHERE id = @id", new { id }));
+        var excecaoDataFutura = await Record.ExceptionAsync(() => connection.ExecuteAsync(
+            """
+            INSERT INTO movimentos (cliente_id, instrumento_id, tipo, data_evento, qtd_delta, valor_financeiro, ref_externa)
+            VALUES (@clienteId, 'td:tesouro-selic-2029', 'compra', (now() AT TIME ZONE 'America/Sao_Paulo')::date + 1, 10, 1000, @refExterna)
+            """,
+            new { clienteId = NovoClienteId(), refExterna = NovaRefExterna() }));
+
+        var sqlStateImutavel = Assert.IsType<PostgresException>(excecaoImutavel).SqlState;
+        var sqlStateDataFutura = Assert.IsType<PostgresException>(excecaoDataFutura).SqlState;
+
+        Assert.Equal(CustodiaSqlStates.MovimentosOperacaoImutavel, sqlStateImutavel);
+        Assert.Equal(CustodiaSqlStates.MovimentosDataEventoFutura, sqlStateDataFutura);
+        Assert.NotEqual(sqlStateImutavel, sqlStateDataFutura);
+        Assert.NotEqual("P0001", sqlStateImutavel);
+        Assert.NotEqual("P0001", sqlStateDataFutura);
     }
 
     [Fact]

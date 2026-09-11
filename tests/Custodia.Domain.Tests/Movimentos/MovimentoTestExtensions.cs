@@ -1,19 +1,21 @@
-using System.Reflection;
 using Custodia.Domain.Movimentos;
 
 namespace Custodia.Domain.Tests.Movimentos;
 
 public static class MovimentoTestExtensions
 {
-    private static readonly PropertyInfo IdProperty =
-        typeof(Movimento).GetProperty(nameof(Movimento.Id))
-        ?? throw new InvalidOperationException("Movimento.Id não encontrado por reflexão.");
-
-    public static Movimento ComId(this Movimento movimento, long id)
-    {
-        IdProperty.SetValue(movimento, id);
-        return movimento;
-    }
+    public static Movimento ComId(this Movimento movimento, long id) =>
+        Movimento.Reconstituir(
+            id,
+            movimento.ClienteId,
+            movimento.InstrumentoId,
+            movimento.Tipo,
+            movimento.DataEvento,
+            movimento.RegistradoEm,
+            movimento.QtdDelta,
+            movimento.ValorFinanceiro,
+            movimento.RefExterna,
+            movimento.RefEstorno);
 
     public static Movimento MovimentoValido(
         long id,
