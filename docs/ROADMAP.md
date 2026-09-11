@@ -3262,16 +3262,22 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
 
 - [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
   de ordem. **Dependência externa nova: o `operacoes` aceitando E publicando `valorOrigemSaldo`
-  (V6) — e isso ele AINDA NÃO faz.** *Ele publica `trades.registered`; o que falta é o campo, e
-  **são duas mudanças lá, não uma** — conferido no código em 2026-09-11: o campo não existe **nem
-  na entrada** (`RegistrarOperacaoCommand` é `ClienteId, InstrumentoId, Tipo, Quantidade,
-  ValorFinanceiro, DataEvento, EstornaOperacaoId, IdempotencyKey`), e o `src` do `../operacoes`
-  não tem noção de saldo (zero ocorrência de `saldo|caixa|posicao|patrimonio`). Então Operações
-  precisa **(1) aceitar no `POST /v1/operacoes`** e **(2) repassar no evento** — ela é
-  pass-through, não calcula nada. **Quem tem de saber o número é o CHAMADOR do `POST`.** Sem o
-  campo, **todo** `aplicacao`/`aporte` estaciona com `origem_recurso_ausente` — desfecho
-  correto, e inútil como serviço. Faça as duas mudanças em `../operacoes` ANTES de abrir esta
-  fase.*
+  (V6) — e ela está SATISFEITA desde 2026-09-11.** *Conferido no código do `../operacoes`: o commit
+  `4bed7c1` ("F6 — valorOrigemSaldo: aceitar no POST e publicar no TradeRegistered", PR #18) fez as
+  **duas** mudanças que esta alínea exigia — `RegistrarOperacaoCommand` passou a ter
+  `decimal? ValorOrigemSaldo` (aceitar no `POST /v1/operacoes`) e `TradeRegisteredPayload` passou a
+  serializá-lo como string decimal `F2` no evento (repassar). Operações é pass-through, não calcula
+  nada: quem sabe o número é o CHAMADOR do `POST`, e lá o campo é **obrigatório** para
+  `aplicacao`/`aporte`, **proibido** nos demais tipos, com **422 na borda** (§6.1 camada 2 / ADR-11).*
+  **O que isso muda para esta fase, e não é "apague o requisito":** `origem_recurso_ausente` continua
+  sendo um dos TREZE motivos e continua tendo de ser implementado e testado. O que mudou é que ele
+  deixou de ser o desfecho de **todo** `aplicacao`/`aporte` e voltou a ser o que sempre devia ser —
+  rede de segurança para o produtor que não marcou, que é justamente o que a §10.32 manda não
+  re-derivar rio abaixo. *Até 2026-09-11 esta alínea dizia "e isso ele AINDA NÃO faz… faça as duas
+  mudanças em `../operacoes` ANTES de abrir esta fase", com a conferência datada do mesmo dia: ela
+  foi escrita algumas horas **antes** do commit lá. O texto ficou stale em menos de um dia, que é o
+  modo de falha da §10.9 na direção do tempo — afirmação sobre o estado de OUTRO repo tem data de
+  validade, e quem abre a fase confere no repo, não no parágrafo.*
 
   `BackgroundService` consumindo a `custodia.prices`, **ack manual** após persistir o
   efeito, `BasicQos(prefetchCount: 1)`, processamento serial, uma instância.
@@ -3985,6 +3991,22 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
        n_motivo        = mensagens DO MOTIVO PEDIDO examinadas E PROCESSADAS nesta passagem.
        residual_motivo = mensagens DO MOTIVO PEDIDO examinadas e REPUBLICADAS SEM PROCESSAR
                          (falha de handler, payload que volta a estacionar).
+     DIVIDA HERDADA DO F2, E ELA MEXE NESTA CONTAGEM — estava so na prosa desta fase, e
+     prompt que nao a carrega produz um drenador que devolve falha por um motivo que nao
+     existe. As filas terminais (custodia.prices.dlq, custodia.parked) podem trazer ate UMA
+     mensagem `custodia-f2-*` POR EXECUCAO ABORTADA do passo de topologia do F2: a prova de
+     fanout publica uma sonda e a remove, mas se a execucao morrer entre as duas a sonda
+     fica, e a execucao seguinte absorve UMA por vez. Em regime estavel nao cresce, mas
+     depois de qualquer aborto a fila nao volta a zero sozinha. Essas mensagens NAO TEM
+     x-custodia-motivo e o payload nao e JSON de contrato nenhum: uma custodia.parked que
+     contenha so elas faz n_motivo = 0 e a passagem completa devolve VAZIO_DO_MOTIVO — que
+     e INCONCLUSIVO, nunca sucesso, e aqui seria inconclusivo por lixo, nao por estado.
+     REGRA: o drenador reconhece-as pelo PREFIXO `custodia-f2-` e DESCONTA-AS DE N — nao as
+     trata como mensagem estacionada, nao as conta em n_motivo nem em residual_motivo.
+     Remove-las e basic.get + ack CONFERINDO O PREFIXO, NUNCA purge. A custodia.prices tem o
+     residuo analogo (`custodia-f2-retry-*`, ~1 por deploy quando ha backlog), e vale a MESMA
+     REGRA NO CONSUMIDOR: `prices.smoke` com payload NAO-JSON e sonda do deploy, nao evento —
+     nao estaciona, nao vira payload_invalido, e nao entra em metrica de evento.
      O PROCEDIMENTO DE DECISAO E UMA ARVORE DE QUATRO PERGUNTAS, NESTA ORDEM, E CADA FOLHA
      DELA E UM DESFECHO — SAO SEIS:
        (1) N esta acima do teto configurado?
@@ -4289,6 +4311,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   ele **não** tenha sido sobrescrito — a regra é pela árvore (publicam só as folhas que
   examinaram as `N`), e afirmá-la numa folha só deixa as outras duas verdes com a métrica
   truncada;
+  (d1b) **a dívida herdada do F2 descontada de `N`, e ela é o caso que faz a guarda do
+  `n_motivo ≥ 1` disparar por lixo em vez de por estado:** a `custodia.parked` é plantada com
+  uma mensagem `custodia-f2-*` (sem `x-custodia-motivo`, payload não-JSON) **e** uma do motivo
+  pedido, e a passagem tem de devolver **COMPLETUDE** com `n_motivo = 1` — a sonda descontada
+  de `N`, removida por `basic.get` + ack conferindo o prefixo, **nunca** por purge, e **não**
+  contada em `n_motivo` nem em `residual_motivo`. **Controle negativo no mesmo teste:** sem o
+  desconto a mesma fila devolve `VAZIO_DO_MOTIVO` ou `PARCIAL`, que é falha por um motivo que
+  não existe. E o análogo no consumidor: `prices.smoke` com payload não-JSON na
+  `custodia.prices` é **sonda de deploy** — não estaciona, não vira `payload_invalido`, e não
+  entra na métrica de evento;
   (d2) **um `aporte` gravando o `instrumento_id` do evento e a `quantidade` do evento, E
   dobrando `preco_medio`/`custo_total` como uma compra** — conferir só instrumento e
   quantidade era o buraco da versão anterior deste Pronto: o `aporte` passava com a coluna
