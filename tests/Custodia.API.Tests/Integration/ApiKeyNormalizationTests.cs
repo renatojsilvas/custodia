@@ -100,6 +100,9 @@ public sealed class ApiKeyNormalizationTests
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ApiKey:Key"] = configuredApiKey,
+                    ["RabbitMq:Host"] = "127.0.0.1",
+                    ["RabbitMq:User"] = "guest",
+                    ["RabbitMq:Password"] = "guest",
                 });
             });
         }

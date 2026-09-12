@@ -1,6 +1,8 @@
 using Custodia.Application.Common.Interfaces;
+using Custodia.Application.Eventos;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
+using Custodia.Infrastructure.Messaging;
 using Custodia.Infrastructure.Observability;
 using Custodia.Infrastructure.Persistence;
 using Custodia.Infrastructure.Persistence.Repositories;
@@ -35,6 +37,10 @@ public static class DependencyInjection
         services.AddScoped<IMovimentoWriteRepository, MovimentoWriteRepository>();
         services.AddScoped<IPosicaoCorrenteReadRepository, PosicaoCorrenteReadRepository>();
         services.AddScoped<IPosicaoCorrenteWriteRepository, PosicaoCorrenteWriteRepository>();
+        services.AddSingleton<RoteadorDeEventos>();
+        services.AddSingleton<RabbitMqConnectionProvider>();
+        services.AddSingleton<IPublicadorComConfirmacao, RabbitMqPublicadorComConfirmacao>();
+        services.AddSingleton<ConsumidorMetrics>();
 
         return services;
     }

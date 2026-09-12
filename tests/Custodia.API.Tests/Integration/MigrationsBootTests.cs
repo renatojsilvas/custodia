@@ -9,6 +9,9 @@ public sealed class MigrationsBootTests
 {
     private const string MigrationId = "20260907234841_InitialCreate";
     private const string ConnectionStringEnvVar = "ConnectionStrings__DefaultConnection";
+    private const string RabbitMqHostEnvVar = "RabbitMq__Host";
+    private const string RabbitMqUserEnvVar = "RabbitMq__User";
+    private const string RabbitMqPasswordEnvVar = "RabbitMq__Password";
 
     [Fact]
     public async Task Boot_ComPostgresReal_AplicaMigrationsERegistraALinhaEmEfMigrationsHistory()
@@ -18,6 +21,7 @@ public sealed class MigrationsBootTests
         var connectionString = postgres.GetConnectionString();
 
         Environment.SetEnvironmentVariable(ConnectionStringEnvVar, connectionString);
+        DefinirVariaveisDoRabbitMq();
         try
         {
             await using var factory = new DevelopmentBootFactory();
@@ -27,6 +31,7 @@ public sealed class MigrationsBootTests
         finally
         {
             Environment.SetEnvironmentVariable(ConnectionStringEnvVar, null);
+            LimparVariaveisDoRabbitMq();
         }
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -55,6 +60,7 @@ public sealed class MigrationsBootTests
         await postgres.StartAsync();
 
         Environment.SetEnvironmentVariable(ConnectionStringEnvVar, postgres.GetConnectionString());
+        DefinirVariaveisDoRabbitMq();
         try
         {
             await using var factory = new DevelopmentBootFactory();
@@ -67,7 +73,22 @@ public sealed class MigrationsBootTests
         finally
         {
             Environment.SetEnvironmentVariable(ConnectionStringEnvVar, null);
+            LimparVariaveisDoRabbitMq();
         }
+    }
+
+    private static void DefinirVariaveisDoRabbitMq()
+    {
+        Environment.SetEnvironmentVariable(RabbitMqHostEnvVar, "127.0.0.1");
+        Environment.SetEnvironmentVariable(RabbitMqUserEnvVar, "guest");
+        Environment.SetEnvironmentVariable(RabbitMqPasswordEnvVar, "guest");
+    }
+
+    private static void LimparVariaveisDoRabbitMq()
+    {
+        Environment.SetEnvironmentVariable(RabbitMqHostEnvVar, null);
+        Environment.SetEnvironmentVariable(RabbitMqUserEnvVar, null);
+        Environment.SetEnvironmentVariable(RabbitMqPasswordEnvVar, null);
     }
 
     private sealed class DevelopmentBootFactory : WebApplicationFactory<Program>

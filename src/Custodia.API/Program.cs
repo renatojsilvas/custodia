@@ -6,6 +6,7 @@ using Custodia.API.Middleware;
 using Custodia.Application;
 using Custodia.Domain.Common;
 using Custodia.Infrastructure;
+using Custodia.Infrastructure.Messaging;
 using IResult = Microsoft.AspNetCore.Http.IResult;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,10 +15,16 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddApiServices();
 builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
+if (!builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddHostedService<RabbitMqTradeConsumidor>();
+    builder.Services.AddHostedService<RabbitMqFilaProfundidadePoller>();
+}
 var app = builder.Build();
 NormalizeApiKeyConfiguration(app.Configuration);
 ConnectionStringGuard.Validate(app.Configuration, app.Environment);
 ApiKeyGuard.Validate(app.Configuration, app.Environment);
+RabbitMqConfigGuard.Validate(app.Configuration, app.Environment);
 await app.InitializeDatabaseAsync();
 app.UseForwardedHeaders();
 var httpMetricsExcludedPaths = app.Configuration.GetSection("Metrics:ExcludedPaths").Get<string[]>() ?? [];
