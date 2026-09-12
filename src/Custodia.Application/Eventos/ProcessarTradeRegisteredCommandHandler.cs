@@ -164,16 +164,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.EstornoDivergente);
         }
 
-        var ajusteTituloResult = Movimento.Create(
-            evento.ClienteId,
-            titulo.InstrumentoId,
-            TipoMovimento.Ajuste,
-            titulo.DataEvento,
-            evento.RegistradoEm,
-            qtdDelta: -titulo.QtdDelta,
-            valorFinanceiro: -titulo.ValorFinanceiro,
-            refExterna: evento.TradeId,
-            refEstorno: titulo.Id);
+        var ajusteTituloResult = CriarAjusteDeReversao(titulo, evento.ClienteId, evento.RegistradoEm, evento.TradeId);
 
         if (ajusteTituloResult.IsFailure)
         {
@@ -194,16 +185,8 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         {
             var pernaOriginal = pernaOriginalResult.Value.Linha!;
 
-            var ajustePernaResult = Movimento.Create(
-                evento.ClienteId,
-                pernaOriginal.InstrumentoId,
-                TipoMovimento.Ajuste,
-                pernaOriginal.DataEvento,
-                evento.RegistradoEm,
-                qtdDelta: -pernaOriginal.QtdDelta,
-                valorFinanceiro: -pernaOriginal.ValorFinanceiro,
-                refExterna: $"{evento.TradeId}:brl",
-                refEstorno: pernaOriginal.Id);
+            var ajustePernaResult = CriarAjusteDeReversao(
+                pernaOriginal, evento.ClienteId, evento.RegistradoEm, $"{evento.TradeId}:brl");
 
             if (ajustePernaResult.IsFailure)
             {
@@ -220,6 +203,22 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         evento.InstrumentoId == titulo.InstrumentoId
         && evento.Quantidade == Math.Abs(titulo.QtdDelta)
         && evento.ValorFinanceiro == titulo.ValorFinanceiro;
+
+    private static Result<Movimento> CriarAjusteDeReversao(
+        Movimento revertida,
+        string clienteId,
+        DateTimeOffset registradoEm,
+        string refExterna) =>
+        Movimento.Create(
+            clienteId,
+            revertida.InstrumentoId,
+            TipoMovimento.Ajuste,
+            revertida.DataEvento,
+            registradoEm,
+            qtdDelta: -revertida.QtdDelta,
+            valorFinanceiro: -revertida.ValorFinanceiro,
+            refExterna: refExterna,
+            refEstorno: revertida.Id);
 
     private async Task<Result<ResultadoTradeRegistered>> GravarTudoAsync(
         IReadOnlyList<Movimento> movimentos, CancellationToken ct)
