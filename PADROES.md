@@ -1558,3 +1558,42 @@ instâncias dele.
 **exato**. Baixar caixa no lado comparado transformaria o valor, e o valor é identidade de outro
 contexto. `lower()` entra **só** na pergunta "isto é do meu domínio?", nunca na pergunta "isto é
 qual dos meus valores?".
+
+### 10.44. Contador que o broker escreve não sobrevive a um republish do publicador — quem republica é quem conta
+
+Se o seu retry é **republish do consumidor** (publicar noutro exchange e confirmar a original, em
+vez de `nack(requeue: true)`), **não conte as voltas pelo `x-death`**. Conte num header **seu**,
+que você escreve e incrementa no ponto do republish.
+
+**Por quê, medido e não deduzido.** Contra `rabbitmq:4-management-alpine` (4.x, filas quorum,
+`x-delivery-limit`), com a topologia `main → publish em retry.in → fila com x-message-ttl → DLX de
+volta para main`:
+
+- a mensagem que deu **N voltas** chega com `x-death[…].count = 1` em **todas** elas, **mesmo com a
+  cópia integral dos headers** no republish;
+- um `x-death` **forjado** pelo publicador com `count = 7` chega ao consumidor como `count = 1`: o
+  broker **não confia** no `x-death` vindo do cliente — ele reescreve o registro ao dead-letrar;
+- um header próprio (`x-custodia-voltas`) **sobrevive** à volta inteira, intacto.
+
+A razão é estrutural, não um detalhe de versão: cada republish **seu** é uma **mensagem nova** para
+o broker, então a história de morte recomeça do zero. O `x-death` só cresce quando a **mesma**
+mensagem é dead-letrada repetidamente **sem** passar por um publish de cliente — isto é, no desenho
+com `nack`/reject, que é exatamente o desenho que você **não** pode usar quando o motivo do retry é
+**head-of-line blocking** (a mensagem devolvida volta para a frente da fila e a que a curaria está
+atrás dela, na mesma fila).
+
+**A armadilha é que o defeito é SILENCIOSO e fecha VERDE.** Com o contador travado em 1, o teto
+nunca fecha: a mensagem circula entre as duas filas a cada TTL **para sempre**, o motivo de
+estacionamento por expiração **nunca é emitido**, e nada falha — não há exceção, não há fila
+crescendo, não há alerta. O teste que "prova o teto" passa se ele só afirmar a **primeira** volta;
+quem pega é a asserção sobre a **segunda**.
+
+**Isto é a §10.32 lida do lado certo, e o erro de leitura é fácil.** "Quem sabe a diferença é quem
+deve marcá-la" parece apontar para o broker — ele é quem dead-letra, logo ele saberia. Mas quem sabe
+**quantas voltas esta mensagem já deu no meu ciclo de retry** é quem republica, porque é o único que
+atravessa as voltas: o broker esquece a cada publish novo. Antes de delegar uma contagem a
+metadado de infraestrutura, pergunte **o que exatamente aquele número conta** — e meça.
+
+**Guarda:** header próprio, copiado junto com os demais e incrementado no republish; teste que
+exercita **duas** voltas e afirma o valor na segunda; e, se o teto for pequeno, um teste que o leva
+até o estacionamento. Ref.: `custodia`, F4, Decisão A.
