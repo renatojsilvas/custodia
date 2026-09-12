@@ -301,6 +301,25 @@ public sealed class DobraPosicaoTests
     }
 
     [Fact]
+    public void Dobrar_ComDoisAjustesApontandoParaMesmoAlvo_NaoLancaEProduzMesmoResultadoQueUmUnicoAjuste_PoisUnicidadeDeRefEstornoEhGarantidaPeloBancoENaoPelaDobra()
+    {
+        var compra = MovimentoTestExtensions.MovimentoValido(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(1), Instante(1), 10m, 1000m, "trade-1");
+        var venda = MovimentoTestExtensions.MovimentoValido(
+            2, ClienteId, InstrumentoId, TipoMovimento.Venda, Dia(2), Instante(2), -4m, 600m, "trade-2");
+        var primeiroEstorno = MovimentoTestExtensions.MovimentoValido(
+            3, ClienteId, InstrumentoId, TipoMovimento.Ajuste, Dia(2), Instante(3), 4m, -600m, "estorno-trade-2", 2);
+        var segundoEstornoDoMesmoAlvo = MovimentoTestExtensions.MovimentoValido(
+            4, ClienteId, InstrumentoId, TipoMovimento.Ajuste, Dia(2), Instante(4), 4m, -600m, "estorno-trade-2-duplicado", 2);
+
+        var resultadoComDoisAjustesParaOMesmoAlvo = DobraPosicao.Dobrar([compra, venda, primeiroEstorno, segundoEstornoDoMesmoAlvo]);
+        var resultadoComUmUnicoAjuste = DobraPosicao.Dobrar([compra, venda, primeiroEstorno]);
+
+        Assert.Equal(resultadoComUmUnicoAjuste, resultadoComDoisAjustesParaOMesmoAlvo);
+        Assert.Equal(new PosicaoTresColunas(10m, 1000m, 100m), resultadoComDoisAjustesParaOMesmoAlvo);
+    }
+
+    [Fact]
     public void Dobrar_ComCorteEmDataAnterior_IgnoraMovimentosPosterioresAoCorte()
     {
         var m1 = MovimentoTestExtensions.MovimentoValido(

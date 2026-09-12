@@ -317,20 +317,8 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
         Assert.False(await db.Movimentos.AnyAsync(m => m.RefExterna == estornoCamposDivergentes));
     }
 
-    [Fact(Skip =
-        "BLOQUEADO POR DEFEITO EM Custodia.Domain.Posicoes.DobraPosicao.Dobrar (fora do escopo deste executor, " +
-        "que não pode alterar Domain/Application): reversorPorAlvoId é montado com " +
-        "'.ToDictionary(m => m.RefEstorno!.Value, ...)', que assume NO MÁXIMO um ajuste por RefEstorno. Um " +
-        "segundo estorno do MESMO movimento, ao ser reprocessado, cria um Movimento transiente com o MESMO " +
-        "RefEstorno do ajuste já persistido pelo primeiro estorno; ObterMovimentosDaChaveAsync traz os dois " +
-        "(um do banco, um em memória) e o ToDictionary lança ArgumentException ('An item with the same key " +
-        "has already been added') ANTES de a gravação chegar ao UNIQUE(ref_estorno) que classificaria isso " +
-        "como estorno_duplicado. O consumidor loga CRITICAL e faz nack(requeue:true) — mas como é uma falha " +
-        "DETERMINÍSTICA (mesma exceção sempre), e nack(requeue:true) reentrega NA HORA (prefetch 1, serial), " +
-        "isso é HEAD-OF-LINE BLOCKING: a mensagem trava a fila em loop até o x-delivery-limit=20 estourar e " +
-        "cair na custodia.prices.dlq, mascarando o motivo estorno_duplicado. Reportado ao orquestrador; não " +
-        "corrigido aqui.")]
-    public async Task DecisaoB_EstornoDuplicado_BloqueadoPorBugDeDobraPosicaoNoRedobroDoAjuste()
+    [Fact]
+    public async Task DecisaoB_SegundoEstornoDoMesmoMovimento_EstacionaComoEstornoDuplicadoSemNadaGravarESemCairNaDlq()
     {
         const string instrumentoId = "td:tesouro-teste-b3-duplicado";
         var dataEvento = new DateOnly(2026, 6, 1);
@@ -374,6 +362,12 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
         {
             await consumidor.StopAsync(CancellationToken.None);
         }
+
+        Assert.True(await ExisteMovimentoAsync(estorno1));
+        Assert.False(await ExisteMovimentoAsync(estorno2));
+
+        var profundidadeDlq = await ContarMensagensAsync(RabbitMqTopologia.FilaDlq);
+        Assert.Equal(0u, profundidadeDlq);
     }
 
     [Fact]

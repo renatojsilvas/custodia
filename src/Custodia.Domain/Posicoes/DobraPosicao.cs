@@ -20,9 +20,9 @@ public static class DobraPosicao
             .ThenBy(movimento => movimento.Id)
             .ToList();
 
-        var reversorPorAlvoId = ordenados
+        var reversoresPorAlvoId = ordenados
             .Where(movimento => movimento.Tipo == TipoMovimento.Ajuste && movimento.RefEstorno is not null)
-            .ToDictionary(movimento => movimento.RefEstorno!.Value, movimento => movimento);
+            .ToLookup(movimento => movimento.RefEstorno!.Value, movimento => movimento);
 
         var estado = PosicaoTresColunas.Zero;
 
@@ -33,7 +33,7 @@ public static class DobraPosicao
                 continue;
             }
 
-            if (!EhEfetiva(movimento, reversorPorAlvoId, []))
+            if (!EhEfetiva(movimento, reversoresPorAlvoId, []))
             {
                 continue;
             }
@@ -68,9 +68,11 @@ public static class DobraPosicao
         return ResultadoAplicacaoIncremental.Aplicado(AplicarMovimento(estadoAtual, movimento));
     }
 
-    private static bool EhEfetiva(Movimento movimento, IReadOnlyDictionary<long, Movimento> reversorPorAlvoId, HashSet<long> emResolucao)
+    private static bool EhEfetiva(Movimento movimento, ILookup<long, Movimento> reversoresPorAlvoId, HashSet<long> emResolucao)
     {
-        if (!reversorPorAlvoId.TryGetValue(movimento.Id, out var reversor))
+        var reversores = reversoresPorAlvoId[movimento.Id];
+
+        if (!reversores.Any())
         {
             return true;
         }
@@ -80,9 +82,9 @@ public static class DobraPosicao
             return true;
         }
 
-        var reversorEhEfetivo = EhEfetiva(reversor, reversorPorAlvoId, emResolucao);
+        var existeReversorEfetivo = reversores.Any(reversor => EhEfetiva(reversor, reversoresPorAlvoId, emResolucao));
         emResolucao.Remove(movimento.Id);
-        return !reversorEhEfetivo;
+        return !existeReversorEfetivo;
     }
 
     private static PosicaoTresColunas AplicarMovimento(PosicaoTresColunas estadoAnterior, Movimento movimento)
