@@ -1,5 +1,9 @@
+using Custodia.Application.Common.Interfaces;
+using Custodia.Application.Movimentos;
+using Custodia.Application.Posicoes;
 using Custodia.Infrastructure.Observability;
 using Custodia.Infrastructure.Persistence;
+using Custodia.Infrastructure.Persistence.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -114,6 +118,52 @@ public sealed class DependencyInjectionTests
         var second = scope.ServiceProvider.GetRequiredService<IApiKeyMetrics>();
 
         Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void AddInfrastructure_RegistraIUnitOfWorkComoOMesmoAppDbContextDoEscopo()
+    {
+        var services = new ServiceCollection();
+        services.AddInfrastructure(BuildConfiguration());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        Assert.Same(dbContext, unitOfWork);
+    }
+
+    [Fact]
+    public void AddInfrastructure_RegistraIBusinessMetricsComoBusinessMetricsSingleton()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddInfrastructure(BuildConfiguration());
+
+        using var provider = services.BuildServiceProvider();
+        var first = provider.GetRequiredService<IBusinessMetrics>();
+        using var scope = provider.CreateScope();
+        var second = scope.ServiceProvider.GetRequiredService<IBusinessMetrics>();
+
+        Assert.IsType<BusinessMetrics>(first);
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void AddInfrastructure_RegistraOsRepositoriosDeMovimentosEDePosicaoCorrente()
+    {
+        var services = new ServiceCollection();
+        services.AddInfrastructure(BuildConfiguration());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<MovimentoReadRepository>(scope.ServiceProvider.GetRequiredService<IMovimentoReadRepository>());
+        Assert.IsType<MovimentoWriteRepository>(scope.ServiceProvider.GetRequiredService<IMovimentoWriteRepository>());
+        Assert.IsType<PosicaoCorrenteReadRepository>(scope.ServiceProvider.GetRequiredService<IPosicaoCorrenteReadRepository>());
+        Assert.IsType<PosicaoCorrenteWriteRepository>(scope.ServiceProvider.GetRequiredService<IPosicaoCorrenteWriteRepository>());
     }
 
     [Fact]

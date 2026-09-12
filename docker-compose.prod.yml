@@ -8,6 +8,16 @@ services:
       - ConnectionStrings__DefaultConnection=Host=${CUSTODIA_DB_HOST:-tesouro-direto-db};Port=5432;Database=${CUSTODIA_DB_NAME:-custodia};Username=custodia;Password=${CUSTODIA_APP_PASSWORD:?CUSTODIA_APP_PASSWORD e obrigatorio (senha da role custodia no Postgres compartilhado)}
       - ApiKey__Key=${CUSTODIA_API_KEY:?CUSTODIA_API_KEY e obrigatorio (chave que a custodia exige de quem le os extratos)}
       - Loki__Uri=${CUSTODIA_LOKI_URI:-http://alloy:3100}
+      # F4: usuario e senha do broker `plataforma-rabbitmq`, consumidos pelo consumidor
+      # de eventos (ARQUITETURA §9 item 3). O broker NAO sobe neste compose: e servico
+      # da PLATAFORMA, provisionado pelo hub-precos; a custodia so entra na rede
+      # "plataforma" e fala com o alias "plataforma-rabbitmq". Obrigatorias, sem
+      # default: guest contra um broker real nao autentica, e cair pra ele em silencio
+      # produz falha de runtime longe da causa. Precisam ser o MESMO valor
+      # provisionado pelo hub-precos (e quem sobe o `plataforma-rabbitmq`).
+      - RabbitMq__Host=plataforma-rabbitmq
+      - RabbitMq__User=${RABBITMQ_USER:?RABBITMQ_USER e obrigatorio (usuario do broker plataforma-rabbitmq, provisionado pelo hub-precos)}
+      - RabbitMq__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD e obrigatorio (senha do broker plataforma-rabbitmq)}
 
     # VARIAVEIS QUE AINDA NAO ESTAO AQUI, E POR QUE.
     # O precedente deste ecossistema (ver o F4 do operacoes) e acrescentar a credencial
@@ -15,12 +25,6 @@ services:
     # ainda nao le derruba o deploy sem motivo, e o operador perde tempo procurando
     # defeito onde so ha antecipacao.
     #
-    #   RabbitMq__{Host,User,Password}  -> entra quando o consumidor de eventos existir
-    #                                      (ARQUITETURA §9 item 3). O broker NAO sobe
-    #                                      neste compose: e servico da PLATAFORMA,
-    #                                      provisionado pelo hub-precos; a custodia so
-    #                                      entra na rede "plataforma" e fala com o alias
-    #                                      "plataforma-rabbitmq".
     #   Hub__{BaseUrl,ApiKey}           -> entra quando o bootstrap REST da projecao de
     #                                      precos existir (§7.1) e o `asof` do worker de
     #                                      recalculo (§7.4). NAO cobre resolucao nome->id

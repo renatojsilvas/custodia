@@ -6,6 +6,16 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=custodia;Username=custodia;Password=${CUSTODIA_APP_PASSWORD:?CUSTODIA_APP_PASSWORD e obrigatorio no .env (senha da role custodia)}
       - ApiKey__Key=${CUSTODIA_API_KEY:?CUSTODIA_API_KEY e obrigatorio no .env (chave que o custodia exige de quem o chama)}
+      # F4: usuario e senha do broker `plataforma-rabbitmq`, consumidos pelo consumidor
+      # de eventos (§9 item 3). Em dev guest/guest serve, porque o management
+      # (http://127.0.0.1:15672, se voce subir o broker localmente via
+      # ../hub-precos/docker-compose.yml) fica em loopback e o broker nao sai da rede
+      # Docker local. Localmente, antes de subir este servico:
+      #   docker network create plataforma     (uma vez)
+      #   docker compose -f ../hub-precos/docker-compose.yml up -d plataforma-rabbitmq
+      - RabbitMq__Host=plataforma-rabbitmq
+      - RabbitMq__User=${RABBITMQ_USER:-guest}
+      - RabbitMq__Password=${RABBITMQ_PASSWORD:-guest}
       # VARIAVEIS QUE AINDA NAO ESTAO AQUI — mesmo criterio do docker-compose.prod.yml:
       # a credencial entra NA FASE QUE A TORNA REAL. Alem de derrubar o `up` sem motivo,
       # uma variavel com `:?` que ninguem le quebra o `docker compose config -q` do CI.
@@ -19,13 +29,6 @@ services:
       #                             e servico externo (repo hub-precos) e nao sobe aqui;
       #                             na rede "plataforma" o alias e "hub-precos-app", nao
       #                             "app" (§10.1).
-      #   RabbitMq__*            -> quando existir o consumidor de eventos (§9 item 3).
-      #                             O broker e da PLATAFORMA e nao sobe aqui. Localmente:
-      #                               docker network create plataforma     (uma vez)
-      #                               docker compose -f ../hub-precos/docker-compose.yml \
-      #                                 up -d plataforma-rabbitmq
-      #                             Em dev guest/guest serve; em producao as duas sao
-      #                             obrigatorias, sem default.
     ports:
       # Portas LOCAIS do desenvolvedor (nao da VPS). O operacoes usa 5081 (app) e 5434
       # (pg); estas sao as seguintes. Se colidirem com outro servico SEU, troque aqui, no

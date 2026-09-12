@@ -4,7 +4,7 @@ namespace Custodia.Architecture.Tests;
 
 public sealed partial class ExceptionHandlingConventionTests
 {
-    private static readonly string RepoRoot = LocalizarRaizDoRepo();
+    private static readonly string RepoRoot = RepoRootLocator.LocalizarRaizDoRepo();
 
     [Fact]
     public void DomainEApplication_NaoDevemConterCatch()
@@ -100,25 +100,6 @@ public sealed partial class ExceptionHandlingConventionTests
     {
         var segmentos = caminho.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         return segmentos.Any(s => s is "bin" or "obj");
-    }
-
-    private static string LocalizarRaizDoRepo()
-    {
-        var diretorio = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (diretorio is not null && !File.Exists(Path.Combine(diretorio.FullName, "Custodia.sln")))
-        {
-            diretorio = diretorio.Parent;
-        }
-
-        if (diretorio is null)
-        {
-            throw new InvalidOperationException(
-                $"Não foi possível localizar a raiz do repo (Custodia.sln) subindo a partir de " +
-                $"'{AppContext.BaseDirectory}'.");
-        }
-
-        return diretorio.FullName;
     }
 
     [GeneratedRegex(@"\bcatch\b")]

@@ -48,9 +48,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      # Gate barato (segundos): docker-compose.prod.yml exige ${CUSTODIA_APP_PASSWORD:?...}
-      # e ${CUSTODIA_API_KEY:?...} (sem default em produção, de propósito). Este bloco env:
-      # é a ÚNICA fonte das obrigatórias aqui — o runner não tem `.env` (não é versionado);
+      # Gate barato (segundos): docker-compose.prod.yml exige ${CUSTODIA_APP_PASSWORD:?...},
+      # ${CUSTODIA_API_KEY:?...}, ${RABBITMQ_USER:?...} e ${RABBITMQ_PASSWORD:?...} (sem
+      # default em produção, de propósito). Este bloco env: é a ÚNICA fonte das
+      # obrigatórias aqui — o runner não tem `.env` (não é versionado);
       # sem estas dummies o `config -q` do docker-compose.prod.yml abaixo falha e o job
       # `test` reprova (mesma armadilha documentada no molde
       # ../tesouro-direto-api/.github/workflows/deploy.yml para TD_APP_PASSWORD: o bug não
@@ -61,13 +62,16 @@ jobs:
       # AS DUMMIES TÊM QUE ESPELHAR EXATAMENTE as variáveis `:?` dos composes — nem a mais,
       # nem a menos. Uma a menos e o `config -q` reprova; uma a mais e ninguém percebe que
       # sobrou, até alguém concluir do CI que o serviço depende de algo que ele não usa.
-      # `Hub__*` e `RabbitMq__*` NÃO estão nos composes desta fase — entram na fase que os
-      # tornar reais (ver o bloco "VARIAVEIS QUE AINDA NAO ESTAO AQUI" no
-      # docker-compose.prod.yml) — então também não estão aqui.
+      # F4: o consumidor de eventos existe agora, e `RabbitMq__User`/`RabbitMq__Password`
+      # entraram nos composes com `:?` — as dummies entram junto. `Hub__*` continua fora:
+      # não está nos composes desta fase (ver o bloco "VARIAVEIS QUE AINDA NAO ESTAO AQUI"
+      # no docker-compose.prod.yml).
       - name: Compose config gate (sintaxe + tags existem no registry)
         env:
           CUSTODIA_APP_PASSWORD: dummy
           CUSTODIA_API_KEY: dummy
+          RABBITMQ_USER: dummy
+          RABBITMQ_PASSWORD: dummy
         run: |
           set -e
           docker compose -f docker-compose.yml config -q
@@ -171,15 +175,37 @@ jobs:
               exit 1
             fi
 
-            # SECRETS QUE AINDA NAO SAO VALIDADOS AQUI: Hub__* e RabbitMq__*. Eles nao estao
-            # nos composes desta fase, entao nao entram no .env — e validar secret que
-            # ninguem consome so cria motivo de reprovar deploy sem causa. Ao acrescenta-los,
-            # normalize na ORIGEM com `tr -d '\r\n'` (§10.4), como as duas acima, E lembre
-            # de incluir nas CINCO listas (PADROES §10.33): os dois composes, o `envs:`
-            # do ssh-action, o `env:` do MESMO step (de onde vem o valor — esquecer esta
-            # encaminha uma variavel INEXISTENTE, que chega aqui como string vazia e o
-            # `-z` abaixo acusaria "secret vazio" com o secret certo cadastrado no
-            # GitHub), o printf do .env abaixo, e as dummies do config gate.
+            # F4: RABBITMQ_USER/RABBITMQ_PASSWORD — credencial do broker plataforma-rabbitmq,
+            # que o consumidor de eventos usa. Normalizadas na ORIGEM (mesmo padrão das duas
+            # acima). Já vinham encaminhadas desde o F2 pelo `envs:`/`env:` deste step (só
+            # para o script de topologia); a partir de agora RabbitMq__User/Password também
+            # entram nos composes com `:?`, então passam a exigir as CINCO listas
+            # (PADROES §10.33).
+            RABBITMQ_USER="$(printf '%s' "$RABBITMQ_USER" | tr -d '\r\n')"
+            if [ -z "$RABBITMQ_USER" ]; then
+              echo "ERRO: secret RABBITMQ_USER vazio (ou só com quebras de linha). É o usuário do"
+              echo "      broker plataforma-rabbitmq; sem ele o compose falha o boot do serviço"
+              echo "      custodia (sem default guest em produção, de propósito)."
+              exit 1
+            fi
+
+            RABBITMQ_PASSWORD="$(printf '%s' "$RABBITMQ_PASSWORD" | tr -d '\r\n')"
+            if [ -z "$RABBITMQ_PASSWORD" ]; then
+              echo "ERRO: secret RABBITMQ_PASSWORD vazio (ou só com quebras de linha). É a senha do"
+              echo "      broker plataforma-rabbitmq; sem ela o compose falha o boot do serviço"
+              echo "      custodia."
+              exit 1
+            fi
+
+            # SECRETS QUE AINDA NAO SAO VALIDADOS AQUI: Hub__*. Nao esta nos composes desta
+            # fase, entao nao entra no .env — e validar secret que ninguem consome so cria
+            # motivo de reprovar deploy sem causa. Ao acrescenta-lo, normalize na ORIGEM com
+            # `tr -d '\r\n'` (§10.4), como as demais, E lembre de incluir nas CINCO listas
+            # (PADROES §10.33): os dois composes, o `envs:` do ssh-action, o `env:` do MESMO
+            # step (de onde vem o valor — esquecer esta encaminha uma variavel INEXISTENTE,
+            # que chega aqui como string vazia e o `-z` abaixo acusaria "secret vazio" com o
+            # secret certo cadastrado no GitHub), o printf do .env abaixo, e as dummies do
+            # config gate.
 
             # ATENÇÃO: este .env é reescrito POR COMPLETO a cada deploy — não é um merge com
             # o que já existe na VPS. Qualquer variável obrigatória (${VAR:?...} no compose)
@@ -187,8 +213,8 @@ jobs:
             # a variável já tivesse valor num .env anterior. Já houve incidente neste
             # ecossistema com um script sobrescrevendo o .env com só parte das variáveis e
             # reportando sucesso — as obrigatórias têm que estar juntas aqui.
-            printf 'CUSTODIA_APP_PASSWORD=%s\nCUSTODIA_API_KEY=%s\n' \
-              "$CUSTODIA_APP_PASSWORD" "$CUSTODIA_API_KEY" > .env
+            printf 'CUSTODIA_APP_PASSWORD=%s\nCUSTODIA_API_KEY=%s\nRABBITMQ_USER=%s\nRABBITMQ_PASSWORD=%s\n' \
+              "$CUSTODIA_APP_PASSWORD" "$CUSTODIA_API_KEY" "$RABBITMQ_USER" "$RABBITMQ_PASSWORD" > .env
             chmod 600 .env
 
             echo "== provisionamento do banco =="
@@ -200,6 +226,7 @@ jobs:
             # aqui.
             outros=$(docker ps --format '{{.Names}}' | grep -vx -e custodia-app || true)
             servicos=$(CUSTODIA_APP_PASSWORD=dummy CUSTODIA_API_KEY=dummy \
+              RABBITMQ_USER=dummy RABBITMQ_PASSWORD=dummy \
               docker compose -f docker-compose.prod.yml config --services)
             for rede in tesouro-net plataforma; do
               if ! docker network inspect "$rede" >/dev/null 2>&1; then

@@ -220,19 +220,31 @@ a metade **comportamental** vai para o **F4** (consumidor).
   antes do original, e o relay de lá publica em ordem de `id` aguardando cada confirm um
   a um (§10.26); com a cabeça da fila liberada, o original é processado no próprio ciclo
   e a volta do órfão encontra o livro já curado.
-  *Teto, e ele é o modo de falha certo:* a contagem de voltas sai do header `x-death` que
-  o **próprio broker** escreve ao dead-letrar (§10.32 — a distinção vem marcada, não
-  re-derivada); estourado o teto, a mensagem vai para a `custodia.parked` com o motivo
+  *Teto, e ele é o modo de falha certo:* a contagem de voltas sai de um header **próprio**,
+  `x-custodia-voltas`, que o consumidor escreve e incrementa a cada republish (§10.32 lida do
+  lado certo: **quem sabe quantas voltas houve é quem republica**, porque o broker esquece a
+  cada publish novo — ver a medição na condição (i) abaixo); estourado o teto, a mensagem vai
+  para a `custodia.parked` com o motivo
   `estorno_orfao_expirado` e **alerta**, nunca para a DLQ. Estacionar visivelmente é o
   que a §10.26 chama de modo de falha certo em at-least-once; a DLQ deste roadmap não tem
   história de dreno e viraria buraco.
   *Duas condições sem as quais nada disso funciona, e as duas são de uma linha de código:*
-  (i) **o republish na `custodia.retry.in` copia INTEGRALMENTE os headers da mensagem
-  recebida** — o `x-death` é escrito pelo broker ao dead-letrar, mas o que o consumidor faz
-  é um **publish novo**, e publish novo só carrega o que o publicador setar; sem a cópia o
-  contador zera a cada volta, o teto de 10 nunca fecha, a mensagem circula a cada 30 s para
-  sempre e o `estorno_orfao_expirado` **nunca é emitido** — laço infinito com todos os
-  testes verdes; (ii) **a ordem é publica → espera o publisher confirm → só então ack**.
+  (i) **o republish na `custodia.retry.in` copia INTEGRALMENTE os headers da mensagem recebida
+  e incrementa o contador PRÓPRIO** — o que o consumidor faz é um **publish novo**, e publish
+  novo só carrega o que o publicador setar; sem a cópia o contador zera a cada volta, o teto de
+  10 nunca fecha, a mensagem circula a cada 30 s para sempre e o `estorno_orfao_expirado`
+  **nunca é emitido** — laço infinito com todos os testes verdes. **O contador NÃO pode ser o
+  `x-death`, e isto foi MEDIDO contra o `rabbitmq:4-management-alpine` em 2026-09-12, não
+  deduzido:** numa mensagem que deu N voltas o `x-death` chega com `count = 1` em **todas**
+  elas, mesmo com a cópia integral; um `x-death` **forjado** pelo publicador com `count = 7`
+  chega como `count = 1` (o broker não confia no `x-death` do cliente — ele reescreve o
+  registro); e um header nosso sobrevive à volta inteira, intacto. A razão é que cada republish
+  **nosso** é uma **mensagem nova** para o broker, então a história de morte recomeça — e o
+  `x-death` só cresce quando a **mesma** mensagem é dead-letrada repetidamente **sem** passar
+  por um publish de cliente, que não é este desenho nem pode ser, porque é justamente o publish
+  que libera a cabeça da fila. *A versão anterior desta alínea mandava contar pelo `x-death`,
+  e com ela o teto nunca fecharia: a cura prescrita produzia exatamente o laço infinito que ela
+  existe para impedir.*; (ii) **a ordem é publica → espera o publisher confirm → só então ack**.
   `trades.registered` não tem caminho de recuperação por contrato: ack antes do confirm é
   **perda definitiva e silenciosa**, o modo de falha exato que o F2 existe para impedir.
   Confirm negado ou timeout ⇒ `nack(requeue: true)` da original — aqui o requeue é o certo,
@@ -2283,6 +2295,32 @@ para ela.
   aplicavam.* Consequência no F5: o Pronto (e) afirma `preco_medio = 0` para
   `caixa:a_liquidar` depois da liquidação, e é esse o valor, não `1,000000`.
 
+  **E a fronteira `< 0`, para `caixa:*`, devolve `preco_medio = 1,000000` — não o
+  "inalterado" literal da V1. Só o `= 0` é da fronteira; a V4 vale para `quantidade ≠ 0`, com
+  sinal.** O "inalterado" existe para impedir que `custo_total / quantidade` produza preço
+  médio negativo — é o que a própria V1 escreve, "nunca recalculado, **portanto** nunca
+  negativo" —, e em `caixa:*` **não há divisão nenhuma para proteger**: o preço é `1,000000`
+  **por definição**, e um real não muda de preço porque o saldo ficou negativo. Aplicar o
+  "inalterado" aqui tornaria a coluna **dependente do caminho**: a chave que nasce negativa (a
+  primeira linha é a perna de −900, estado inicial zero) herdaria `pm 0`, e a mesma
+  `quantidade = −900` valeria `0` ou `1,000000` conforme a história — duas linhas idênticas de
+  `posicao_corrente` com preços médios diferentes, numa coluna que o F7 grava em **cada**
+  snapshot (P2) e sem nada no livro que justifique a diferença. E o negativo de `caixa:BRL`
+  não é borda: é a reaplicação no mesmo dia, que a **V6** declara normal. Com
+  `preco_medio = 1,000000`, `custo_total = quantidade` continua valendo **com o sinal**, e
+  `Σ preco_medio × quantidade` sobre `caixa:BRL + caixa:a_liquidar` — que é a linha única que o
+  F8 apresenta ao cliente (V6) — devolve **0** na reaplicação do mesmo dia. *Rejeitado:*
+  `preco_medio = 0` para caixa negativo — usa o número do estado **canônico** `= 0` para um
+  estado que não é canônico, faz o real valer `1` quando sobra e `0` quando falta, e devolve
+  **+900** naquela mesma soma (`0 × −900` + `1 × 900`), que é a inflação de 100% que a V6
+  existe para eliminar, entrando pela porta ao lado. **E nenhuma guarda de hoje o pega:**
+  `preco_medio ≥ 0` passa, e o invariante `custo_total = preco_medio × quantidade` **não é
+  afirmado** para `quantidade < 0` — por isso isto é regra escrita e teste nomeado, não
+  corolário. *A lacuna era real e não era de leitura: esta subseção decidia `= 0` e calava
+  sobre `< 0` para caixa, e a ressalva da V1 fala só do **SINAL** do alerta. A frase normativa
+  da V6 ("linha de `caixa:*` — qualquer que seja o tipo — dobra pela regra de caixa da V4")
+  não enuncia o sinal, então indicava a resposta sem fechá-la.*
+
   **CHECK enumerando os ids de caixa permitidos** (`caixa:BRL`, `caixa:a_liquidar`), pela
   §10.21: restringir é reversível (`DROP CONSTRAINT`, uma linha, sem rewrite), e não
   restringir é eterno. O motivo é a §10.24 combinada com a decisão de gravar identidade
@@ -3262,16 +3300,22 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
 
 - [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
   de ordem. **Dependência externa nova: o `operacoes` aceitando E publicando `valorOrigemSaldo`
-  (V6) — e isso ele AINDA NÃO faz.** *Ele publica `trades.registered`; o que falta é o campo, e
-  **são duas mudanças lá, não uma** — conferido no código em 2026-09-11: o campo não existe **nem
-  na entrada** (`RegistrarOperacaoCommand` é `ClienteId, InstrumentoId, Tipo, Quantidade,
-  ValorFinanceiro, DataEvento, EstornaOperacaoId, IdempotencyKey`), e o `src` do `../operacoes`
-  não tem noção de saldo (zero ocorrência de `saldo|caixa|posicao|patrimonio`). Então Operações
-  precisa **(1) aceitar no `POST /v1/operacoes`** e **(2) repassar no evento** — ela é
-  pass-through, não calcula nada. **Quem tem de saber o número é o CHAMADOR do `POST`.** Sem o
-  campo, **todo** `aplicacao`/`aporte` estaciona com `origem_recurso_ausente` — desfecho
-  correto, e inútil como serviço. Faça as duas mudanças em `../operacoes` ANTES de abrir esta
-  fase.*
+  (V6) — e ela está SATISFEITA desde 2026-09-11.** *Conferido no código do `../operacoes`: o commit
+  `4bed7c1` ("F6 — valorOrigemSaldo: aceitar no POST e publicar no TradeRegistered", PR #18) fez as
+  **duas** mudanças que esta alínea exigia — `RegistrarOperacaoCommand` passou a ter
+  `decimal? ValorOrigemSaldo` (aceitar no `POST /v1/operacoes`) e `TradeRegisteredPayload` passou a
+  serializá-lo como string decimal `F2` no evento (repassar). Operações é pass-through, não calcula
+  nada: quem sabe o número é o CHAMADOR do `POST`, e lá o campo é **obrigatório** para
+  `aplicacao`/`aporte`, **proibido** nos demais tipos, com **422 na borda** (§6.1 camada 2 / ADR-11).*
+  **O que isso muda para esta fase, e não é "apague o requisito":** `origem_recurso_ausente` continua
+  sendo um dos TREZE motivos e continua tendo de ser implementado e testado. O que mudou é que ele
+  deixou de ser o desfecho de **todo** `aplicacao`/`aporte` e voltou a ser o que sempre devia ser —
+  rede de segurança para o produtor que não marcou, que é justamente o que a §10.32 manda não
+  re-derivar rio abaixo. *Até 2026-09-11 esta alínea dizia "e isso ele AINDA NÃO faz… faça as duas
+  mudanças em `../operacoes` ANTES de abrir esta fase", com a conferência datada do mesmo dia: ela
+  foi escrita algumas horas **antes** do commit lá. O texto ficou stale em menos de um dia, que é o
+  modo de falha da §10.9 na direção do tempo — afirmação sobre o estado de OUTRO repo tem data de
+  validade, e quem abre a fase confere no repo, não no parágrafo.*
 
   `BackgroundService` consumindo a `custodia.prices`, **ack manual** após persistir o
   efeito, `BasicQos(prefetchCount: 1)`, processamento serial, uma instância.
@@ -3310,10 +3354,14 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
     alerta, nunca para a DLQ. **`nack(requeue: true)` está proibido aqui: head-of-line
     blocking.** Três detalhes de implementação sem os quais o desenho não funciona, e nenhum
     deles é dedutível do parágrafo acima:
-    1. **copie integralmente os headers da mensagem recebida no republish.** O `x-death` é
-       do broker, mas o republish é um **publish novo** e só carrega o que o publicador
-       setar; sem a cópia o contador zera a cada volta, o teto nunca fecha e o
-       `estorno_orfao_expirado` **nunca é emitido** — laço infinito com a suíte verde;
+    1. **copie integralmente os headers da mensagem recebida no republish, e conte as voltas
+       num header PRÓPRIO — `x-custodia-voltas` —, nunca pelo `x-death`.** O republish é um
+       **publish novo** e só carrega o que o publicador setar; sem a cópia o contador zera a
+       cada volta, o teto nunca fecha e o `estorno_orfao_expirado` **nunca é emitido** — laço
+       infinito com a suíte verde. **E o contador NÃO pode ser o `x-death`: medido contra o
+       `rabbitmq:4-management-alpine` em 2026-09-12, ele fica em `count = 1` PARA SEMPRE neste
+       desenho, com ou sem cópia de headers** — ver a nota "O `x-death` não conta as voltas
+       deste desenho" logo abaixo;
     2. **ordem obrigatória: publica → espera o publisher confirm → só então ack.**
        `trades.registered` não tem recuperação por contrato; ack antes do confirm é perda
        definitiva e silenciosa. Confirm negado ou timeout ⇒ `nack(requeue: true)` da
@@ -3862,18 +3910,33 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      causalidade: em Operacoes a FK composta impede registrar estorno antes do original
      e o relay publica em ordem de id aguardando cada confirm um a um (PADROES 10.26) —
      com a cabeca da fila liberada, o original e processado no proprio ciclo.
-     TETO: conte as voltas pelo header x-death que o PROPRIO BROKER escreve ao
-     dead-letrar (PADROES 10.32 — a distincao vem marcada, nao re-derivada). Estourado o
+     TETO: conte as voltas num header PROPRIO, `x-custodia-voltas`, que VOCE escreve e
+     incrementa a cada republish (PADROES 10.32 lida do lado certo: quem sabe quantas voltas
+     houve e QUEM REPUBLICA, porque o broker esquece a cada publish novo). NAO use o x-death:
+     medido contra o broker real, ele fica em count = 1 para sempre neste desenho. Estourado o
      teto, a mensagem vai para custodia.parked com motivo `estorno_orfao_expirado` e
      ALERTA, nunca para a DLQ: estacionar visivelmente e o modo de falha certo em
      at-least-once (PADROES 10.26), e a DLQ deste roadmap nao tem historia de dreno.
      TRES DETALHES SEM OS QUAIS ISTO NAO FUNCIONA, e nenhum e dedutivel do paragrafo:
      (1) AO REPUBLICAR NA custodia.retry.in, COPIE INTEGRALMENTE OS HEADERS DA MENSAGEM
-         RECEBIDA. O x-death e escrito pelo broker ao dead-letrar, mas o que voce faz e
-         um PUBLISH NOVO, e publish novo so carrega o que o publicador setar: sem a
-         copia o contador ZERA A CADA VOLTA, o teto de 10 nunca fecha, a mensagem circula
-         entre custodia.prices e custodia.retry a cada 30 s para sempre, e
-         estorno_orfao_expirado NUNCA E EMITIDO — laco infinito com a suite verde.
+         RECEBIDA E INCREMENTE O SEU PROPRIO CONTADOR, `x-custodia-voltas`. O republish e um
+         PUBLISH NOVO, e publish novo so carrega o que o publicador setar: sem a copia o
+         contador ZERA A CADA VOLTA, o teto de 10 nunca fecha, a mensagem circula entre
+         custodia.prices e custodia.retry a cada 30 s para sempre, e estorno_orfao_expirado
+         NUNCA E EMITIDO — laco infinito com a suite verde.
+         O CONTADOR NAO PODE SER O x-death, E ISSO FOI MEDIDO, NAO DEDUZIDO. Contra o
+         rabbitmq:4-management-alpine, em 2026-09-12, com a topologia desta fase:
+           - o x-death de uma mensagem que deu N voltas chega com count = 1 em TODAS elas,
+             mesmo COM a copia integral dos headers;
+           - um x-death FORJADO pelo publicador com count = 7 chega como count = 1: o broker
+             NAO confia no x-death vindo do cliente, ele reescreve o registro;
+           - um header proprio (x-custodia-voltas) SOBREVIVE a volta inteira, intacto.
+         A razao e que cada republish NOSSO e uma MENSAGEM NOVA para o broker, entao a
+         historia de morte recomeca do zero. O x-death so cresce quando a MESMA mensagem e
+         dead-letrada repetidamente SEM passar por um publish de cliente — que nao e este
+         desenho e nao pode ser, porque e o publish que libera a cabeca da fila.
+         CONSEQUENCIA: quem conta e a Custodia, num header seu, incrementado no ponto onde a
+         informacao e conhecida. O teto fecha, e estorno_orfao_expirado passa a ser emitido.
      (2) ORDEM OBRIGATORIA: PUBLICA -> ESPERA O PUBLISHER CONFIRM -> SO ENTAO ACK.
          trades.registered NAO tem caminho de recuperacao por contrato: ack antes do
          confirm e PERDA DEFINITIVA E SILENCIOSA, o modo de falha exato que o F2 existe
@@ -3985,6 +4048,22 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
        n_motivo        = mensagens DO MOTIVO PEDIDO examinadas E PROCESSADAS nesta passagem.
        residual_motivo = mensagens DO MOTIVO PEDIDO examinadas e REPUBLICADAS SEM PROCESSAR
                          (falha de handler, payload que volta a estacionar).
+     DIVIDA HERDADA DO F2, E ELA MEXE NESTA CONTAGEM — estava so na prosa desta fase, e
+     prompt que nao a carrega produz um drenador que devolve falha por um motivo que nao
+     existe. As filas terminais (custodia.prices.dlq, custodia.parked) podem trazer ate UMA
+     mensagem `custodia-f2-*` POR EXECUCAO ABORTADA do passo de topologia do F2: a prova de
+     fanout publica uma sonda e a remove, mas se a execucao morrer entre as duas a sonda
+     fica, e a execucao seguinte absorve UMA por vez. Em regime estavel nao cresce, mas
+     depois de qualquer aborto a fila nao volta a zero sozinha. Essas mensagens NAO TEM
+     x-custodia-motivo e o payload nao e JSON de contrato nenhum: uma custodia.parked que
+     contenha so elas faz n_motivo = 0 e a passagem completa devolve VAZIO_DO_MOTIVO — que
+     e INCONCLUSIVO, nunca sucesso, e aqui seria inconclusivo por lixo, nao por estado.
+     REGRA: o drenador reconhece-as pelo PREFIXO `custodia-f2-` e DESCONTA-AS DE N — nao as
+     trata como mensagem estacionada, nao as conta em n_motivo nem em residual_motivo.
+     Remove-las e basic.get + ack CONFERINDO O PREFIXO, NUNCA purge. A custodia.prices tem o
+     residuo analogo (`custodia-f2-retry-*`, ~1 por deploy quando ha backlog), e vale a MESMA
+     REGRA NO CONSUMIDOR: `prices.smoke` com payload NAO-JSON e sonda do deploy, nao evento —
+     nao estaciona, nao vira payload_invalido, e nao entra em metrica de evento.
      O PROCEDIMENTO DE DECISAO E UMA ARVORE DE QUATRO PERGUNTAS, NESTA ORDEM, E CADA FOLHA
      DELA E UM DESFECHO — SAO SEIS:
        (1) N esta acima do teto configurado?
@@ -4216,9 +4295,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (b) o órfão **não grava e não consome a chave**, e estourado o teto de voltas ele aparece
   no residual da passagem do drenador com motivo `estorno_orfao_expirado` — não na DLQ.
   **E a prova de que o teto é alcançável, que é o que a versão anterior não tinha:** a
-  **segunda** volta do mesmo órfão chega com `x-death[0].count == 2`. Se o republish não
-  copiar os headers, esse número fica `1` para sempre e o teste reprova — é ele que separa
-  "circula até estacionar" de "circula para sempre com a suíte verde";
+  **segunda** volta do mesmo órfão chega com **`x-custodia-voltas == 2`**, e a mensagem
+  estaciona como `estorno_orfao_expirado` ao atingir o teto. Se o republish não copiar os
+  headers (ou não incrementar o contador), esse número fica `1` para sempre e o teste reprova
+  — é ele que separa "circula até estacionar" de "circula para sempre com a suíte verde".
+  *Até 2026-09-12 este item exigia `x-death[0].count == 2`, e era **inalcançável por
+  construção**: medido contra o broker real, o `x-death` fica em `count = 1` para sempre neste
+  desenho, porque cada republish é uma mensagem nova e o broker reescreve a história de morte
+  — um Pronto que mandava provar o impossível, e que só fecharia com o executor mutando a
+  implementação. Ver a nota na Decisão A.*
   (b2) **ack só depois do confirm:** com o publisher confirm forçado a falhar (ou a
   demorar além do timeout), a mensagem original **não é confirmada** e volta por
   `nack(requeue: true)` — provado por injeção, porque o caminho feliz não distingue esta
@@ -4289,6 +4374,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   ele **não** tenha sido sobrescrito — a regra é pela árvore (publicam só as folhas que
   examinaram as `N`), e afirmá-la numa folha só deixa as outras duas verdes com a métrica
   truncada;
+  (d1b) **a dívida herdada do F2 descontada de `N`, e ela é o caso que faz a guarda do
+  `n_motivo ≥ 1` disparar por lixo em vez de por estado:** a `custodia.parked` é plantada com
+  uma mensagem `custodia-f2-*` (sem `x-custodia-motivo`, payload não-JSON) **e** uma do motivo
+  pedido, e a passagem tem de devolver **COMPLETUDE** com `n_motivo = 1` — a sonda descontada
+  de `N`, removida por `basic.get` + ack conferindo o prefixo, **nunca** por purge, e **não**
+  contada em `n_motivo` nem em `residual_motivo`. **Controle negativo no mesmo teste:** sem o
+  desconto a mesma fila devolve `VAZIO_DO_MOTIVO` ou `PARCIAL`, que é falha por um motivo que
+  não existe. E o análogo no consumidor: `prices.smoke` com payload não-JSON na
+  `custodia.prices` é **sonda de deploy** — não estaciona, não vira `payload_invalido`, e não
+  entra na métrica de evento;
   (d2) **um `aporte` gravando o `instrumento_id` do evento e a `quantidade` do evento, E
   dobrando `preco_medio`/`custo_total` como uma compra** — conferir só instrumento e
   quantidade era o buraco da versão anterior deste Pronto: o `aporte` passava com a coluna
@@ -4311,6 +4406,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   D0 → `custo_total 2400` e `preco_medio 150`, **jamais** `2600` / `162,50`. É o único teste
   que separa a cláusula do `data_evento ≥ MAX(data_evento)` da ausência dela, e sem ele I4
   fica falso em silêncio até a reconciliação do F7 alertar sobre dado correto;
+  (d5) **a linha de `caixa:*` NEGATIVA com `preco_medio = 1,000000`, e a asserção é sobre a
+  COLUNA DO PREÇO — não sobre quantidade e custo, que é onde a versão anterior deste Pronto
+  parava:** reaplicação no mesmo dia (`caixa:a_liquidar` +900 pela liquidação pendente e
+  `caixa:BRL` −900 pela perna da V6) tem de deixar as duas linhas com `preco_medio = 1,000000`,
+  e a **soma** `Σ preco_medio × quantidade` sobre as duas ids — que é a linha única que o F8
+  apresenta ao cliente — tem de dar **0**. **Com `preco_medio = 0` na linha negativa ela dá
+  +900**, e é por isso que este caso é teste nomeado: `preco_medio ≥ 0` aprova o valor errado,
+  e o invariante `custo_total = preco_medio × quantidade` **não é afirmado** para
+  `quantidade < 0`, então nenhuma das duas guardas existentes o pega. Mais o **controle de
+  caminho**: a mesma `quantidade = −900` chegando numa chave que nasce negativa (primeira linha
+  da chave é a perna) tem de dar o **mesmo** `preco_medio` que numa chave que vinha positiva —
+  a coluna não pode depender da história. Regra em `V4`, subseção "A REGRA DE FRONTEIRA DA V1
+  PRECEDE ESTA";
   (e) o comando de reconstrução rodado com a projeção propositalmente corrompida
   (`UPDATE` em `posicao_corrente`, permitido porque ela **não** é o livro) devolvendo **as
   três colunas** ao valor do livro;

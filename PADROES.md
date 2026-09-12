@@ -1558,3 +1558,102 @@ instâncias dele.
 **exato**. Baixar caixa no lado comparado transformaria o valor, e o valor é identidade de outro
 contexto. `lower()` entra **só** na pergunta "isto é do meu domínio?", nunca na pergunta "isto é
 qual dos meus valores?".
+
+### 10.44. Contador que o broker escreve não sobrevive a um republish do publicador — quem republica é quem conta
+
+Se o seu retry é **republish do consumidor** (publicar noutro exchange e confirmar a original, em
+vez de `nack(requeue: true)`), **não conte as voltas pelo `x-death`**. Conte num header **seu**,
+que você escreve e incrementa no ponto do republish.
+
+**Por quê, medido e não deduzido.** Contra `rabbitmq:4-management-alpine` (4.x, filas quorum,
+`x-delivery-limit`), com a topologia `main → publish em retry.in → fila com x-message-ttl → DLX de
+volta para main`:
+
+- a mensagem que deu **N voltas** chega com `x-death[…].count = 1` em **todas** elas, **mesmo com a
+  cópia integral dos headers** no republish;
+- um `x-death` **forjado** pelo publicador com `count = 7` chega ao consumidor como `count = 1`: o
+  broker **não confia** no `x-death` vindo do cliente — ele reescreve o registro ao dead-letrar;
+- um header próprio (`x-custodia-voltas`) **sobrevive** à volta inteira, intacto.
+
+A razão é estrutural, não um detalhe de versão: cada republish **seu** é uma **mensagem nova** para
+o broker, então a história de morte recomeça do zero. O `x-death` só cresce quando a **mesma**
+mensagem é dead-letrada repetidamente **sem** passar por um publish de cliente — isto é, no desenho
+com `nack`/reject, que é exatamente o desenho que você **não** pode usar quando o motivo do retry é
+**head-of-line blocking** (a mensagem devolvida volta para a frente da fila e a que a curaria está
+atrás dela, na mesma fila).
+
+**A armadilha é que o defeito é SILENCIOSO e fecha VERDE.** Com o contador travado em 1, o teto
+nunca fecha: a mensagem circula entre as duas filas a cada TTL **para sempre**, o motivo de
+estacionamento por expiração **nunca é emitido**, e nada falha — não há exceção, não há fila
+crescendo, não há alerta. O teste que "prova o teto" passa se ele só afirmar a **primeira** volta;
+quem pega é a asserção sobre a **segunda**.
+
+**Isto é a §10.32 lida do lado certo, e o erro de leitura é fácil.** "Quem sabe a diferença é quem
+deve marcá-la" parece apontar para o broker — ele é quem dead-letra, logo ele saberia. Mas quem sabe
+**quantas voltas esta mensagem já deu no meu ciclo de retry** é quem republica, porque é o único que
+atravessa as voltas: o broker esquece a cada publish novo. Antes de delegar uma contagem a
+metadado de infraestrutura, pergunte **o que exatamente aquele número conta** — e meça.
+
+**Guarda:** header próprio, copiado junto com os demais e incrementado no republish; teste que
+exercita **duas** voltas e afirma o valor na segunda; e, se o teto for pequeno, um teste que o leva
+até o estacionamento. Ref.: `custodia`, F4, Decisão A.
+
+### 10.45. Republish em exchange fanout perde a routing key original — e quem depende dela é o retorno do dead-letter
+
+Ao **republicar** uma mensagem (retry, parking, redistribuição), passe explicitamente a **routing
+key com que ela chegou**. Publicar com `routingKey: ""` porque "o exchange é fanout e ele ignora a
+chave" é verdade sobre a **entrega** e falso sobre o que fica **gravado na mensagem**.
+
+**Por quê.** O fanout de fato ignora a routing key para decidir o destino — daí a tentação de
+passar `""`. Mas a chave com que a mensagem entrou na fila é a que o broker usa ao **dead-letrar**,
+quando aquela fila não declara `x-dead-letter-routing-key`. Então, no desenho
+`main → publish em retry.in → fila com TTL → DLX de volta para main`, a mensagem volta para `main`
+com routing key **vazia** — e o roteador do consumidor, que decide por `trades.registered`,
+`prices.*`, `corpactions.*`, não reconhece `""`, cai no default e estaciona a mensagem com o motivo
+**errado**.
+
+**O sintoma engana duas vezes.** Primeiro: a mensagem *volta* (o TTL funciona, o DLX funciona, a
+profundidade da fila se move), então tudo que se observa no broker parece certo. Segundo: o
+desfecho errado é um motivo **nomeado e plausível** (`payload_invalido`), não um erro — a mensagem
+é estacionada, com alerta, e alguém vai investigar o payload, que está perfeito. Medido na
+`custodia`: o retry do estorno órfão nunca chegava à segunda volta, porque a primeira volta já era
+descartada pelo caminho errado; o teto nunca fechava e o motivo de expiração nunca era emitido.
+
+**Guarda:** a assinatura do publicador de republish **exige** a routing key (não tem default `""`),
+e o teste que exercita **duas** voltas é o que pega — um teste de uma volta só passa com o defeito
+presente, porque a primeira volta ainda tem a chave original vinda do produtor.
+
+**Corolário:** ao desenhar fila de retry por TTL+DLX, decida explicitamente entre preservar a chave
+original (não declarar `x-dead-letter-routing-key` e republicar com a chave certa) ou reescrevê-la
+(declarar `x-dead-letter-routing-key` na fila de retry). As duas funcionam; o que não funciona é
+não decidir e deixar o `""` do publish vazar para a volta. Ref.: `custodia`, F4, Decisão A.
+
+### 10.46. Quando a validação força as duas fontes a coincidirem, nenhum teste distingue qual foi usada — tire a fonte errada do escopo
+
+Há pontos do código que um teste **não pode** proteger, e reconhecê-los é o que separa "sem cobertura"
+de "sem cobertura possível". O caso canônico: uma **conferência** exige que o campo que chegou seja
+igual ao campo já gravado; depois dela, ler de um ou de outro dá **o mesmo número**. Um teste que
+tente provar "li do lugar certo" é verdadeiro sob as duas implementações — inclusive sob a errada.
+
+**Medido na `custodia`, F4.** O handler de estorno confere `instrumentoId`, `quantidade` e
+`valorFinanceiro` do evento contra o movimento original **antes** de montar o `ajuste`, e depois monta
+o ajuste a partir do **original**. Uma revisão adversarial mutou o código para montá-lo a partir do
+**evento** — a regressão exata que a regra escrita proíbe — e a suíte inteira passou, inclusive o teste
+escrito para provar aquele ponto. Não era asserção fraca: trocar a asserção não resolveria, porque
+`-original.QtdDelta` e `-sinal × evento.Quantidade` são o mesmo valor sempre que a conferência passou.
+
+**A saída não é um teste melhor: é tornar o defeito não escrevível.** Extraia a construção para uma
+função que **não tenha a fonte errada no escopo** — ela recebe a linha de origem e só o que o outro
+caminho legitimamente aporta. A mutação deixa de compilar, o que é mais forte que um teste vermelho:
+teste vermelho depende de alguém rodar a suíte, e `error CS0103` acontece em quem digitou.
+
+**Como reconhecer o caso antes de perder tempo escrevendo o teste que não protege:** pergunte se
+existe **algum estado alcançável** em que as duas fontes divergem. Se a resposta for não — porque uma
+guarda anterior as igualou —, nenhum teste distingue, e a discussão é de **estrutura**, não de
+cobertura. Se a resposta for sim, o teste é possível e você deve escrevê-lo com os valores que
+divergem: no mesmo incidente, a **outra** linha construída ali (a perna de caixa, que a conferência
+**não** cobre) era provável, e um teste com valores distintos já a protegia.
+
+**Corolário sobre relatório de revisão:** "mutei e a suíte passou" prova que **falta proteção**, não
+que o código está errado. Confira a direção antes de reescrever: ali o código estava certo e o que
+faltava era impedir que ficasse errado. Ref.: `custodia`, F4, `CriarAjusteDeReversao`.

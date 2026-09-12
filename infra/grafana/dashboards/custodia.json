@@ -140,6 +140,62 @@
         { "expr": "rate(dotnet_collection_count_total{job=\"custodia\"}[5m])", "legendFormat": "gen {{generation}}", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 0 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Profundidade das filas (consumidor)",
+      "description": "custodia_fila_profundidade{fila} (F4, RabbitMqFilaProfundidadePoller): medida via AMQP a cada 15s para as quatro filas — custodia.prices, custodia.prices.dlq, custodia.retry, custodia.parked. Não é a série do plataforma-rabbitmq (rabbitmq_detailed_queue_messages_ready, usada só pela regra custodia-topologia-ausente): esta é publicada pelo PRÓPRIO custodia-app, sempre, mesmo com profundidade 0. custodia.prices.dlq e custodia.parked deveriam ficar em zero — qualquer valor sustentado é o sinal das regras custodia-prices-dlq-nao-vazia e custodia-parked-nao-vazio. custodia.retry oscila por desenho (TTL de 30s); só preocupa se não voltar a zero.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "targets": [
+        { "expr": "custodia_fila_profundidade{job=\"custodia\"}", "legendFormat": "{{fila}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mensagens processadas por desfecho",
+      "description": "custodia_consumo_mensagens_total{desfecho} (F4, ConsumidorMetrics.RegistrarDesfecho): ack_escriturado é o caminho feliz; ack_replay é redelivery de algo já gravado (dedupe, esperado); ack_ignorado_sonda é a prova de fumaça do passo de deploy; nack_requeue_transitorio é falha momentânea (Postgres fora do ar); retry_publicado e park_publicado alimentam custodia.retry e custodia.parked, respectivamente.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "targets": [
+        { "expr": "sum by (desfecho) (rate(custodia_consumo_mensagens_total{job=\"custodia\"}[5m]))", "legendFormat": "{{desfecho}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Duração do processamento (p95 / p50)",
+      "description": "custodia_consumo_duracao_segundos (F4, ConsumidorMetrics.MedirDuracao): do recebimento da mensagem ao ack/nack. Consumo é SERIAL (prefetchCount=1) — um handler lento aqui atrasa a fila inteira, é o principal suspeito quando custodia-prices-consumidor-parado dispara.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(custodia_consumo_duracao_segundos_bucket{job=\"custodia\"}[5m])))", "legendFormat": "p95", "refId": "A" },
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(custodia_consumo_duracao_segundos_bucket{job=\"custodia\"}[5m])))", "legendFormat": "p50", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Resíduo do parking por motivo (última passagem do dreno)",
+      "description": "custodia_parked_mensagens{motivo} (F4, ParkingDrenadorMetrics.RegistrarResidualPorMotivo). NÃO é um gauge de processo: só muda quando alguém roda o comando administrativo drenar-parking <motivo> dentro do container, e zera no restart do processo (estado em memória). Ausência de linha para um motivo aqui não significa parking vazio para ele — significa que ninguém rodou o dreno para esse motivo ainda, ou desde o último redeploy. Para o sinal AO VIVO de profundidade em custodia.parked, use o painel 'Profundidade das filas' acima.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
+      "targets": [
+        { "expr": "custodia_parked_mensagens{job=\"custodia\"}", "legendFormat": "{{motivo}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Posição negativa sinalizada (camada 3)",
+      "description": "custodia_posicao_negativa_sinalizada_total{instrumento_id} (F4, BusinessMetrics.RegistrarPosicaoNegativaSinalizada) — camada 3 da §6.1/ADR-11: resgate maior que a posição e venda sem compra ENTRAM no livro do mesmo jeito e só são sinalizados aqui, nunca rejeitados (a rejeição foi tirada da Custódia pela ADR-10). Para instrumento comum o sinal é por linha (quantidade < 0); para caixa:BRL o rótulo aparece só quando a SOMA caixa:BRL + caixa:a_liquidar é negativa (V6) — nunca para caixa:a_liquidar isolado, cujo negativo transitório por reaplicação no mesmo dia é esperado. Qualquer traço aqui merece olhar o log estruturado (LogWarning com clienteId) e decidir se falta lançar uma compra/aporte retroativo em Operações; ver a regra de alerta custodia-posicao-negativa-sinalizada.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 },
+      "targets": [
+        { "expr": "sum by (instrumento_id) (rate(custodia_posicao_negativa_sinalizada_total{job=\"custodia\"}[15m]))", "legendFormat": "{{instrumento_id}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } }, "overrides": [] }
     }
   ]
 }
