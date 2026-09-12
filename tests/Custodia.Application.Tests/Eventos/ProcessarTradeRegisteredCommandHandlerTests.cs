@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Custodia.Application.Eventos;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
@@ -294,33 +295,6 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.EnviarParaRetry, resultado.Value.Tipo);
-        Assert.Empty(movimentoWrite.Adicionados);
-    }
-
-    [Theory]
-    [InlineData("td:outro-instrumento", 10, 1000)]
-    [InlineData("td:tesouro-ipca-2035-05-15", 5, 1000)]
-    [InlineData("td:tesouro-ipca-2035-05-15", 10, 500)]
-    public async Task Handle_EstornoComCampoDivergenteDoTitulo_EstacionaComEstornoDivergente_NadaEhGravado(
-        string instrumentoIdDoEstorno, decimal quantidadeDoEstorno, decimal valorFinanceiroDoEstorno)
-    {
-        var titulo = MovimentoTestFactory.Criar(
-            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 1000m, "op-7f3a");
-
-        var (handler, movimentoWrite, _, _, _) = CriarHandler(movimentosExistentes: [titulo]);
-        var evento = CriarEvento(
-            tradeId: "op-estorno-1",
-            operacao: OperacaoTrade.Estorno,
-            instrumentoId: instrumentoIdDoEstorno,
-            quantidade: quantidadeDoEstorno,
-            valorFinanceiro: valorFinanceiroDoEstorno,
-            estornaTradeId: "op-7f3a");
-
-        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
-
-        Assert.True(resultado.IsSuccess);
-        Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.EstornoDivergente, resultado.Value.Motivo);
         Assert.Empty(movimentoWrite.Adicionados);
     }
 
@@ -678,38 +652,143 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
         Assert.NotEqual(2600m, posicaoFinal.CustoTotal);
     }
 
-    [Fact]
-    public void TradeRegisteredEvento_TodosOsCamposEstaoMapeadosOuDispensadosPorRegraEscrita()
+    private enum ClassificacaoDeCampoDoEnvelope
     {
-        var propriedades = typeof(TradeRegisteredEvento).GetProperties().Select(p => p.Name).ToHashSet();
+        ColunaOuCampoQueCarregaAdiante,
+        UsadoSemVirarColuna,
+        DispensaDeclaradaNoEstorno,
+    }
 
-        var camposDeFato = new HashSet<string>
+    private const string PayloadTradeRegisteredComTodosOsCamposDoEnvelope = """
         {
-            nameof(TradeRegisteredEvento.TradeId),
-            nameof(TradeRegisteredEvento.ClienteId),
-            nameof(TradeRegisteredEvento.InstrumentoId),
-            nameof(TradeRegisteredEvento.Operacao),
-            nameof(TradeRegisteredEvento.Quantidade),
-            nameof(TradeRegisteredEvento.ValorFinanceiro),
-            nameof(TradeRegisteredEvento.DataEvento),
-            nameof(TradeRegisteredEvento.RegistradoEm),
+          "v": 1,
+          "tipo": "TradeRegistered",
+          "tradeId": "op-7f3a",
+          "clienteId": "cli-001",
+          "instrumentoId": "td:tesouro-ipca-2035-05-15",
+          "operacao": "aplicacao",
+          "quantidade": "2.86000000",
+          "valorFinanceiro": "10000.00",
+          "dataEvento": "2026-08-01",
+          "registradoEm": "2026-08-15T14:02:11Z",
+          "estornaTradeId": "op-3c9b",
+          "valorOrigemSaldo": "900.00"
+        }
+        """;
+
+    private static readonly IReadOnlyDictionary<string, ClassificacaoDeCampoDoEnvelope> ClassificacaoDosCamposDoEnvelopeTradeRegistered =
+        new Dictionary<string, ClassificacaoDeCampoDoEnvelope>
+        {
+            ["v"] = ClassificacaoDeCampoDoEnvelope.UsadoSemVirarColuna,
+            ["tipo"] = ClassificacaoDeCampoDoEnvelope.UsadoSemVirarColuna,
+            ["tradeId"] = ClassificacaoDeCampoDoEnvelope.ColunaOuCampoQueCarregaAdiante,
+            ["clienteId"] = ClassificacaoDeCampoDoEnvelope.ColunaOuCampoQueCarregaAdiante,
+            ["instrumentoId"] = ClassificacaoDeCampoDoEnvelope.DispensaDeclaradaNoEstorno,
+            ["operacao"] = ClassificacaoDeCampoDoEnvelope.ColunaOuCampoQueCarregaAdiante,
+            ["quantidade"] = ClassificacaoDeCampoDoEnvelope.DispensaDeclaradaNoEstorno,
+            ["valorFinanceiro"] = ClassificacaoDeCampoDoEnvelope.DispensaDeclaradaNoEstorno,
+            ["dataEvento"] = ClassificacaoDeCampoDoEnvelope.ColunaOuCampoQueCarregaAdiante,
+            ["registradoEm"] = ClassificacaoDeCampoDoEnvelope.ColunaOuCampoQueCarregaAdiante,
+            ["estornaTradeId"] = ClassificacaoDeCampoDoEnvelope.ColunaOuCampoQueCarregaAdiante,
+            ["valorOrigemSaldo"] = ClassificacaoDeCampoDoEnvelope.UsadoSemVirarColuna,
         };
 
-        var camposUsadosParaLookupOuFormacaoDaSegundaLinha = new HashSet<string>
-        {
-            nameof(TradeRegisteredEvento.EstornaTradeId),
-            nameof(TradeRegisteredEvento.ValorOrigemSaldoBruto),
-        };
-
-        var todosOsCamposContabilizados = camposDeFato
-            .Union(camposUsadosParaLookupOuFormacaoDaSegundaLinha)
+    [Fact]
+    public void CamposDoEnvelopeTradeRegistered_TodoCampoTemClassificacaoUnicaEExaustiva()
+    {
+        var camposDoEnvelope = JsonDocument.Parse(PayloadTradeRegisteredComTodosOsCamposDoEnvelope)
+            .RootElement.EnumerateObject()
+            .Select(propriedade => propriedade.Name)
             .ToHashSet();
 
-        Assert.Equal(todosOsCamposContabilizados, propriedades);
+        Assert.Equal(camposDoEnvelope, ClassificacaoDosCamposDoEnvelopeTradeRegistered.Keys.ToHashSet());
     }
 
     [Fact]
-    public async Task Handle_EstornoComConferenciaBatendo_InstrumentoIdQuantidadeEValorFinanceiroDoEventoSaoConferidosENaoGravados()
+    public void CamposDoEnvelopeTradeRegistered_ColunaOuCampoQueCarregaAdiante_ChegaIntactoNoEventoParseado()
+    {
+        var resultado = TradeRegisteredPayload.Deserializar(PayloadTradeRegisteredComTodosOsCamposDoEnvelope);
+
+        Assert.True(resultado.IsSuccess);
+        var evento = resultado.Value;
+
+        Assert.Equal("op-7f3a", evento.TradeId);
+        Assert.Equal("cli-001", evento.ClienteId);
+        Assert.Equal(OperacaoTrade.Aplicacao, evento.Operacao);
+        Assert.Equal(new DateOnly(2026, 8, 1), evento.DataEvento);
+        Assert.Equal(new DateTimeOffset(2026, 8, 15, 14, 2, 11, TimeSpan.Zero), evento.RegistradoEm);
+        Assert.Equal("op-3c9b", evento.EstornaTradeId);
+    }
+
+    [Fact]
+    public void CamposDoEnvelopeTradeRegistered_VDivergente_EhValidadoEViraVersaoNaoSuportada()
+    {
+        var payload = PayloadTradeRegisteredComTodosOsCamposDoEnvelope.Replace("\"v\": 1,", "\"v\": 2,");
+
+        var resultado = TradeRegisteredPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(TradeRegisteredErrors.VersaoNaoSuportada, resultado.Error);
+    }
+
+    [Fact]
+    public void CamposDoEnvelopeTradeRegistered_TipoDivergente_EhValidadoEViraPayloadInvalido()
+    {
+        var payload = PayloadTradeRegisteredComTodosOsCamposDoEnvelope.Replace(
+            "\"tipo\": \"TradeRegistered\",", "\"tipo\": \"PriceObserved\",");
+
+        var resultado = TradeRegisteredPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(TradeRegisteredErrors.PayloadInvalido, resultado.Error);
+    }
+
+    [Fact]
+    public async Task CamposDoEnvelopeTradeRegistered_ValorOrigemSaldoDeterminaExistenciaEQtdDeltaDaSegundaLinha()
+    {
+        var (handlerSemOrigem, movimentoWriteSemOrigem, _, _, _) = CriarHandler();
+        var eventoSemOrigem = CriarEvento(tradeId: "op-sem-origem", valorFinanceiro: 1000m, valorOrigemSaldoBruto: "0");
+        await handlerSemOrigem.Handle(new ProcessarTradeRegisteredCommand(eventoSemOrigem), CancellationToken.None);
+        Assert.Single(movimentoWriteSemOrigem.Adicionados);
+
+        var (handlerComOrigem, movimentoWriteComOrigem, _, _, _) = CriarHandler();
+        var eventoComOrigem = CriarEvento(tradeId: "op-com-origem", valorFinanceiro: 1000m, valorOrigemSaldoBruto: "400.00");
+        await handlerComOrigem.Handle(new ProcessarTradeRegisteredCommand(eventoComOrigem), CancellationToken.None);
+
+        Assert.Equal(2, movimentoWriteComOrigem.Adicionados.Count);
+        var perna = movimentoWriteComOrigem.Adicionados.Single(m => m.InstrumentoId == InstrumentosCaixa.Brl);
+        Assert.Equal(-400.00m, perna.QtdDelta);
+    }
+
+    [Theory]
+    [InlineData("td:outro-instrumento", 10, 1000)]
+    [InlineData("td:tesouro-ipca-2035-05-15", 5, 1000)]
+    [InlineData("td:tesouro-ipca-2035-05-15", 10, 500)]
+    public async Task CamposDoEnvelopeTradeRegistered_InstrumentoIdQuantidadeValorFinanceiroNoEstorno_SaoConferidosContraOTitulo(
+        string instrumentoIdDoEstorno, decimal quantidadeDoEstorno, decimal valorFinanceiroDoEstorno)
+    {
+        var titulo = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 1000m, "op-7f3a");
+
+        var (handler, movimentoWrite, _, _, _) = CriarHandler(movimentosExistentes: [titulo]);
+        var evento = CriarEvento(
+            tradeId: "op-estorno-1",
+            operacao: OperacaoTrade.Estorno,
+            instrumentoId: instrumentoIdDoEstorno,
+            quantidade: quantidadeDoEstorno,
+            valorFinanceiro: valorFinanceiroDoEstorno,
+            estornaTradeId: "op-7f3a");
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
+        Assert.Equal(MotivoEstacionamento.EstornoDivergente, resultado.Value.Motivo);
+        Assert.Empty(movimentoWrite.Adicionados);
+    }
+
+    [Fact]
+    public async Task CamposDoEnvelopeTradeRegistered_InstrumentoIdQuantidadeValorFinanceiroNoEstorno_QuandoConferidosNaoSaoGravados()
     {
         var titulo = MovimentoTestFactory.Criar(
             1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 1000m, "op-7f3a");
@@ -726,7 +805,10 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
         await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
 
         var ajuste = Assert.Single(movimentoWrite.Adicionados);
-        Assert.NotEqual(evento.InstrumentoId, ajuste.RefExterna);
+        Assert.Equal(titulo.InstrumentoId, ajuste.InstrumentoId);
+        Assert.Equal(-titulo.QtdDelta, ajuste.QtdDelta);
+        Assert.Equal(-titulo.ValorFinanceiro, ajuste.ValorFinanceiro);
         Assert.NotEqual(evento.Quantidade, ajuste.QtdDelta);
+        Assert.NotEqual(evento.ValorFinanceiro, ajuste.ValorFinanceiro);
     }
 }

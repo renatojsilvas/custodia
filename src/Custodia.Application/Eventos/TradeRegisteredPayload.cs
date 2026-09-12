@@ -28,8 +28,12 @@ public static class TradeRegisteredPayload
             return TradeRegisteredErrors.VersaoNaoSuportada;
         }
 
+        if (!TentaExtrairTextoObrigatorio(raiz, "tipo", out var tipo) || tipo != Tipo)
+        {
+            return TradeRegisteredErrors.PayloadInvalido;
+        }
+
         if (!TentaExtrairTextoObrigatorio(raiz, "tradeId", out var tradeId)
-            || !TentaExtrairTextoObrigatorio(raiz, "tipo", out _)
             || !TentaExtrairTextoObrigatorio(raiz, "clienteId", out var clienteId)
             || !TentaExtrairTextoObrigatorio(raiz, "instrumentoId", out var instrumentoId)
             || !TentaExtrairTextoObrigatorio(raiz, "operacao", out var operacaoBruta)

@@ -49,6 +49,18 @@ public sealed class RoteadorDeEventosTests
     }
 
     [Fact]
+    public void Rotear_TradesRegisteredComTipoDivergenteDeTradeRegistered_DevolveEstacionarComPayloadInvalido()
+    {
+        var payloadComTipoErrado = PayloadTradeRegisteredValido.Replace(
+            "\"tipo\": \"TradeRegistered\",", "\"tipo\": \"OutraCoisa\",");
+
+        var desfecho = _roteador.Rotear("trades.registered", payloadComTipoErrado);
+
+        Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
+        Assert.Equal(MotivoEstacionamento.PayloadInvalido, desfecho.Motivo);
+    }
+
+    [Fact]
     public void Rotear_EodReady_DevolveEstacionarComTipoNaoTratadoEod()
     {
         var desfecho = _roteador.Rotear("eod.ready", "{\"d\":\"2026-08-01\"}");

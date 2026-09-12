@@ -109,6 +109,39 @@ public sealed class TradeRegisteredPayloadTests
     }
 
     [Fact]
+    public void Deserializar_TipoDivergenteDeTradeRegistered_DevolvePayloadInvalido()
+    {
+        var payload = PayloadComTipoCustomizado("PriceObserved");
+
+        var resultado = TradeRegisteredPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(TradeRegisteredErrors.PayloadInvalido, resultado.Error);
+    }
+
+    [Fact]
+    public void Deserializar_TipoAusente_DevolvePayloadInvalido()
+    {
+        var payload = PayloadSemCampo("\"tipo\": \"TradeRegistered\",");
+
+        var resultado = TradeRegisteredPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(TradeRegisteredErrors.PayloadInvalido, resultado.Error);
+    }
+
+    [Fact]
+    public void Deserializar_VersaoETipoAmbosDivergentes_DevolveVersaoNaoSuportada_VersaoTemPrecedencia()
+    {
+        var payload = PayloadComVCustomizado("2").Replace("\"tipo\": \"TradeRegistered\",", "\"tipo\": \"PriceObserved\",");
+
+        var resultado = TradeRegisteredPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(TradeRegisteredErrors.VersaoNaoSuportada, resultado.Error);
+    }
+
+    [Fact]
     public void Deserializar_OperacaoDesconhecida_DevolvePayloadInvalido()
     {
         var payload = PayloadComOperacaoCustomizada("liquidacao_antecipada");
@@ -249,6 +282,9 @@ public sealed class TradeRegisteredPayloadTests
 
     private static string PayloadComVCustomizado(string valor) =>
         PayloadAplicacaoCompleto.Replace("\"v\": 1,", $"\"v\": {valor},");
+
+    private static string PayloadComTipoCustomizado(string tipo) =>
+        PayloadAplicacaoCompleto.Replace("\"tipo\": \"TradeRegistered\",", $"\"tipo\": \"{tipo}\",");
 
     private static string PayloadComOperacaoCustomizada(string operacao) =>
         PayloadAplicacaoCompleto.Replace("\"operacao\": \"aplicacao\",", $"\"operacao\": \"{operacao}\",");

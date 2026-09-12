@@ -184,6 +184,72 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
     }
 
     [Fact]
+    public async Task DecisaoA_ConfirmPerdidoAposEntregaReal_DuplicaOOrfaoNoRetryEAmbasParkeiamSemCorromperOLivro()
+    {
+        const int teto = 1;
+        var clienteId = NovoId("cli");
+        const string instrumentoId = "td:tesouro-teste-confirm-perdido";
+        var tradeIdInexistente = NovoId("trade-inexistente");
+        var tradeIdEstorno = NovoId("estorno");
+        var dataEvento = new DateOnly(2026, 6, 1);
+        var registradoEm = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+
+        var estornoOrfao = TradePayloadBuilder.Estorno(
+            tradeIdEstorno, clienteId, instrumentoId, 3m, 300m, dataEvento, registradoEm, tradeIdInexistente);
+
+        await using var conexaoPublicadora = await fixture.CriarConexaoAmqpAsync();
+        await using var canalPublicador = await conexaoPublicadora.CreateChannelAsync();
+        await PublicarAsync(canalPublicador, "trades.registered", estornoOrfao);
+
+        var (provider, consumidor, publicador) = CriarConsumidor(
+            confirmar: (exchange, tentativa) => !(exchange == RabbitMqTopologia.ExchangeRetryIn && tentativa == 1),
+            entregaMesmoComConfirmNegado: (exchange, tentativa) =>
+                exchange == RabbitMqTopologia.ExchangeRetryIn && tentativa == 1,
+            configExtras: new Dictionary<string, string?> { ["Decisao:OrfaoTetoVoltas"] = teto.ToString() });
+        await using var _ = provider;
+        await consumidor.StartAsync(CancellationToken.None);
+        try
+        {
+            var duasPublicacoesNoRetryIn = await EsperarAsync(
+                () => Task.FromResult(publicador.Chamadas.Count(c => c.Exchange == RabbitMqTopologia.ExchangeRetryIn) >= 2),
+                TimeoutCurto);
+
+            Assert.True(
+                duasPublicacoesNoRetryIn,
+                "a primeira tentativa (confirm negado, mas ENTREGUE de verdade ao custodia.retry.in) e a segunda " +
+                "tentativa (confirm concedido, republish real por causa do nack da original) juntas produzem DUAS " +
+                "cópias do mesmo órfão circulando — o 'sim parcial' do confirm.");
+
+            var motivosAcumulados = new List<string>();
+            var duasParkedComoOrfaoExpirado = await EsperarAsync(async () =>
+            {
+                motivosAcumulados.AddRange(await LerMotivosDaFilaParkedAsync());
+                return motivosAcumulados.Count(m => m == MotivoEstacionamento.EstornoOrfaoExpirado.Name) >= 2;
+            }, TimeoutComDuasVoltasDeRetry);
+
+            Assert.True(
+                duasParkedComoOrfaoExpirado,
+                "as duas cópias do órfão, cada uma reprocessada de forma independente após o TTL do " +
+                "custodia.retry, têm que estacionar como estorno_orfao_expirado — duplicata no parking é o limite " +
+                "conhecido deste 'sim parcial', NUNCA uma escrita no livro.");
+        }
+        finally
+        {
+            await consumidor.StopAsync(CancellationToken.None);
+        }
+
+        Assert.False(
+            await ExisteMovimentoAsync(tradeIdEstorno),
+            "o confirm perdido não pode, em nenhuma das duas cópias, resultar em escrita no livro");
+
+        var profundidadeRetry = await ContarMensagensAsync(RabbitMqTopologia.FilaRetry);
+        Assert.Equal(0u, profundidadeRetry);
+
+        var profundidadeDlq = await ContarMensagensAsync(RabbitMqTopologia.FilaDlq);
+        Assert.Equal(0u, profundidadeDlq);
+    }
+
+    [Fact]
     public async Task DecisaoA_AckSoDepoisDoConfirm_ConfirmForcadoAFalharUmaVez_OriginalNaoConfirmadaEDepoisSim()
     {
         var clienteId = NovoId("cli");
@@ -589,13 +655,15 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
     }
 
     private (ServiceProvider Provider, RabbitMqTradeConsumidor Consumidor, PublicadorComFalhaForcada Publicador) CriarConsumidor(
-        Func<string, int, bool>? confirmar = null, IDictionary<string, string?>? configExtras = null)
+        Func<string, int, bool>? confirmar = null,
+        Func<string, int, bool>? entregaMesmoComConfirmNegado = null,
+        IDictionary<string, string?>? configExtras = null)
     {
         var configuration = fixture.CriarConfiguration(configExtras);
         var provider = fixture.CriarServiceProvider(configuration);
         var connectionProvider = provider.GetRequiredService<RabbitMqConnectionProvider>();
         var publicadorReal = provider.GetRequiredService<IPublicadorComConfirmacao>();
-        var publicador = new PublicadorComFalhaForcada(publicadorReal, confirmar);
+        var publicador = new PublicadorComFalhaForcada(publicadorReal, confirmar, entregaMesmoComConfirmNegado);
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var roteador = provider.GetRequiredService<Custodia.Application.Eventos.RoteadorDeEventos>();
         var metrics = provider.GetRequiredService<ConsumidorMetrics>();
