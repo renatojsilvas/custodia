@@ -1,5 +1,6 @@
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Movimentos;
+using Custodia.Application.Posicoes;
 using Custodia.Domain.Movimentos;
 using Custodia.Domain.Posicoes;
 using Custodia.Infrastructure.Persistence.Repositories;
@@ -215,5 +216,94 @@ public sealed class MovimentoAndPosicaoRepositoriesTests(InfrastructurePostgresF
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(segundoEstado, resultado.Value);
+    }
+
+    [Fact]
+    public async Task ObterChavesDistintasAsync_SemFiltro_DevolveUmaLinhaPorChaveDoLivro()
+    {
+        var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
+        await InserirAsync(clienteId, instrumentoId, NovaRefExterna());
+        await InserirAsync(clienteId, instrumentoId, NovaRefExterna());
+        var outroCliente = NovoClienteId();
+        var outroInstrumento = NovoInstrumentoId();
+        await InserirAsync(outroCliente, outroInstrumento, NovaRefExterna());
+
+        var repo = new MovimentoReadRepository(CriarDataSource());
+        var resultado = await repo.ObterChavesDistintasAsync(null, null, CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Contains(new ChavePosicao(clienteId, instrumentoId), resultado.Value);
+        Assert.Contains(new ChavePosicao(outroCliente, outroInstrumento), resultado.Value);
+        Assert.Single(resultado.Value, c => c.ClienteId == clienteId && c.InstrumentoId == instrumentoId);
+    }
+
+    [Fact]
+    public async Task ObterChavesDistintasAsync_ComFiltroDeClienteEInstrumento_RestringeAsChaves()
+    {
+        var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
+        await InserirAsync(clienteId, instrumentoId, NovaRefExterna());
+        await InserirAsync(clienteId, NovoInstrumentoId(), NovaRefExterna());
+        await InserirAsync(NovoClienteId(), instrumentoId, NovaRefExterna());
+
+        var repo = new MovimentoReadRepository(CriarDataSource());
+        var resultado = await repo.ObterChavesDistintasAsync(clienteId, instrumentoId, CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        var chave = Assert.Single(resultado.Value);
+        Assert.Equal(clienteId, chave.ClienteId);
+        Assert.Equal(instrumentoId, chave.InstrumentoId);
+    }
+
+    [Fact]
+    public async Task PosicaoCorrenteReadRepository_ObterChavesAsync_DevolveAsChavesGravadas()
+    {
+        await using var db = fixture.CriarDbContext();
+        var writeRepo = new PosicaoCorrenteWriteRepository(db);
+
+        var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
+        await writeRepo.AtualizarAsync(clienteId, instrumentoId, new PosicaoTresColunas(1m, 1m, 1m), CancellationToken.None);
+        await ((IUnitOfWork)db).SaveChangesAsync(CancellationToken.None);
+
+        var readRepo = new Custodia.Infrastructure.Persistence.Repositories.PosicaoCorrenteReadRepository(CriarDataSource());
+        var resultado = await readRepo.ObterChavesAsync(clienteId, null, CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        var chave = Assert.Single(resultado.Value);
+        Assert.Equal(clienteId, chave.ClienteId);
+        Assert.Equal(instrumentoId, chave.InstrumentoId);
+    }
+
+    [Fact]
+    public async Task PosicaoCorrenteWriteRepository_RemoverAsync_RemoveALinhaEDeixaAsDemaisIntactas()
+    {
+        await using var db = fixture.CriarDbContext();
+        var writeRepo = new PosicaoCorrenteWriteRepository(db);
+
+        var clienteId = NovoClienteId();
+        var instrumentoParaRemover = NovoInstrumentoId();
+        var instrumentoParaManter = NovoInstrumentoId();
+
+        await writeRepo.AtualizarAsync(
+            clienteId, instrumentoParaRemover, new PosicaoTresColunas(1m, 1m, 1m), CancellationToken.None);
+        await writeRepo.AtualizarAsync(
+            clienteId, instrumentoParaManter, new PosicaoTresColunas(2m, 2m, 2m), CancellationToken.None);
+        await ((IUnitOfWork)db).SaveChangesAsync(CancellationToken.None);
+
+        await writeRepo.RemoverAsync(clienteId, instrumentoParaRemover, CancellationToken.None);
+        var salvou = await ((IUnitOfWork)db).SaveChangesAsync(CancellationToken.None);
+        Assert.True(salvou.IsSuccess);
+
+        var readRepo = new Custodia.Infrastructure.Persistence.Repositories.PosicaoCorrenteReadRepository(CriarDataSource());
+        var chavesRestantes = await readRepo.ObterChavesAsync(clienteId, null, CancellationToken.None);
+
+        Assert.True(chavesRestantes.IsSuccess);
+        var chave = Assert.Single(chavesRestantes.Value);
+        Assert.Equal(instrumentoParaManter, chave.InstrumentoId);
+
+        var estadoRemovido = await readRepo.ObterAsync(clienteId, instrumentoParaRemover, CancellationToken.None);
+        Assert.Equal(PosicaoTresColunas.Zero, estadoRemovido.Value);
     }
 }

@@ -1,3 +1,4 @@
+using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 
@@ -16,4 +17,7 @@ public interface IMovimentoReadRepository
 
     Task<Result<IReadOnlyList<Movimento>>> ObterMovimentosDaChaveAsync(
         string clienteId, string instrumentoId, CancellationToken ct);
+
+    Task<Result<IReadOnlyList<ChavePosicao>>> ObterChavesDistintasAsync(
+        string? clienteId, string? instrumentoId, CancellationToken ct);
 }

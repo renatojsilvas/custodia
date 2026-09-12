@@ -1,4 +1,5 @@
 using Custodia.Application.Movimentos;
+using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 
@@ -9,7 +10,8 @@ internal sealed class FakeMovimentoReadRepository(
     Func<string, string, Result<MovimentoConsulta>>? porClienteERefExterna = null,
     Func<string, Result<MovimentoConsulta>>? porRefExternaEmQualquerCliente = null,
     Func<string, string, Result<MaxDataEventoConsulta>>? maxDataEvento = null,
-    Func<string, string, Result<IReadOnlyList<Movimento>>>? movimentosDaChave = null)
+    Func<string, string, Result<IReadOnlyList<Movimento>>>? movimentosDaChave = null,
+    Func<string?, string?, Result<IReadOnlyList<ChavePosicao>>>? chavesDistintas = null)
     : IMovimentoReadRepository
 {
     private readonly Func<string, string, Result<MovimentoConsulta>> _porClienteERefExterna =
@@ -23,6 +25,9 @@ internal sealed class FakeMovimentoReadRepository(
 
     private readonly Func<string, string, Result<IReadOnlyList<Movimento>>> _movimentosDaChave =
         movimentosDaChave ?? DefaultMovimentosDaChave(movimentosExistentes);
+
+    private readonly Func<string?, string?, Result<IReadOnlyList<ChavePosicao>>> _chavesDistintas =
+        chavesDistintas ?? DefaultChavesDistintas(movimentosExistentes);
 
     public Task<Result<MovimentoConsulta>> ObterPorClienteERefExternaAsync(
         string clienteId, string refExterna, CancellationToken ct) =>
@@ -39,6 +44,10 @@ internal sealed class FakeMovimentoReadRepository(
     public Task<Result<IReadOnlyList<Movimento>>> ObterMovimentosDaChaveAsync(
         string clienteId, string instrumentoId, CancellationToken ct) =>
         Task.FromResult(_movimentosDaChave(clienteId, instrumentoId));
+
+    public Task<Result<IReadOnlyList<ChavePosicao>>> ObterChavesDistintasAsync(
+        string? clienteId, string? instrumentoId, CancellationToken ct) =>
+        Task.FromResult(_chavesDistintas(clienteId, instrumentoId));
 
     private static Func<string, string, Result<MovimentoConsulta>> DefaultPorClienteERefExterna(
         IReadOnlyList<Movimento> movimentos) =>
@@ -84,5 +93,21 @@ internal sealed class FakeMovimentoReadRepository(
                 .ToList();
 
             return Result<IReadOnlyList<Movimento>>.Success(daChave);
+        };
+
+    private static Func<string?, string?, Result<IReadOnlyList<ChavePosicao>>> DefaultChavesDistintas(
+        IReadOnlyList<Movimento> movimentos) =>
+        (clienteId, instrumentoId) =>
+        {
+            IReadOnlyList<ChavePosicao> chaves = movimentos
+                .Where(m => clienteId is null || m.ClienteId == clienteId)
+                .Where(m => instrumentoId is null || m.InstrumentoId == instrumentoId)
+                .Select(m => new ChavePosicao(m.ClienteId, m.InstrumentoId))
+                .Distinct()
+                .OrderBy(c => c.ClienteId)
+                .ThenBy(c => c.InstrumentoId)
+                .ToList();
+
+            return Result<IReadOnlyList<ChavePosicao>>.Success(chaves);
         };
 }

@@ -1,4 +1,5 @@
 using Custodia.Application.Movimentos;
+using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 using Dapper;
@@ -58,6 +59,15 @@ public sealed class MovimentoReadRepository(NpgsqlDataSource dataSource) : IMovi
         ORDER BY data_evento, registrado_em, id
         """;
 
+    private const string SqlChavesDistintas =
+        """
+        SELECT DISTINCT cliente_id AS "ClienteId", instrumento_id AS "InstrumentoId"
+        FROM movimentos
+        WHERE (@clienteId::text IS NULL OR cliente_id = @clienteId)
+          AND (@instrumentoId::text IS NULL OR instrumento_id = @instrumentoId)
+        ORDER BY "ClienteId", "InstrumentoId"
+        """;
+
     public async Task<Result<MovimentoConsulta>> ObterPorClienteERefExternaAsync(
         string clienteId, string refExterna, CancellationToken ct)
     {
@@ -105,5 +115,18 @@ public sealed class MovimentoReadRepository(NpgsqlDataSource dataSource) : IMovi
         IReadOnlyList<Movimento> movimentos = rows.Select(MovimentoHidratador.Hidratar).ToList();
 
         return Result<IReadOnlyList<Movimento>>.Success(movimentos);
+    }
+
+    public async Task<Result<IReadOnlyList<ChavePosicao>>> ObterChavesDistintasAsync(
+        string? clienteId, string? instrumentoId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+
+        var rows = await connection.QueryAsync<ChavePosicao>(
+            new CommandDefinition(SqlChavesDistintas, new { clienteId, instrumentoId }, cancellationToken: ct));
+
+        IReadOnlyList<ChavePosicao> chaves = rows.ToList();
+
+        return Result<IReadOnlyList<ChavePosicao>>.Success(chaves);
     }
 }

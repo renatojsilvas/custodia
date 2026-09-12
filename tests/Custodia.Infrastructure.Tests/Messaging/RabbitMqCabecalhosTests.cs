@@ -115,4 +115,56 @@ public sealed class RabbitMqCabecalhosTests
 
         Assert.Equal(esperado, tentativas);
     }
+
+    [Fact]
+    public void DefinirPassagemId_EscreveOCabecalhoXCustodiaPassagemId()
+    {
+        var cabecalhos = new Dictionary<string, object?>();
+
+        RabbitMqCabecalhos.DefinirPassagemId(cabecalhos, "passagem-123");
+
+        Assert.Equal("passagem-123", cabecalhos["x-custodia-passagem-id"]);
+    }
+
+    [Fact]
+    public void LerPassagemId_SemCabecalho_DevolveNulo()
+    {
+        Assert.Null(RabbitMqCabecalhos.LerPassagemId(new Dictionary<string, object?>()));
+    }
+
+    [Fact]
+    public void LerPassagemId_ComValorComoString_DevolveOValor()
+    {
+        var cabecalhos = new Dictionary<string, object?> { [RabbitMqCabecalhos.PassagemId] = "passagem-abc" };
+
+        Assert.Equal("passagem-abc", RabbitMqCabecalhos.LerPassagemId(cabecalhos));
+    }
+
+    [Fact]
+    public void LerPassagemId_ComValorComoBytesUtf8_DecodificaComoTexto()
+    {
+        var cabecalhos = new Dictionary<string, object?>
+        {
+            [RabbitMqCabecalhos.PassagemId] = System.Text.Encoding.UTF8.GetBytes("passagem-bytes"),
+        };
+
+        Assert.Equal("passagem-bytes", RabbitMqCabecalhos.LerPassagemId(cabecalhos));
+    }
+
+    [Fact]
+    public void LerMotivo_ComValorComoBytesUtf8_DecodificaComoTexto()
+    {
+        var cabecalhos = new Dictionary<string, object?>
+        {
+            [RabbitMqCabecalhos.Motivo] = System.Text.Encoding.UTF8.GetBytes("payload_invalido"),
+        };
+
+        Assert.Equal("payload_invalido", RabbitMqCabecalhos.LerMotivo(cabecalhos));
+    }
+
+    [Fact]
+    public void LerMotivo_CabecalhosNulos_DevolveNulo()
+    {
+        Assert.Null(RabbitMqCabecalhos.LerMotivo(null));
+    }
 }

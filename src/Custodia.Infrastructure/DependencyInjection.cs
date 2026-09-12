@@ -41,6 +41,11 @@ public static class DependencyInjection
         services.AddSingleton<RabbitMqConnectionProvider>();
         services.AddSingleton<IPublicadorComConfirmacao, RabbitMqPublicadorComConfirmacao>();
         services.AddSingleton<ConsumidorMetrics>();
+        services.AddSingleton<IIdentificadorDePassagem, IdentificadorDePassagemAleatorio>();
+        services.AddSingleton<IPontoDeSuspensaoDrenagem, PontoDeSuspensaoDrenagemInerte>();
+        services.AddSingleton<IMensagemParkeadaReprocessador, RoteadorMensagemParkeadaReprocessador>();
+        services.AddSingleton<ParkingDrenadorMetrics>();
+        services.AddSingleton<ParkingDrenador>();
 
         return services;
     }
