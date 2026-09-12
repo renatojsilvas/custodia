@@ -1444,3 +1444,33 @@ mesmo que o original chegasse).
 **Isto é limite declarado, não defeito:** duplicata no *parking* sob perda de confirm após entrega
 real. O livro não é corrompido, que é o que importa. Quem drenar aquele motivo verá duas mensagens
 onde houve um fato — e agora sabe por quê.
+
+## A prova de fumaça do deploy morre no dia em que o consumidor passa a funcionar
+
+**Medido em produção no primeiro deploy do F4 da `custodia` (2026-09-12), e o deploy reprovou
+por isso** — com o serviço no ar e funcionando perfeitamente.
+
+O passo de topologia do F2 publica uma sonda e afirma que `messages_ready` da fila **cresceu**.
+Isso é prova de roteamento enquanto **não há consumidor**. No dia em que o consumidor existe, ele
+reconhece a sonda, acka e segue — e `messages_ready` volta a zero antes de qualquer leitura. O
+deploy então reprova com a mensagem **`o binding 'prices.#' não está roteando`**, que é
+**falsa**: os bindings tinham acabado de passar na comparação de conjunto exato, no mesmo run.
+
+**A guarda que existia não pega, e o motivo é instrutivo.** Havia um `if` que pulava a prova
+quando a fila tinha **backlog** (`antes != 0`) — e com consumidor a resposta é **sempre 0**,
+justamente porque ele drena na hora. A guarda perguntava *"há backlog?"* quando a pergunta certa
+passou a ser *"há quem consuma?"*. Uma condição pode deixar de selecionar o caso que ela existe
+para cobrir **sem nunca ficar falsa** — ela só deixa de ser alcançada.
+
+**O conserto não é remover a prova, é pular o membro mais fraco dela.** O publish já confere
+`routed == true` na resposta da management API: evidência **direta** de que um binding casou,
+imune a consumo, a tráfego de terceiro e a backlog. Somada à comparação de **conjunto** dos
+bindings, o roteamento continua provado. O delta em `messages_ready` sempre foi o mais fraco dos
+três — e é o único que o consumidor torna inobservável.
+
+**A regra geral, que vale para todo repo deste kit:** quando um deploy verifica comportamento
+publicando e observando fila, escreva a verificação de modo que ela **saiba distinguir "não
+chegou" de "chegou e alguém já tratou"**. Enquanto não há consumidor as duas são
+indistinguíveis, e a fase que constrói o consumidor é exatamente a que quebra a verificação —
+com a suíte inteira verde e o serviço correto. *Sintoma para reconhecer rápido: a mensagem de
+erro acusa a peça que acabou de ser verificada com sucesso alguns passos antes.*
