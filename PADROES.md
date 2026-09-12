@@ -1597,3 +1597,33 @@ metadado de infraestrutura, pergunte **o que exatamente aquele número conta** �
 **Guarda:** header próprio, copiado junto com os demais e incrementado no republish; teste que
 exercita **duas** voltas e afirma o valor na segunda; e, se o teto for pequeno, um teste que o leva
 até o estacionamento. Ref.: `custodia`, F4, Decisão A.
+
+### 10.45. Republish em exchange fanout perde a routing key original — e quem depende dela é o retorno do dead-letter
+
+Ao **republicar** uma mensagem (retry, parking, redistribuição), passe explicitamente a **routing
+key com que ela chegou**. Publicar com `routingKey: ""` porque "o exchange é fanout e ele ignora a
+chave" é verdade sobre a **entrega** e falso sobre o que fica **gravado na mensagem**.
+
+**Por quê.** O fanout de fato ignora a routing key para decidir o destino — daí a tentação de
+passar `""`. Mas a chave com que a mensagem entrou na fila é a que o broker usa ao **dead-letrar**,
+quando aquela fila não declara `x-dead-letter-routing-key`. Então, no desenho
+`main → publish em retry.in → fila com TTL → DLX de volta para main`, a mensagem volta para `main`
+com routing key **vazia** — e o roteador do consumidor, que decide por `trades.registered`,
+`prices.*`, `corpactions.*`, não reconhece `""`, cai no default e estaciona a mensagem com o motivo
+**errado**.
+
+**O sintoma engana duas vezes.** Primeiro: a mensagem *volta* (o TTL funciona, o DLX funciona, a
+profundidade da fila se move), então tudo que se observa no broker parece certo. Segundo: o
+desfecho errado é um motivo **nomeado e plausível** (`payload_invalido`), não um erro — a mensagem
+é estacionada, com alerta, e alguém vai investigar o payload, que está perfeito. Medido na
+`custodia`: o retry do estorno órfão nunca chegava à segunda volta, porque a primeira volta já era
+descartada pelo caminho errado; o teto nunca fechava e o motivo de expiração nunca era emitido.
+
+**Guarda:** a assinatura do publicador de republish **exige** a routing key (não tem default `""`),
+e o teste que exercita **duas** voltas é o que pega — um teste de uma volta só passa com o defeito
+presente, porque a primeira volta ainda tem a chave original vinda do produtor.
+
+**Corolário:** ao desenhar fila de retry por TTL+DLX, decida explicitamente entre preservar a chave
+original (não declarar `x-dead-letter-routing-key` e republicar com a chave certa) ou reescrevê-la
+(declarar `x-dead-letter-routing-key` na fila de retry). As duas funcionam; o que não funciona é
+não decidir e deixar o `""` do publish vazar para a volta. Ref.: `custodia`, F4, Decisão A.
