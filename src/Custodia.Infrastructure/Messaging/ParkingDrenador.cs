@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Custodia.Application.Eventos;
 using Custodia.Domain.Eventos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -10,7 +11,6 @@ namespace Custodia.Infrastructure.Messaging;
 public sealed class ParkingDrenador
 {
     private const long TetoPadrao = 10_000;
-    private const string PrefixoSondaDeployF2 = "custodia-f2-";
 
     private readonly RabbitMqConnectionProvider _connectionProvider;
     private readonly IPublicadorComConfirmacao _publicador;
@@ -199,7 +199,7 @@ public sealed class ParkingDrenador
     private static bool EhSondaDeDeployF2(byte[] corpo)
     {
         var texto = Encoding.UTF8.GetString(corpo);
-        return !EhJson(texto) && texto.StartsWith(PrefixoSondaDeployF2, StringComparison.Ordinal);
+        return !EhJson(texto) && texto.StartsWith(RoteadorDeEventos.PrefixoSondaDeDeploy, StringComparison.Ordinal);
     }
 
     private static bool EhJson(string texto)

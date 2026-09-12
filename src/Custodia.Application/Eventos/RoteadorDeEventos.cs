@@ -9,7 +9,7 @@ public sealed class RoteadorDeEventos
     private const string RoutingKeySmoke = "prices.smoke";
     private const string PrefixoPrices = "prices.";
     private const string PrefixoCorpactions = "corpactions.";
-    private const string PrefixoSondaDeDeploy = "custodia-f2-";
+    public const string PrefixoSondaDeDeploy = "custodia-f2-";
 
     public DesfechoRoteamento Rotear(string routingKey, string corpo, IReadOnlyDictionary<string, object>? cabecalhos = null)
     {
