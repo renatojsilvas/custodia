@@ -1390,3 +1390,57 @@ afirmação como qualquer outra. Escrevi "são 15 CHECKs" numa pauta de auditori
 guardião conferiu e me corrigiu, mas um menos cuidadoso teria auditado contra 15, reportado "faltam
 três", e eu mandaria alguém consertar um schema correto. Ou você acabou de contar, ou escreve "conte
 e me diga".
+
+## O `guardiao-padroes` não tem `Bash` — ele audita o ESTADO FINAL, nunca o diff
+
+Descoberto no F4 da `custodia`, e vale para todo repo que use este kit: o subagente
+`guardiao-padroes` é declarado com `Read`, `Glob` e `Grep` — **sem `Bash`**. Ele não roda
+`git log`, nem `git diff`, nem `dotnet test`. Nas duas passadas ele contornou lendo
+`.git/logs/HEAD` (o reflog é texto puro), o que lhe deu a lista de commits e as mensagens, mas
+**não o diff linha a linha**.
+
+**A consequência é específica e não é "a auditoria vale menos":** ele confere que o estado final
+está conforme, e **não** consegue conferir que *cada commit corresponde ao que a mensagem dele
+anuncia*, nem que uma remoção de teste não derrubou cobertura. Foi exatamente o que ele declarou
+não poder verificar quando um executor disse ter removido "um teste duplicado e uma asserção
+vácua" — e quem confirmou (renomeados, cobertura preservada, dois testes a mais) foi o condutor,
+com um `git diff` de dez segundos.
+
+**Regra:** ao despachar o guardião sobre um delta, **liste os arquivos tocados no prompt** (ele
+não os descobre sozinho) e **assuma para si** as verificações que exigem `git`: o diff das
+remoções, a correspondência commit↔mensagem, e a execução da suíte. Se você quiser auditoria
+commit-a-commit, ela precisa de outro agente — ou de você.
+
+*O `revisor`, ao contrário, TEM `Bash`, e é por isso que ele muta, roda a suíte e reverte. Os dois
+não são intercambiáveis nem na forma de despachar.*
+
+## O condutor escreveu um numeral no prompt e o guardião o corrigiu — de novo
+
+No F4 escrevi "sete commits" numa pauta de auditoria quando eram **onze**. O guardião conferiu
+pelo reflog, auditou o conjunto certo, e registrou a divergência no relatório em vez de aceitar o
+número. É o **mesmo** defeito que a seção anterior deste arquivo já descreve ("são 15 CHECKs"
+quando eram 12), cometido pela mesma pessoa, **duas fases depois de escrever a regra**.
+
+O que isso acrescenta ao item anterior: a varredura por numeral que aquela seção prescreve estava
+apontada para os **arquivos que a rodada tocou** — e prompt de subagente não é arquivo, não entra
+no `grep`. **O numeral no prompt escapa da própria guarda que existe para ele.** Ou você conta na
+hora (`git log --oneline main..HEAD | wc -l`), ou escreve "conte e me diga" — nunca um número de
+memória sobre trabalho que ainda estava em curso quando você começou a escrever.
+
+## O "sim parcial" do publisher confirm: limite declarado do F4 da `custodia`
+
+Registrado porque foi **medido** e porque a próxima fase que mexer no consumidor vai reencontrá-lo.
+O roadmap manda conferir "de que estados o FAKE do broker é capaz", e o estado que faltava era o
+mais interessante: **a mensagem chegou ao broker e o confirm se perdeu** — diferente de "o broker
+rejeitou", que é o que um fake de `bool` sabe representar.
+
+Acrescentado esse estado ao fake e exercitado contra broker real, o comportamento **observado**
+(não o desejado) é: o `nack(requeue: true)` da original faz o consumidor reprocessar e republicar,
+então **duas cópias** do estorno órfão passam a circular no retry, independentes. **Ambas**
+estacionam como `estorno_orfao_expirado`, `custodia.retry` e a DLQ terminam em zero, e **nenhuma
+escreve no livro** (o dedupe por `UNIQUE (cliente_id, ref_externa)` tornaria a segunda um no-op
+mesmo que o original chegasse).
+
+**Isto é limite declarado, não defeito:** duplicata no *parking* sob perda de confirm após entrega
+real. O livro não é corrompido, que é o que importa. Quem drenar aquele motivo verá duas mensagens
+onde houve um fato — e agora sabe por quê.

@@ -1627,3 +1627,33 @@ presente, porque a primeira volta ainda tem a chave original vinda do produtor.
 original (não declarar `x-dead-letter-routing-key` e republicar com a chave certa) ou reescrevê-la
 (declarar `x-dead-letter-routing-key` na fila de retry). As duas funcionam; o que não funciona é
 não decidir e deixar o `""` do publish vazar para a volta. Ref.: `custodia`, F4, Decisão A.
+
+### 10.46. Quando a validação força as duas fontes a coincidirem, nenhum teste distingue qual foi usada — tire a fonte errada do escopo
+
+Há pontos do código que um teste **não pode** proteger, e reconhecê-los é o que separa "sem cobertura"
+de "sem cobertura possível". O caso canônico: uma **conferência** exige que o campo que chegou seja
+igual ao campo já gravado; depois dela, ler de um ou de outro dá **o mesmo número**. Um teste que
+tente provar "li do lugar certo" é verdadeiro sob as duas implementações — inclusive sob a errada.
+
+**Medido na `custodia`, F4.** O handler de estorno confere `instrumentoId`, `quantidade` e
+`valorFinanceiro` do evento contra o movimento original **antes** de montar o `ajuste`, e depois monta
+o ajuste a partir do **original**. Uma revisão adversarial mutou o código para montá-lo a partir do
+**evento** — a regressão exata que a regra escrita proíbe — e a suíte inteira passou, inclusive o teste
+escrito para provar aquele ponto. Não era asserção fraca: trocar a asserção não resolveria, porque
+`-original.QtdDelta` e `-sinal × evento.Quantidade` são o mesmo valor sempre que a conferência passou.
+
+**A saída não é um teste melhor: é tornar o defeito não escrevível.** Extraia a construção para uma
+função que **não tenha a fonte errada no escopo** — ela recebe a linha de origem e só o que o outro
+caminho legitimamente aporta. A mutação deixa de compilar, o que é mais forte que um teste vermelho:
+teste vermelho depende de alguém rodar a suíte, e `error CS0103` acontece em quem digitou.
+
+**Como reconhecer o caso antes de perder tempo escrevendo o teste que não protege:** pergunte se
+existe **algum estado alcançável** em que as duas fontes divergem. Se a resposta for não — porque uma
+guarda anterior as igualou —, nenhum teste distingue, e a discussão é de **estrutura**, não de
+cobertura. Se a resposta for sim, o teste é possível e você deve escrevê-lo com os valores que
+divergem: no mesmo incidente, a **outra** linha construída ali (a perna de caixa, que a conferência
+**não** cobre) era provável, e um teste com valores distintos já a protegia.
+
+**Corolário sobre relatório de revisão:** "mutei e a suíte passou" prova que **falta proteção**, não
+que o código está errado. Confira a direção antes de reescrever: ali o código estava certo e o que
+faltava era impedir que ficasse errado. Ref.: `custodia`, F4, `CriarAjusteDeReversao`.
