@@ -1129,6 +1129,8 @@ smoke_test_prices() {
   fetch_queue "$queue"
   local antes
   antes=$(read_messages_ready "$queue" "$MGMT_BODY")
+  local consumidores
+  consumidores=$(jqf "$MGMT_BODY" '.consumers // 0')
 
   # COM BACKLOG, ESTA PROVA E VACUA — pule, nao publique. MEDIDO pelo revisor
   # (B9): com uma fila de TERCEIRO tambem bindada em 'prices.#' e trafego real na
@@ -1153,6 +1155,37 @@ smoke_test_prices() {
 
   local marker="custodia-f2-smoke-$(date +%s)-$$"
   publish_probe "prices" "prices.smoke" "$marker" "$EXIT_SMOKE_FALHOU"
+
+  # COM CONSUMIDOR NO AR, O DELTA E INOBSERVAVEL — pule a MEDICAO, nunca o publish.
+  # MEDIDO em producao no primeiro deploy do F4 (2026-09-12): o consumidor reconhece
+  # a sonda pelo prefixo 'custodia-f2-', acka e segue (metrica
+  # custodia_consumo_mensagens_total{desfecho="ack_ignorado_sonda"} subiu para 5), e
+  # `messages_ready` volta a 0 antes de qualquer leitura nossa. O deploy reprovava com
+  # "o binding 'prices.#' nao esta roteando" — diagnostico FALSO: os bindings tinham
+  # acabado de passar na comparacao de CONJUNTO, e o que mudou foi o consumidor
+  # existir.
+  #
+  # A GUARDA DE BACKLOG ACIMA NAO COBRE ESTE CASO, e e por isso que esta e separada:
+  # ela pergunta "ha backlog?" (antes != 0), e com consumidor a resposta e SEMPRE 0,
+  # justamente porque ele drena na hora. A pergunta certa e "ha quem consuma?".
+  #
+  # O QUE NAO SE PERDE AO PULAR: o `publish_probe` acima ja conferiu `routed==true` na
+  # resposta do proprio publish — evidencia DIRETA de que um binding casou, e imune a
+  # consumo, a trafego de terceiro e a backlog. Somada a `verify_prices_bindings`
+  # (comparacao de CONJUNTO exato, estrita nas duas direcoes, ja rodada antes desta
+  # funcao), o roteamento continua provado. O delta em `messages_ready` era o membro
+  # MAIS FRACO dos tres, e e o unico que o consumidor torna inobservavel.
+  #
+  # E NAO HA LIXO A LIMPAR: quem consumiu a sonda foi o consumidor, que a descarta de
+  # proposito (ROADMAP F4, "prices.smoke com payload nao-JSON e sonda do deploy, nao
+  # evento"). O `maybe_take_probe_prices` abaixo so faz sentido sem consumidor.
+  if [ "$consumidores" != "0" ]; then
+    echo "    prova de fumaca (DELTA) PULADA de proposito: '${queue}' tem ${consumidores}"
+    echo "      consumidor(es) no ar, entao messages_ready volta a 0 antes de qualquer"
+    echo "      leitura. O roteamento FOI provado nesta mesma execucao: 'routed=true' no"
+    echo "      publish acima, mais a comparacao de CONJUNTO em verify_prices_bindings."
+    return 0
+  fi
 
   # CRESCIMENTO (>= antes+1), nao igualdade. A decisao se justifica pelo FUTURO, nao
   # pelo passado: o operacoes esta no ar desde 2026-09-06 e pode publicar
