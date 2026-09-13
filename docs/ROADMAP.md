@@ -1851,7 +1851,7 @@ para ela.
   livro** (`+Y −t −f`), não um número calculado no momento da escrita: divergência entre "o
   tributo lançado" e "o valor a receber" deixa de ser representável. Consequência de
   brinde: se a linha `ir:` faltar (a janela F4→F5), o direito a receber fica **grande demais**
-  e a guarda permanente do F5 (`resgate sem linha ir:<tradeId>`) aponta para o buraco.
+  e a guarda permanente do F5 (`resgate sem linha aliq:<tradeId>`) aponta para o buraco.
   *Rejeitado:* `a_liquidar` **líquido** (`+(Y−t−f)`) com `ir_retido`/`iof` gravados no
   instrumento do título com `qtd_delta = 0` — as linhas de tributo não teriam efeito em
   projeção nenhuma (viram documentação pura), o valor a receber passaria a ser um número
@@ -5057,8 +5057,19 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   - **Arredondamento sempre no financeiro (2 casas), nunca na quantidade** (§11).
 
   **A janela F4→F5 fecha com GUARDA PERMANENTE, não com script de uma vez — e ela tem DUAS
-  metades.** (i) resgate sem linha `ir:<tradeId>`; (ii) `ajuste` sobre um resgate sem o
-  conjunto `est:` correspondente. As duas consultas viram **métrica e alerta permanentes**,
+  metades.** (i) resgate sem linha **`aliq:<tradeId>`**; (ii) `ajuste` sobre um resgate sem o
+  conjunto `est:` correspondente — **e "correspondente" é literal: o conjunto esperado é DERIVADO
+  das linhas que aquele fato realmente tem**, nunca um conjunto fixo de cinco (sem `iof:` não há
+  `est:iof:`; sem liquidação não há as duas `est:liq:`).
+  *A metade (i) dizia `ir:<tradeId>` e isso ficou ERRADO quando a base passou a ser por lote
+  (2026-09-12): um resgate com **prejuízo em todos os lotes** legitimamente não tem `ir:` nem
+  `iof:` — Σ das bases positivas = 0, e não se grava zero —, então a guarda literal alertaria para
+  sempre em toda venda com prejuízo. O discriminador é **`aliq:`, que é gravado SEMPRE**, com ou
+  sem tributo, porque `a_liquidar` entra BRUTO. Corrigido em 2026-09-13, antes de a guarda existir
+  em código. **A forma do defeito é geral e vale para as outras três:** uma guarda de AUSÊNCIA
+  desenhada quando a linha era obrigatória vira geradora de falso positivo no dia em que a linha
+  passa a ser condicional — e o alerta que cria ruído permanente é pior que guarda nenhuma, porque
+  ensina a ignorá-lo.* As duas consultas viram **métrica e alerta permanentes**,
   porque o que elas detectam pode reaparecer por um bug do handler depois. Some-se a
   terceira, que é do job: `a_liquidar` vencida sem `liq:<fato>:brl`. O backfill é `INSERT`
   (append), nunca `UPDATE`, e é idempotente pela `ref_externa` própria de cada derivado.
@@ -5412,7 +5423,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   que os encontram viram GUARDA PERMANENTE com metrica e alerta — nao script de uma vez: o que
   elas detectam pode reaparecer por bug do handler depois.
   SAO QUATRO GUARDAS PERMANENTES, e elas ficam enumeradas aqui porque contar guarda e o que o
-  teste faz: (1) "resgate sem linha ir:<tradeId>"; (2) "ajuste sobre resgate sem conjunto
+  teste faz: (1) "resgate efetivo sem linha aliq:<tradeId>" (NAO "sem ir:" — venda com prejuizo
+  em todos os lotes nao tem ir: nem iof: legitimamente, e aliq: e gravado SEMPRE); (2) "ajuste
+  sobre resgate sem conjunto
   est:"; (3) "a_liquidar vencida sem liq:<fato>:brl" (a MESMA consulta do job, decisao 2);
   (4) "tributo divergente do re-derivado da fila FIFO" (acrescentada em 2026-09-12 com a
   decisao do prazo — veja COMPRA RETROATIVA acima). A (4) e a UNICA que nao e consulta de
