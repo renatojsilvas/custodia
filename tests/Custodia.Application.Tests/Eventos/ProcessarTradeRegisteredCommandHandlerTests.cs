@@ -69,7 +69,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         var handler = new ProcessarTradeRegisteredCommandHandler(
             movimentoRead, movimentoWrite, movimentoTravamento, posicaoRead, posicaoWrite,
-            aplicadorIncrementalDePosicao, unitOfWork, metrics, new FakePontoDeSuspensaoAposTravamento());
+            aplicadorIncrementalDePosicao, unitOfWork, metrics, new FakePausaEntreLerEGravar());
 
         return (handler, movimentoWrite, posicaoWrite, unitOfWork, metrics, movimentoTravamento);
     }

@@ -37,7 +37,7 @@ public sealed class EstornoDeResgateIntegrationTests(InfrastructurePostgresFixtu
             new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             db,
             new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
-            new PontoDeSuspensaoAposTravamentoInerte());
+            new PausaEntreLerEGravarInerte());
 
     private LiquidarResgatesVencidosCommandHandler CriarHandlerDeLiquidacao(AppDbContext db) =>
         new(
@@ -50,9 +50,9 @@ public sealed class EstornoDeResgateIntegrationTests(InfrastructurePostgresFixtu
             db,
             new ProximoDiaUtilService(new CalendarioDiasUteisReadRepository(CriarDataSource())),
             new CalendarioDiasUteisReadRepository(CriarDataSource()),
-            new FakeRecalculoEnfileiradorPort(),
+            new FakeFilaDeRecalculo(),
             new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
-            new PontoDeSuspensaoAposTravamentoInerte(),
+            new PausaEntreLerEGravarInerte(),
             new ConfigurationBuilder().Build(),
             TimeProvider.System);
 

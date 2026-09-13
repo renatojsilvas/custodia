@@ -33,7 +33,7 @@ public sealed class RepararResgatesAntigosCommandHandlerIntegrationTests(Infrast
     private RepararResgatesAntigosCommandHandler CriarHandlerDeBackfill(
         AppDbContext dbContext,
         IBusinessMetrics? metrics = null,
-        IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null) =>
+        IPausaEntreLerEGravar? pontoDeSuspensao = null) =>
         new(
             new RepararResgatesAntigosReadRepository(CriarDataSource()),
             new MovimentoReadRepository(CriarDataSource()),
@@ -43,7 +43,7 @@ public sealed class RepararResgatesAntigosCommandHandlerIntegrationTests(Infrast
             new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             dbContext,
             metrics ?? new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
-            pontoDeSuspensao ?? new PontoDeSuspensaoAposTravamentoInerte(),
+            pontoDeSuspensao ?? new PausaEntreLerEGravarInerte(),
             TimeProvider.System);
 
     private ProcessarTradeRegisteredCommandHandler CriarHandlerDeEventos(AppDbContext dbContext) =>
@@ -56,7 +56,7 @@ public sealed class RepararResgatesAntigosCommandHandlerIntegrationTests(Infrast
             new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             dbContext,
             new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
-            new PontoDeSuspensaoAposTravamentoInerte());
+            new PausaEntreLerEGravarInerte());
 
     private LiquidarResgatesVencidosCommandHandler CriarHandlerDeLiquidacao(AppDbContext dbContext) =>
         new(
@@ -69,14 +69,14 @@ public sealed class RepararResgatesAntigosCommandHandlerIntegrationTests(Infrast
             dbContext,
             new ProximoDiaUtilService(new CalendarioDiasUteisReadRepository(CriarDataSource())),
             new CalendarioDiasUteisReadRepository(CriarDataSource()),
-            new FakeRecalculoEnfileiradorPort(),
+            new FakeFilaDeRecalculo(),
             new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
-            new PontoDeSuspensaoAposTravamentoInerte(),
+            new PausaEntreLerEGravarInerte(),
             new ConfigurationBuilder().Build(),
             TimeProvider.System);
 
     private async Task<Result<RepararResgatesAntigosResultado>> RodarBackfillAsync(
-        IBusinessMetrics? metrics = null, IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null)
+        IBusinessMetrics? metrics = null, IPausaEntreLerEGravar? pontoDeSuspensao = null)
     {
         await using var db = fixture.CriarDbContext();
         return await CriarHandlerDeBackfill(db, metrics, pontoDeSuspensao)
@@ -283,7 +283,7 @@ public sealed class RepararResgatesAntigosCommandHandlerIntegrationTests(Infrast
         var candidatosDeReversaoNoInstanteDaSuspensao = new List<AjusteDeResgateSemReversao>();
         var estornoFoiEscriturado = false;
 
-        var pontoDeSuspensao = new FuncPontoDeSuspensaoAposTravamento(async (_, refExterna, ct) =>
+        var pontoDeSuspensao = new FuncPausaEntreLerEGravar(async (_, refExterna, ct) =>
         {
             if (refExterna != "aliq:op-resgate-corrida" || estornoFoiEscriturado)
             {

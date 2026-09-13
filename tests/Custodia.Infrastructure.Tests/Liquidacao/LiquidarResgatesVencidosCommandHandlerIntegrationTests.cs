@@ -39,8 +39,8 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
 
     private LiquidarResgatesVencidosCommandHandler CriarHandlerDeLiquidacao(
         AppDbContext dbContext,
-        IRecalculoEnfileiradorPort? recalculo = null,
-        IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null,
+        IFilaDeRecalculo? recalculo = null,
+        IPausaEntreLerEGravar? pontoDeSuspensao = null,
         IBusinessMetrics? businessMetrics = null,
         long? teto = null) =>
         new(
@@ -53,14 +53,14 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
             dbContext,
             new ProximoDiaUtilService(new CalendarioDiasUteisReadRepository(CriarDataSource())),
             new CalendarioDiasUteisReadRepository(CriarDataSource()),
-            recalculo ?? new FakeRecalculoEnfileiradorPort(),
+            recalculo ?? new FakeFilaDeRecalculo(),
             businessMetrics ?? new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
-            pontoDeSuspensao ?? new PontoDeSuspensaoAposTravamentoInerte(),
+            pontoDeSuspensao ?? new PausaEntreLerEGravarInerte(),
             CriarConfiguracao(teto),
             TimeProvider.System);
 
     private ProcessarTradeRegisteredCommandHandler CriarHandlerDeEventos(
-        AppDbContext dbContext, IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null) =>
+        AppDbContext dbContext, IPausaEntreLerEGravar? pontoDeSuspensao = null) =>
         new(
             new MovimentoReadRepository(CriarDataSource()),
             new MovimentoWriteRepository(dbContext),
@@ -70,7 +70,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
             new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             dbContext,
             new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
-            pontoDeSuspensao ?? new PontoDeSuspensaoAposTravamentoInerte());
+            pontoDeSuspensao ?? new PausaEntreLerEGravarInerte());
 
     private async Task<Movimento> InserirAsync(
         string clienteId, string instrumentoId, TipoMovimento tipo, DateOnly dataEvento, string refExterna,
@@ -164,7 +164,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
         var tradeId = $"op-boundary-{dataEventoTexto}";
         await CriarFatoAsync(clienteId, instrumentoId, tradeId, dataEvento, 10m, 1000m);
 
-        var recalculo = new FakeRecalculoEnfileiradorPort();
+        var recalculo = new FakeFilaDeRecalculo();
         await using var db = fixture.CriarDbContext();
         var resultado = await CriarHandlerDeLiquidacao(db, recalculo: recalculo).Handle(
             new LiquidarResgatesVencidosCommand(), CancellationToken.None);
@@ -276,7 +276,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
         var podeContinuarEstorno = new TaskCompletionSource();
 
         await using var dbEstorno = fixture.CriarDbContext();
-        var pontoDeSuspensaoDoEstorno = new FuncPontoDeSuspensaoAposTravamento(async (_, refExterna, ct) =>
+        var pontoDeSuspensaoDoEstorno = new FuncPausaEntreLerEGravar(async (_, refExterna, ct) =>
         {
             if (refExterna != $"aliq:{tradeId}")
             {
@@ -327,7 +327,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
         var podeContinuarJob = new TaskCompletionSource();
 
         await using var dbJob = fixture.CriarDbContext();
-        var pontoDeSuspensaoDoJob = new FuncPontoDeSuspensaoAposTravamento(async (_, refExterna, ct) =>
+        var pontoDeSuspensaoDoJob = new FuncPausaEntreLerEGravar(async (_, refExterna, ct) =>
         {
             if (refExterna != $"aliq:{tradeId}")
             {

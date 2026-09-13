@@ -4,7 +4,7 @@ namespace Custodia.Domain.Posicoes;
 
 public static class LivroSemEstornos
 {
-    public static IReadOnlyList<Movimento> MovimentosEfetivos(IEnumerable<Movimento> movimentos, CortePosicional? corte = null)
+    public static IReadOnlyList<Movimento> MovimentosEfetivos(IEnumerable<Movimento> movimentos, MomentoDoLivro? corte = null)
     {
         ArgumentNullException.ThrowIfNull(movimentos);
 

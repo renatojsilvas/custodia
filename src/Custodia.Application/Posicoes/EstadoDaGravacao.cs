@@ -3,7 +3,7 @@ using Custodia.Domain.Posicoes;
 
 namespace Custodia.Application.Posicoes;
 
-public sealed class LoteDeAplicacaoDePosicao
+public sealed class EstadoDaGravacao
 {
     public Dictionary<(string ClienteId, string InstrumentoId), PosicaoTresColunas> EstadosJaAplicados { get; } = [];
 

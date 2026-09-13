@@ -19,9 +19,9 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
     IUnitOfWork unitOfWork,
     IProximoDiaUtilService proximoDiaUtilService,
     ICalendarioDiasUteisReadRepository calendarioDiasUteisReadRepository,
-    IRecalculoEnfileiradorPort recalculoEnfileiradorPort,
+    IFilaDeRecalculo filaDeRecalculo,
     IBusinessMetrics businessMetrics,
-    IPontoDeSuspensaoAposTravamento pontoDeSuspensaoAposTravamento,
+    IPausaEntreLerEGravar pausaEntreLerEGravar,
     IConfiguration configuration,
     TimeProvider timeProvider)
     : IRequestHandler<LiquidarResgatesVencidosCommand, Result<ResultadoLiquidacaoDeResgates>>
@@ -127,7 +127,7 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
 
         var aliq = travamentoResult.Value.Linha!;
 
-        await pontoDeSuspensaoAposTravamento.AposTravarAsync(aliq.ClienteId, aliq.RefExterna, ct);
+        await pausaEntreLerEGravar.AposLerAntesDeGravarAsync(aliq.ClienteId, aliq.RefExterna, ct);
 
         var movimentosCaixaALiquidarResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
             candidata.ClienteId, InstrumentosCaixa.ALiquidar, ct);
@@ -251,9 +251,9 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
 
         if (dataLiquidacao < hoje)
         {
-            await recalculoEnfileiradorPort.EnfileirarAsync(
+            await filaDeRecalculo.EnfileirarAsync(
                 candidata.ClienteId, InstrumentosCaixa.ALiquidar, dataLiquidacao, ct);
-            await recalculoEnfileiradorPort.EnfileirarAsync(
+            await filaDeRecalculo.EnfileirarAsync(
                 candidata.ClienteId, InstrumentosCaixa.Brl, dataLiquidacao, ct);
         }
 
@@ -262,7 +262,7 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
 
     private async Task<Result> GravarPernasDeLiquidacaoAsync(Movimento pernaAliq, Movimento pernaBrl, CancellationToken ct)
     {
-        var lote = new LoteDeAplicacaoDePosicao();
+        var lote = new EstadoDaGravacao();
 
         foreach (var perna in new[] { pernaAliq, pernaBrl })
         {

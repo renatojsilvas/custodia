@@ -71,7 +71,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
         FakeUnitOfWork UnitOfWork,
         FakeBusinessMetrics Metrics,
         FakeMovimentoTravamentoRepository Travamento,
-        FakeRecalculoEnfileiradorPort Recalculo) CriarHandler(
+        FakeFilaDeRecalculo Recalculo) CriarHandler(
         IReadOnlyList<AReceberVencido> candidatas,
         IReadOnlyList<Movimento> movimentosExistentes,
         DateOnly hoje,
@@ -91,7 +91,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
             horizonte: () => Result<HorizonteCalendarioConsulta>.Success(new HorizonteCalendarioConsulta(new DateOnly(2030, 12, 31), hoje)));
         var proximoDiaUtilService = new ProximoDiaUtilService(calendarioRead);
         var aplicadorIncrementalDePosicao = new AplicadorIncrementalDePosicao(movimentoRead, posicaoRead);
-        var recalculo = new FakeRecalculoEnfileiradorPort();
+        var recalculo = new FakeFilaDeRecalculo();
         var metrics = new FakeBusinessMetrics();
         var configuration = CriarConfiguracao(teto);
         var timeProvider = new FixedTimeProvider(agora ?? new DateTimeOffset(hoje.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
@@ -108,7 +108,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
             calendarioRead,
             recalculo,
             metrics,
-            new FakePontoDeSuspensaoAposTravamento(),
+            new FakePausaEntreLerEGravar(),
             configuration,
             timeProvider);
 

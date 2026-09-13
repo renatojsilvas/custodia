@@ -6,7 +6,7 @@ public static class DobraPosicao
 {
     private const decimal PrecoFixoPorDefinicao = 1.000000m;
 
-    public static PosicaoTresColunas Dobrar(IEnumerable<Movimento> movimentos, CortePosicional? corte = null)
+    public static PosicaoTresColunas Dobrar(IEnumerable<Movimento> movimentos, MomentoDoLivro? corte = null)
     {
         var efetivos = LivroSemEstornos.MovimentosEfetivos(movimentos, corte);
 

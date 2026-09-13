@@ -5,7 +5,7 @@ namespace Custodia.Infrastructure.Tests.Liquidacao;
 
 internal sealed record ChamadaDeRecalculo(string ClienteId, string InstrumentoId, DateOnly Desde);
 
-internal sealed class FakeRecalculoEnfileiradorPort : IRecalculoEnfileiradorPort
+internal sealed class FakeFilaDeRecalculo : IFilaDeRecalculo
 {
     public ConcurrentBag<ChamadaDeRecalculo> Chamadas { get; } = [];
 

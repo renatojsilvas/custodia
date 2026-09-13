@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Custodia.Infrastructure.Liquidacao;
 
-public sealed class RecalculoEnfileiradorNuloPort(ILogger<RecalculoEnfileiradorNuloPort> logger) : IRecalculoEnfileiradorPort
+public sealed class FilaDeRecalculoInerte(ILogger<FilaDeRecalculoInerte> logger) : IFilaDeRecalculo
 {
     public Task EnfileirarAsync(string clienteId, string instrumentoId, DateOnly desde, CancellationToken ct)
     {

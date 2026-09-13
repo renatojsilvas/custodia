@@ -6,5 +6,5 @@ namespace Custodia.Application.Posicoes;
 
 public interface IAplicadorIncrementalDePosicao
 {
-    Task<Result<PosicaoTresColunas>> AplicarAsync(LoteDeAplicacaoDePosicao lote, Movimento movimento, CancellationToken ct);
+    Task<Result<PosicaoTresColunas>> AplicarAsync(EstadoDaGravacao lote, Movimento movimento, CancellationToken ct);
 }

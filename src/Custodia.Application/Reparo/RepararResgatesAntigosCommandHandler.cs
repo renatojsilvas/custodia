@@ -6,6 +6,8 @@ using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 using Custodia.Domain.Tributos;
 
+using Custodia.Application.Liquidacao;
+
 namespace Custodia.Application.Reparo;
 
 public sealed class RepararResgatesAntigosCommandHandler(
@@ -17,7 +19,7 @@ public sealed class RepararResgatesAntigosCommandHandler(
     IAplicadorIncrementalDePosicao aplicadorIncrementalDePosicao,
     IUnitOfWork unitOfWork,
     IBusinessMetrics businessMetrics,
-    IPontoDeSuspensaoAposTravamento pontoDeSuspensaoAposTravamento,
+    IPausaEntreLerEGravar pausaEntreLerEGravar,
     TimeProvider timeProvider)
     : IRequestHandler<RepararResgatesAntigosCommand, Result<RepararResgatesAntigosResultado>>
 {
@@ -168,7 +170,7 @@ public sealed class RepararResgatesAntigosCommandHandler(
                 candidato.ClienteId, candidato.InstrumentoId, consumo.QuantidadeDescoberta);
         }
 
-        await pontoDeSuspensaoAposTravamento.AposTravarAsync(candidato.ClienteId, refAliq, ct);
+        await pausaEntreLerEGravar.AposLerAntesDeGravarAsync(candidato.ClienteId, refAliq, ct);
 
         var gravarResult = await GravarDerivadosAsync(pendencias, ct);
 
@@ -323,7 +325,7 @@ public sealed class RepararResgatesAntigosCommandHandler(
 
     private async Task<Result> GravarDerivadosAsync(IReadOnlyList<Movimento> movimentos, CancellationToken ct)
     {
-        var lote = new LoteDeAplicacaoDePosicao();
+        var lote = new EstadoDaGravacao();
 
         foreach (var movimento in movimentos)
         {

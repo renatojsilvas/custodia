@@ -11,7 +11,7 @@ public sealed class AplicadorIncrementalDePosicao(
     : IAplicadorIncrementalDePosicao
 {
     public async Task<Result<PosicaoTresColunas>> AplicarAsync(
-        LoteDeAplicacaoDePosicao lote, Movimento movimento, CancellationToken ct)
+        EstadoDaGravacao lote, Movimento movimento, CancellationToken ct)
     {
         var chave = (movimento.ClienteId, movimento.InstrumentoId);
 
@@ -40,7 +40,7 @@ public sealed class AplicadorIncrementalDePosicao(
     }
 
     private async Task<Result<PosicaoTresColunas>> RedobrarComNovosDoLoteAsync(
-        LoteDeAplicacaoDePosicao lote,
+        EstadoDaGravacao lote,
         (string ClienteId, string InstrumentoId) chave,
         Movimento movimento,
         CancellationToken ct)

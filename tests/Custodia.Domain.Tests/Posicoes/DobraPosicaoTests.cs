@@ -327,7 +327,7 @@ public sealed class DobraPosicaoTests
         var m2 = MovimentoTestExtensions.MovimentoValido(
             2, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(2), Instante(2), 5m, 500m, "trade-2");
 
-        var resultadoComCorte = DobraPosicao.Dobrar([m1, m2], corte: new CortePosicional(Dia(1), DateTimeOffset.MaxValue));
+        var resultadoComCorte = DobraPosicao.Dobrar([m1, m2], corte: new MomentoDoLivro(Dia(1), DateTimeOffset.MaxValue));
         var resultadoSemCorte = DobraPosicao.Dobrar([m1, m2]);
 
         Assert.Equal(new PosicaoTresColunas(10m, 1000m, 100m), resultadoComCorte);

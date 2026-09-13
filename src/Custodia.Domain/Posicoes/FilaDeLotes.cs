@@ -4,7 +4,7 @@ namespace Custodia.Domain.Posicoes;
 
 public static class FilaDeLotes
 {
-    public static IReadOnlyList<Lote> Reconstruir(IEnumerable<Movimento> movimentos, CortePosicional corte)
+    public static IReadOnlyList<Lote> Reconstruir(IEnumerable<Movimento> movimentos, MomentoDoLivro corte)
     {
         var efetivos = LivroSemEstornos.MovimentosEfetivos(movimentos, corte);
 
@@ -38,7 +38,7 @@ public static class FilaDeLotes
     }
 
     public static ConsumoDeFila ConsumirParaResgate(
-        IReadOnlyList<Lote> filaAntesDoResgate, decimal quantidadeResgate, CortePosicional corte)
+        IReadOnlyList<Lote> filaAntesDoResgate, decimal quantidadeResgate, MomentoDoLivro corte)
     {
         ArgumentNullException.ThrowIfNull(filaAntesDoResgate);
 

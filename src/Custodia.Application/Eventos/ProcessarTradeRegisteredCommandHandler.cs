@@ -8,6 +8,8 @@ using Custodia.Domain.Movimentos;
 using Custodia.Domain.Posicoes;
 using Custodia.Domain.Tributos;
 
+using Custodia.Application.Liquidacao;
+
 namespace Custodia.Application.Eventos;
 
 public sealed class ProcessarTradeRegisteredCommandHandler(
@@ -19,7 +21,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
     IAplicadorIncrementalDePosicao aplicadorIncrementalDePosicao,
     IUnitOfWork unitOfWork,
     IBusinessMetrics businessMetrics,
-    IPontoDeSuspensaoAposTravamento pontoDeSuspensaoAposTravamento)
+    IPausaEntreLerEGravar pausaEntreLerEGravar)
     : IRequestHandler<ProcessarTradeRegisteredCommand, Result<ResultadoTradeRegistered>>
 {
     public async Task<Result<ResultadoTradeRegistered>> Handle(
@@ -314,7 +316,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
         var aliq = travamentoResult.Value.Linha!;
 
-        await pontoDeSuspensaoAposTravamento.AposTravarAsync(aliq.ClienteId, aliq.RefExterna, ct);
+        await pausaEntreLerEGravar.AposLerAntesDeGravarAsync(aliq.ClienteId, aliq.RefExterna, ct);
 
         var ajusteAliqResult = AjusteDeReversao.Criar(
             aliq, evento.ClienteId, evento.RegistradoEm, $"est:aliq:{evento.TradeId}");
@@ -373,7 +375,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
     private async Task<Result<ResultadoTradeRegistered>> GravarTudoAsync(
         IReadOnlyList<Movimento> movimentos, CancellationToken ct)
     {
-        var lote = new LoteDeAplicacaoDePosicao();
+        var lote = new EstadoDaGravacao();
 
         foreach (var movimento in movimentos)
         {

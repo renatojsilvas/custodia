@@ -14,12 +14,12 @@ public sealed class FilaDeLotesTests
     private static DateTimeOffset Instante(int offset) =>
         new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(offset);
 
-    private static CortePosicional CorteDoResgate(int diaOffset) => new(Dia(diaOffset), Instante(diaOffset));
+    private static MomentoDoLivro CorteDoResgate(int diaOffset) => new(Dia(diaOffset), Instante(diaOffset));
 
     [Fact]
     public void Reconstruir_SemMovimentos_RetornaFilaVazia()
     {
-        var fila = FilaDeLotes.Reconstruir([], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([], MomentoDoLivro.Infinito);
 
         Assert.Empty(fila);
     }
@@ -30,7 +30,7 @@ public sealed class FilaDeLotesTests
         var compra = MovimentoTestExtensions.MovimentoValido(
             1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(1), Instante(1), 10m, 1000m, "trade-1");
 
-        var fila = FilaDeLotes.Reconstruir([compra], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([compra], MomentoDoLivro.Infinito);
 
         var lote = Assert.Single(fila);
         Assert.Equal(10m, lote.Quantidade);
@@ -44,7 +44,7 @@ public sealed class FilaDeLotesTests
         var aporte = MovimentoTestExtensions.MovimentoValido(
             1, ClienteId, InstrumentoId, TipoMovimento.Aporte, Dia(1), Instante(1), 10m, 1000m, "trade-1");
 
-        var fila = FilaDeLotes.Reconstruir([aporte], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([aporte], MomentoDoLivro.Infinito);
 
         var lote = Assert.Single(fila);
         Assert.Equal(10m, lote.Quantidade);
@@ -59,7 +59,7 @@ public sealed class FilaDeLotesTests
         var venda = MovimentoTestExtensions.MovimentoValido(
             2, ClienteId, InstrumentoId, TipoMovimento.Venda, Dia(2), Instante(2), -4m, 600m, "trade-2");
 
-        var fila = FilaDeLotes.Reconstruir([compra, venda], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([compra, venda], MomentoDoLivro.Infinito);
 
         var lote = Assert.Single(fila);
         Assert.Equal(6m, lote.Quantidade);
@@ -77,7 +77,7 @@ public sealed class FilaDeLotesTests
         var venda = MovimentoTestExtensions.MovimentoValido(
             3, ClienteId, InstrumentoId, TipoMovimento.Venda, Dia(3), Instante(3), -12m, 1500m, "trade-3");
 
-        var fila = FilaDeLotes.Reconstruir([compra1, compra2, venda], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([compra1, compra2, venda], MomentoDoLivro.Infinito);
 
         var loteRestante = Assert.Single(fila);
         Assert.Equal(3m, loteRestante.Quantidade);
@@ -93,7 +93,7 @@ public sealed class FilaDeLotesTests
         var estornoDaCompra = MovimentoTestExtensions.MovimentoValido(
             2, ClienteId, InstrumentoId, TipoMovimento.Ajuste, Dia(1), Instante(2), -10m, -1000m, "estorno-trade-1", 1);
 
-        var fila = FilaDeLotes.Reconstruir([compra, estornoDaCompra], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([compra, estornoDaCompra], MomentoDoLivro.Infinito);
 
         Assert.Empty(fila);
     }
@@ -108,7 +108,7 @@ public sealed class FilaDeLotesTests
         var estornoDaVenda = MovimentoTestExtensions.MovimentoValido(
             3, ClienteId, InstrumentoId, TipoMovimento.Ajuste, Dia(5), Instante(3), 4m, -600m, "estorno-trade-2", 2);
 
-        var fila = FilaDeLotes.Reconstruir([compra, venda, estornoDaVenda], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([compra, venda, estornoDaVenda], MomentoDoLivro.Infinito);
 
         var lote = Assert.Single(fila);
         Assert.Equal(10m, lote.Quantidade);
@@ -122,7 +122,7 @@ public sealed class FilaDeLotesTests
         var compraFinanciadaPorSaldo = MovimentoTestExtensions.MovimentoValido(
             1, ClienteId, InstrumentosCaixa.Brl, TipoMovimento.Compra, Dia(1), Instante(1), 500m, 500m, "trade-1:brl-invertido-para-teste");
 
-        var fila = FilaDeLotes.Reconstruir([compraFinanciadaPorSaldo], CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir([compraFinanciadaPorSaldo], MomentoDoLivro.Infinito);
 
         Assert.Empty(fila);
     }
@@ -135,7 +135,7 @@ public sealed class FilaDeLotesTests
         var estornoDaCompra = MovimentoTestExtensions.MovimentoValido(
             2, ClienteId, InstrumentoId, TipoMovimento.Ajuste, Dia(5), Instante(10), -10m, -1000m, "estorno-trade-1", 1);
 
-        var corteEntreOAlvoEOReversor = new CortePosicional(Dia(5), Instante(5));
+        var corteEntreOAlvoEOReversor = new MomentoDoLivro(Dia(5), Instante(5));
 
         var fila = FilaDeLotes.Reconstruir([compra, estornoDaCompra], corteEntreOAlvoEOReversor);
 
@@ -146,7 +146,7 @@ public sealed class FilaDeLotesTests
     public void Reconstruir_ComCompraNoMesmoDataEventoDoCorteRegistradaDepoisDoInstanteDoCorte_LoteNaoEntraNaFila()
     {
         var dataEventoDoCorte = Dia(5);
-        var corte = new CortePosicional(dataEventoDoCorte, Instante(5));
+        var corte = new MomentoDoLivro(dataEventoDoCorte, Instante(5));
         var compraRegistradaDepoisDoCorte = MovimentoTestExtensions.MovimentoValido(
             1, ClienteId, InstrumentoId, TipoMovimento.Compra, dataEventoDoCorte, Instante(6), 10m, 1000m, "trade-1");
 
@@ -160,7 +160,7 @@ public sealed class FilaDeLotesTests
     {
         var dataEventoDoCorte = Dia(5);
         var instanteDoCorte = Instante(5);
-        var corte = new CortePosicional(dataEventoDoCorte, instanteDoCorte);
+        var corte = new MomentoDoLivro(dataEventoDoCorte, instanteDoCorte);
         var compraRegistradaNoInstanteExatoDoCorte = MovimentoTestExtensions.MovimentoValido(
             1, ClienteId, InstrumentoId, TipoMovimento.Compra, dataEventoDoCorte, instanteDoCorte, 10m, 1000m, "trade-1");
 
@@ -174,7 +174,7 @@ public sealed class FilaDeLotesTests
     public void Reconstruir_ComCompraNoMesmoDataEventoDoCorteRegistradaAntesDoInstanteDoCorte_LoteEntraNaFila()
     {
         var dataEventoDoCorte = Dia(5);
-        var corte = new CortePosicional(dataEventoDoCorte, Instante(5));
+        var corte = new MomentoDoLivro(dataEventoDoCorte, Instante(5));
         var compraRegistradaAntesDoCorte = MovimentoTestExtensions.MovimentoValido(
             1, ClienteId, InstrumentoId, TipoMovimento.Compra, dataEventoDoCorte, Instante(4), 10m, 1000m, "trade-1");
 
@@ -275,7 +275,7 @@ public sealed class FilaDeLotesTests
 
         var movimentos = new List<Movimento> { compra1, compra2, venda };
 
-        var fila = FilaDeLotes.Reconstruir(movimentos, CortePosicional.Infinito);
+        var fila = FilaDeLotes.Reconstruir(movimentos, MomentoDoLivro.Infinito);
         var dobra = DobraPosicao.Dobrar(movimentos);
 
         Assert.Equal(dobra.Quantidade, fila.Sum(lote => lote.Quantidade));
@@ -295,7 +295,7 @@ public sealed class FilaDeLotesTests
             4, ClienteId, InstrumentoId, TipoMovimento.Venda, Dia(10), Instante(4), -3m, 500m, "trade-4");
 
         var movimentos = new List<Movimento> { compra1, compra2, vendaDentroDoCorte, vendaForaDoCorte };
-        var corte = new CortePosicional(Dia(3), Instante(3));
+        var corte = new MomentoDoLivro(Dia(3), Instante(3));
 
         var fila = FilaDeLotes.Reconstruir(movimentos, corte);
         var dobra = DobraPosicao.Dobrar(movimentos, corte);

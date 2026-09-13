@@ -52,8 +52,8 @@ public static class DependencyInjection
         services.AddScoped<IAReceberVencidoReadRepository, AReceberVencidoReadRepository>();
         services.AddScoped<IRepararResgatesAntigosReadRepository, RepararResgatesAntigosReadRepository>();
         services.AddScoped<IConciliacaoDeResgatesReadRepository, ConciliacaoDeResgatesReadRepository>();
-        services.AddSingleton<IRecalculoEnfileiradorPort, RecalculoEnfileiradorNuloPort>();
-        services.AddSingleton<IPontoDeSuspensaoAposTravamento, PontoDeSuspensaoAposTravamentoInerte>();
+        services.AddSingleton<IFilaDeRecalculo, FilaDeRecalculoInerte>();
+        services.AddSingleton<IPausaEntreLerEGravar, PausaEntreLerEGravarInerte>();
         services.AddSingleton<RoteadorDeEventos>();
         services.AddSingleton<RabbitMqConnectionProvider>();
         services.AddSingleton<IPublicadorComConfirmacao, RabbitMqPublicadorComConfirmacao>();

@@ -12,7 +12,7 @@ public static class RecalculoDeTributos
         ArgumentNullException.ThrowIfNull(movimentosDaChave);
         ArgumentNullException.ThrowIfNull(resgate);
 
-        var corte = new CortePosicional(resgate.DataEvento, resgate.RegistradoEm);
+        var corte = new MomentoDoLivro(resgate.DataEvento, resgate.RegistradoEm);
         var movimentosAntesDoResgate = movimentosDaChave.Where(m => m.Id != resgate.Id).ToList();
         var fila = FilaDeLotes.Reconstruir(movimentosAntesDoResgate, corte);
         var consumo = FilaDeLotes.ConsumirParaResgate(fila, Math.Abs(resgate.QtdDelta), corte);
