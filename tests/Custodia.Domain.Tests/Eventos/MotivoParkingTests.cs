@@ -19,12 +19,13 @@ public sealed class MotivoParkingTests
         "origem_recurso_ausente",
         "origem_recurso_invalida",
         "identificador_com_espaco_na_borda",
+        "falha_inesperada_no_processamento",
     ];
 
     [Fact]
-    public void All_TemExatamenteTrezeValores()
+    public void All_TemExatamenteCatorzeValores()
     {
-        Assert.Equal(13, MotivoParking.All.Count);
+        Assert.Equal(14, MotivoParking.All.Count);
     }
 
     [Fact]

@@ -17,6 +17,7 @@ public sealed record MotivoParking
     public static readonly MotivoParking OrigemRecursoAusente = new("origem_recurso_ausente");
     public static readonly MotivoParking OrigemRecursoInvalida = new("origem_recurso_invalida");
     public static readonly MotivoParking IdentificadorComEspacoNaBorda = new("identificador_com_espaco_na_borda");
+    public static readonly MotivoParking FalhaInesperadaNoProcessamento = new("falha_inesperada_no_processamento");
 
     public static IReadOnlyCollection<MotivoParking> All { get; } =
     [
@@ -33,6 +34,7 @@ public sealed record MotivoParking
         OrigemRecursoAusente,
         OrigemRecursoInvalida,
         IdentificadorComEspacoNaBorda,
+        FalhaInesperadaNoProcessamento,
     ];
 
     private MotivoParking(string name) => Name = name;

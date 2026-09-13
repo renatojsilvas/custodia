@@ -7,7 +7,8 @@ public sealed class ConsumidorMetrics
     private static readonly Counter MensagensPorDesfechoTotal = Metrics.CreateCounter(
         "custodia_consumo_mensagens_total",
         "Total de mensagens da custodia.prices processadas pelo consumidor, por desfecho " +
-        "(ack_escriturado|ack_replay|ack_ignorado_sonda|nack_requeue_transitorio|retry_publicado|park_publicado).",
+        "(ack_escriturado|ack_replay|ack_ignorado_sonda|nack_requeue_transitorio|nack_requeue_falha_ao_estacionar|" +
+        "nack_requeue_falha_ao_publicar_retry|retry_publicado|park_publicado).",
         new CounterConfiguration
         {
             LabelNames = ["desfecho"],

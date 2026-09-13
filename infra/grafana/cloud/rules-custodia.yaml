@@ -468,7 +468,7 @@ groups:
           description: >-
             Métrica: custodia_parked_mensagens{motivo=} (Gauge, F4,
             ParkingDrenadorMetrics.RegistrarResidualPorMotivo) — rótulo por
-            x-custodia-motivo, cardinalidade fechada nos 13 valores de
+            x-custodia-motivo, cardinalidade fechada nos 14 valores de
             MotivoEstacionamento.All. DUAS LACUNAS DECLARADAS, as duas por causa de COMO
             este Gauge é alimentado — nunca por um processo contínuo, só pelo comando
             administrativo `drenar-parking <motivo>` (Custodia.API/Program.cs), que um
@@ -494,7 +494,7 @@ groups:
             valor só muda por ação humana (não por um ciclo automático), não há "rajada"
             a filtrar — o "for" aqui só absorve o próprio scrape (30s), não tendência
             nenhuma. Ao diagnosticar: o label `motivo` da série que disparou diz qual dos
-            13 motivos fechados sobrou; RESIDUAL_MOTIVO no stdout do comando (Program.cs)
+            14 motivos fechados sobrou; RESIDUAL_MOTIVO no stdout do comando (Program.cs)
             já tinha mostrado esse número na hora — este alerta existe para quando
             ninguém estava olhando o terminal naquele momento.
         labels:

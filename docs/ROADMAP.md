@@ -3311,7 +3311,7 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   nada: quem sabe o número é o CHAMADOR do `POST`, e lá o campo é **obrigatório** para
   `aplicacao`/`aporte`, **proibido** nos demais tipos, com **422 na borda** (§6.1 camada 2 / ADR-11).*
   **O que isso muda para esta fase, e não é "apague o requisito":** `origem_recurso_ausente` continua
-  sendo um dos TREZE motivos e continua tendo de ser implementado e testado. O que mudou é que ele
+  sendo um dos CATORZE motivos e continua tendo de ser implementado e testado. O que mudou é que ele
   deixou de ser o desfecho de **todo** `aplicacao`/`aporte` e voltou a ser o que sempre devia ser —
   rede de segurança para o produtor que não marcou, que é justamente o que a §10.32 manda não
   re-derivar rio abaixo. *Até 2026-09-11 esta alínea dizia "e isso ele AINDA NÃO faz… faça as duas
@@ -3468,15 +3468,18 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
     `instrumento_id`**, que tem CHECK de borda próprio — e é essa a razão de os três CHECKs serem
     por **coluna** e não um só sobre `ref_externa`. *A versão anterior desta alínea dizia "de todas
     as famílias da V3", o que é falso para duas das quatro.*).
-    **São TREZE nesta fase, e a lista é fechada e sem default**; duas fases
+    **São CATORZE nesta fase, e a lista é fechada e sem default**; duas fases
     seguintes acrescentam **um valor cada**, e os dois já estão nomeados aqui para a regra
     "sem default" não ser furada por uma fase que só diz "com motivo nomeado": o **F7**
     acrescenta **`intervalo_acima_do_teto`** (o handler de `eod.ready` recusando um intervalo
     de materialização acima do teto configurado, em vez de entrar em laço de reentrega que
-    nunca fecha) e o **F9** acrescenta **`acao_desconhecida`**. **Com os dois, são QUINZE no
+    nunca fecha) e o **F9** acrescenta **`acao_desconhecida`**. **Com os dois, são DEZESSEIS no
     roadmap inteiro** — recontados contra este arquivo, não copiados. *Eram dez e doze até
     2026-09-09; a V6 acrescentou dois, e os CHECKs de borda do F3 acrescentaram o décimo
-    terceiro em 2026-09-10. A recontagem é o próprio procedimento que o
+    terceiro em 2026-09-10. Um décimo quarto — **`falha_inesperada_no_processamento`** —
+    entrou fora deste plano de duas fases futuras: é a correção da §10.48 (catch final do
+    consumidor sem classificar transitório de determinístico), achada no F5 e corrigida
+    depois do fecho do F4. A recontagem é o próprio procedimento que o
     parágrafo abaixo exige — uma lista declarada fechada que cresce em um lugar só é uma
     lista com default informal.* Os dois últimos a entrar,
     com a decisão que os criou: **`estorno_divergente`** é a dispensa declarada do estorno
@@ -4025,11 +4028,17 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      As linhas do fato nascem na MESMA TRANSACAO, entao nada e gravado e a chave
      de dedupe NAO e consumida (I13 preservado) — o que faltava era o NOME, sem o qual a
      PostgresException cai no tratamento genERICO e vira 500 em vez de estacionar legivel.
-     SAO TREZE NESTA FASE. A LISTA E FECHADA E SEM DEFAULT; duas fases seguintes acrescentam
+     E `falha_inesperada_no_processamento`, que NAO vem de leitura de payload nem de schema:
+     e a correcao da PADROES 10.48 (catch final do consumidor sem classificar transitorio de
+     determinístico — achado no F5, corrigido depois do fecho do F4). Exceção RECONHECIDAMENTE
+     transitoria (NpgsqlException.IsTransient, BrokerUnreachableException, TimeoutException)
+     continua nack com requeue; exceção NAO classificada estaciona com este motivo em vez de
+     requeue infinito.
+     SAO CATORZE NESTA FASE. A LISTA E FECHADA E SEM DEFAULT; duas fases seguintes acrescentam
      UM VALOR CADA, os dois ja nomeados aqui: o F7 acrescenta intervalo_acima_do_teto (o
      handler de eod.ready recusando intervalo de materializacao acima do teto, em vez de
      entrar em laco de reentrega que nunca fecha) e o F9 acrescenta acao_desconhecida. COM
-     OS DOIS, SAO QUINZE NO ROADMAP INTEIRO.
+     OS DOIS, SAO DEZESSEIS NO ROADMAP INTEIRO.
      Os dois ultimos a entrar, com a decisao que os criou: `estorno_divergente` e a
      dispensa declarada do estorno na V2 do F3 (os tres campos proprios do payload sao
      CONFERIDOS contra o movimento original); `retry_indisponivel` e o ramo de CONFIRM

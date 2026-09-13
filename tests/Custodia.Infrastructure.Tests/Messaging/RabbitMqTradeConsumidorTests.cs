@@ -1,12 +1,18 @@
 using System.Diagnostics;
+using System.Net.Sockets;
 using System.Text;
+using Custodia.Application.Eventos;
+using Custodia.Domain.Common;
 using Custodia.Domain.Eventos;
 using Custodia.Domain.Movimentos;
 using Custodia.Infrastructure.Messaging;
 using Custodia.Infrastructure.Persistence;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using Prometheus;
 using RabbitMQ.Client;
 
 namespace Custodia.Infrastructure.Tests.Messaging;
@@ -17,6 +23,11 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
     private static readonly TimeSpan TimeoutCurto = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan TimeoutComUmaVoltaDeRetry = TimeSpan.FromSeconds(50);
     private static readonly TimeSpan TimeoutComDuasVoltasDeRetry = TimeSpan.FromSeconds(90);
+
+    private static readonly Counter MensagensPorDesfechoTotal = Metrics.CreateCounter(
+        "custodia_consumo_mensagens_total", "help", new CounterConfiguration { LabelNames = ["desfecho"] });
+
+    private static double LerContadorDesfecho(string desfecho) => MensagensPorDesfechoTotal.WithLabels(desfecho).Value;
 
     public Task InitializeAsync() => fixture.LimparEstadoAsync();
 
@@ -492,6 +503,77 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
     }
 
     [Fact]
+    public async Task PADROES_10_48_ConfirmNegadoAoPublicarRetry_DesfechoDeFalhaDeParkingNaoTransitorio_EJaLimitadoPeloTeto()
+    {
+        const int teto = 3;
+        var clienteId = NovoId("cli-instancia-b");
+        const string instrumentoId = "td:tesouro-teste-10-48-instancia-b";
+        var tradeIdInexistente = NovoId("trade-inexistente");
+        var tradeIdEstorno = NovoId("estorno");
+        var dataEvento = new DateOnly(2026, 6, 1);
+        var registradoEm = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+
+        var estornoOrfao = TradePayloadBuilder.Estorno(
+            tradeIdEstorno, clienteId, instrumentoId, 3m, 300m, dataEvento, registradoEm, tradeIdInexistente);
+
+        await using var conexaoPublicadora = await fixture.CriarConexaoAmqpAsync();
+        await using var canalPublicador = await conexaoPublicadora.CreateChannelAsync();
+        await PublicarAsync(canalPublicador, "trades.registered", estornoOrfao);
+
+        var antesFalhaDeRetry = LerContadorDesfecho("nack_requeue_falha_ao_publicar_retry");
+        var antesTransitorio = LerContadorDesfecho("nack_requeue_transitorio");
+
+        var (provider, consumidor, publicador) = CriarConsumidor(
+            confirmar: (exchange, _) => exchange != RabbitMqTopologia.ExchangeRetryIn,
+            configExtras: new Dictionary<string, string?> { ["Decisao:RetryTetoTentativas"] = teto.ToString() });
+        await using var _ = provider;
+
+        await consumidor.StartAsync(CancellationToken.None);
+        try
+        {
+            var motivosAcumulados = new HashSet<string>();
+            var estacionadoComoRetryIndisponivel = await EsperarAsync(async () =>
+            {
+                foreach (var motivo in await LerMotivosDaFilaParkedAsync())
+                {
+                    motivosAcumulados.Add(motivo);
+                }
+
+                return motivosAcumulados.Contains(MotivoParking.RetryIndisponivel.Name);
+            }, TimeoutCurto);
+
+            Assert.True(
+                estacionadoComoRetryIndisponivel,
+                "o x-acquired-count desta entrega já limita o número de tentativas de publicar em custodia.retry.in " +
+                "ANTES de tentar publicar — o laço é finito por construção, e tem que terminar em retry_indisponivel.");
+        }
+        finally
+        {
+            await consumidor.StopAsync(CancellationToken.None);
+        }
+
+        var tentativasParaRetryIn = publicador.Chamadas.Count(c => c.Exchange == RabbitMqTopologia.ExchangeRetryIn);
+        Assert.Equal(teto, tentativasParaRetryIn);
+
+        var depoisFalhaDeRetry = LerContadorDesfecho("nack_requeue_falha_ao_publicar_retry");
+        var depoisTransitorio = LerContadorDesfecho("nack_requeue_transitorio");
+
+        Assert.True(
+            depoisFalhaDeRetry > antesFalhaDeRetry,
+            "o publisher confirm negado ao publicar em custodia.retry.in não tem para onde mandar a mensagem — " +
+            "requeue é a única saída, mas o desfecho tem que dizer que foi a REPUBLICAÇÃO EM RETRY que falhou.");
+        Assert.True(
+            antesTransitorio == depoisTransitorio,
+            "o confirm negado ao publicar em retry NUNCA pode ser contabilizado como nack_requeue_transitorio — " +
+            "a métrica mentiria sobre a causa.");
+
+        Assert.False(await ExisteMovimentoAsync(tradeIdEstorno));
+
+        var profundidadeDlq = await ContarMensagensAsync(RabbitMqTopologia.FilaDlq);
+        Assert.Equal(0u, profundidadeDlq);
+    }
+
+    [Fact]
     public async Task Bijecao_ConjuntoConhecidoDeEventos_TodosGravadosENenhumExtra_ComControlePositivoDeLinhaPlantada()
     {
         const string instrumentoId = "td:tesouro-teste-bijecao";
@@ -640,6 +722,239 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
         Assert.Equal(0u, profundidadePrincipal);
     }
 
+    [Fact]
+    public async Task PADROES_10_48_ExcecaoNaoClassificadaEstacionaComFalhaInesperada_ComControlePositivoDeTransitoriaQueRequeueia()
+    {
+        const string instrumentoId = "td:tesouro-teste-10-48-classificacao";
+        var dataEvento = new DateOnly(2026, 6, 1);
+        var registradoEm = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+
+        var clienteDeterministico = NovoId("cli-bug-deterministico");
+        var tradeDeterministico = NovoId("trade-bug-deterministico");
+
+        var clienteTransitorio = NovoId("cli-falha-transitoria");
+        var tradeTransitorio = NovoId("trade-falha-transitoria");
+
+        await using var conexaoPublicadora = await fixture.CriarConexaoAmqpAsync();
+        await using var canalPublicador = await conexaoPublicadora.CreateChannelAsync();
+
+        await PublicarAsync(canalPublicador, "trades.registered", TradePayloadBuilder.Aplicacao(
+            tradeDeterministico, clienteDeterministico, instrumentoId, 1m, 100m, dataEvento, registradoEm));
+        await PublicarAsync(canalPublicador, "trades.registered", TradePayloadBuilder.Aplicacao(
+            tradeTransitorio, clienteTransitorio, instrumentoId, 2m, 200m, dataEvento, registradoEm));
+
+        var comportamento = new FalhaForcadaNoProcessamentoBehavior((evento, tentativa) =>
+        {
+            if (evento.TradeId == tradeDeterministico)
+            {
+                return new InvalidOperationException("bug determinístico plantado pelo teste — sempre lança");
+            }
+
+            if (evento.TradeId == tradeTransitorio && tentativa == 1)
+            {
+                return new NpgsqlException("falha de conexão com o Postgres simulada", new SocketException());
+            }
+
+            return null;
+        });
+
+        var (provider, consumidor, _) = CriarConsumidor(
+            configurarServicosExtras: services => services.AddSingleton<
+                IPipelineBehavior<ProcessarTradeRegisteredCommand, Result<ResultadoTradeRegistered>>>(comportamento));
+        await using var _ = provider;
+        await consumidor.StartAsync(CancellationToken.None);
+        try
+        {
+            Assert.True(
+                await EsperarAsync(() => ExisteMovimentoAsync(tradeTransitorio), TimeoutCurto),
+                "controle positivo (§10.8): a falha TRANSITÓRIA declarada tem que fazer nack com requeue e, na " +
+                "redelivery seguinte — sem o gatilho mais presente —, o trade tem que ser escriturado normalmente; " +
+                "prova de que a classificação realmente distingue e não estaciona tudo.");
+
+            var motivosAcumulados = new HashSet<string>();
+            Assert.True(await EsperarAsync(async () =>
+            {
+                foreach (var motivo in await LerMotivosDaFilaParkedAsync())
+                {
+                    motivosAcumulados.Add(motivo);
+                }
+
+                return motivosAcumulados.Contains(MotivoParking.FalhaInesperadaNoProcessamento.Name);
+            }, TimeoutCurto), "a exceção NÃO classificada tem que estacionar com o motivo falha_inesperada_no_processamento");
+        }
+        finally
+        {
+            await consumidor.StopAsync(CancellationToken.None);
+        }
+
+        Assert.False(
+            await ExisteMovimentoAsync(tradeDeterministico),
+            "a exceção determinística nunca pode terminar escriturando o movimento");
+
+        var profundidadeDlq = await ContarMensagensAsync(RabbitMqTopologia.FilaDlq);
+        Assert.Equal(0u, profundidadeDlq);
+
+        var profundidadePrincipal = await canalPublicador.MessageCountAsync(RabbitMqTopologia.FilaPrincipal);
+        Assert.True(
+            profundidadePrincipal == 0u,
+            "a exceção determinística tem que ser estacionada e retirada de circulação — nunca ficar " +
+            "circulando em requeue infinito na fila principal.");
+    }
+
+    [Fact]
+    public async Task PADROES_10_48_ResultFailureReconhecidoEDeterministico_EstacionaComFalhaInesperada_NuncaRequeueInfinito()
+    {
+        const string instrumentoId = "td:tesouro-teste-10-48-overflow-preco-medio";
+        var dataEvento = new DateOnly(2026, 6, 1);
+        var registradoEm = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+
+        var clienteId = NovoId("cli-overflow-preco-medio");
+        var tradeQueEstoura = NovoId("trade-overflow-preco-medio");
+
+        await using var conexaoPublicadora = await fixture.CriarConexaoAmqpAsync();
+        await using var canalPublicador = await conexaoPublicadora.CreateChannelAsync();
+
+        await PublicarAsync(canalPublicador, "trades.registered", TradePayloadBuilder.Aplicacao(
+            tradeQueEstoura, clienteId, instrumentoId, 1m, 5000000000000.00m, dataEvento, registradoEm));
+
+        var (provider, consumidor, _) = CriarConsumidor();
+        await using var _ = provider;
+        await consumidor.StartAsync(CancellationToken.None);
+        try
+        {
+            var motivosAcumulados = new HashSet<string>();
+            Assert.True(
+                await EsperarAsync(async () =>
+                {
+                    foreach (var motivo in await LerMotivosDaFilaParkedAsync())
+                    {
+                        motivosAcumulados.Add(motivo);
+                    }
+
+                    return motivosAcumulados.Contains(MotivoParking.FalhaInesperadaNoProcessamento.Name);
+                }, TimeoutCurto),
+                "quantidade=1 e valorFinanceiro=5e12 passam no CHECK de Movimento (numeric(18,2)/numeric(18,8)), " +
+                "mas o preco_medio DERIVADO (valorFinanceiro / qtdDelta) estoura numeric(18,6) de posicao_corrente " +
+                "— um Result.Failure RECONHECIDO (PostgresExceptionTranslator) e determinístico para este payload " +
+                "chega ao handler; tem que estacionar, nunca ser tratado como transitório.");
+        }
+        finally
+        {
+            await consumidor.StopAsync(CancellationToken.None);
+        }
+
+        Assert.False(
+            await ExisteMovimentoAsync(tradeQueEstoura),
+            "a transação inteira tem que ter sido desfeita no overflow — nada gravado em movimentos");
+
+        var profundidadePrincipal = await canalPublicador.MessageCountAsync(RabbitMqTopologia.FilaPrincipal);
+        Assert.True(
+            profundidadePrincipal == 0u,
+            "o Result.Failure determinístico tem que ser estacionado e retirado de circulação — nunca ficar " +
+            "circulando em requeue infinito na fila principal.");
+    }
+
+    [Fact]
+    public async Task PADROES_10_48_PublisherConfirmNegadoAoEstacionar_NackComRequeueEDesfechoDeFalhaDeParkingNaoTransitorio()
+    {
+        var marcador = $"custodia-motivo-parking-teste-{Guid.NewGuid():N}";
+        var routingKey = "prices." + marcador;
+
+        await using var conexaoPublicadora = await fixture.CriarConexaoAmqpAsync();
+        await using var canalPublicador = await conexaoPublicadora.CreateChannelAsync();
+        await PublicarAsync(canalPublicador, routingKey, "{}");
+
+        var antesFalhaDeParking = LerContadorDesfecho("nack_requeue_falha_ao_estacionar");
+        var antesTransitorio = LerContadorDesfecho("nack_requeue_transitorio");
+
+        var (provider, consumidor, publicador) = CriarConsumidor(
+            confirmar: (exchange, _) => exchange != RabbitMqTopologia.ExchangeParking);
+        await using var _ = provider;
+        await consumidor.StartAsync(CancellationToken.None);
+        try
+        {
+            var duasNegativasDeParking = await EsperarAsync(
+                () => Task.FromResult(publicador.Chamadas.Count(c => c.Exchange == RabbitMqTopologia.ExchangeParking) >= 2),
+                TimeoutCurto);
+
+            Assert.True(
+                duasNegativasDeParking,
+                "com o publisher confirm sempre negado ao publicar em custodia.parking, a mensagem tem que ser " +
+                "reentregue (nack com requeue) e reprocessada — é isso que produz a segunda tentativa de parking.");
+        }
+        finally
+        {
+            await consumidor.StopAsync(CancellationToken.None);
+        }
+
+        var depoisFalhaDeParking = LerContadorDesfecho("nack_requeue_falha_ao_estacionar");
+        var depoisTransitorio = LerContadorDesfecho("nack_requeue_transitorio");
+
+        Assert.True(
+            depoisFalhaDeParking > antesFalhaDeParking,
+            "o publisher confirm negado AO ESTACIONAR não tem para onde estacionar — requeue é a única saída, " +
+            "mas o desfecho tem que dizer que foi o PARKING que falhou, não 'transitório'.");
+        Assert.True(
+            antesTransitorio == depoisTransitorio,
+            "o confirm negado ao estacionar NUNCA pode ser contabilizado como nack_requeue_transitorio — a " +
+            "métrica mentiria sobre a causa.");
+
+        Assert.DoesNotContain(MotivoParking.TipoNaoTratadoPrices.Name, await LerMotivosDaFilaParkedAsync());
+    }
+
+    [Fact]
+    public async Task PADROES_10_48_ExcecaoNaoClassificadaFalhaTambemAoEstacionar_GuardaContraRecursaoTerminaEmFalhaDeParking()
+    {
+        const string instrumentoId = "td:tesouro-teste-10-48-guarda-recursao";
+        var dataEvento = new DateOnly(2026, 6, 1);
+        var registradoEm = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+
+        var clienteId = NovoId("cli-guarda-recursao");
+        var tradeId = NovoId("trade-guarda-recursao-bug-deterministico");
+
+        await using var conexaoPublicadora = await fixture.CriarConexaoAmqpAsync();
+        await using var canalPublicador = await conexaoPublicadora.CreateChannelAsync();
+        await PublicarAsync(canalPublicador, "trades.registered", TradePayloadBuilder.Aplicacao(
+            tradeId, clienteId, instrumentoId, 1m, 100m, dataEvento, registradoEm));
+
+        var comportamento = new FalhaForcadaNoProcessamentoBehavior((evento, _) =>
+            evento.TradeId == tradeId
+                ? new InvalidOperationException("bug determinístico plantado pelo teste — sempre lança")
+                : null);
+
+        var antesFalhaDeParking = LerContadorDesfecho("nack_requeue_falha_ao_estacionar");
+
+        var (provider, consumidor, publicador) = CriarConsumidor(
+            lancarExcecaoAoPublicar: (exchange, _) =>
+                exchange == RabbitMqTopologia.ExchangeParking ? new SocketException() : null,
+            configurarServicosExtras: services => services.AddSingleton<
+                IPipelineBehavior<ProcessarTradeRegisteredCommand, Result<ResultadoTradeRegistered>>>(comportamento));
+        await using var _ = provider;
+        await consumidor.StartAsync(CancellationToken.None);
+        try
+        {
+            var guardaTerminouEmFalhaDeParking = await EsperarAsync(
+                () => Task.FromResult(LerContadorDesfecho("nack_requeue_falha_ao_estacionar") > antesFalhaDeParking),
+                TimeoutCurto);
+
+            Assert.True(
+                guardaTerminouEmFalhaDeParking,
+                "a exceção não classificada tenta estacionar; se ESSA tentativa também lançar, a guarda contra " +
+                "recursão tem que terminar em nack+requeue com o desfecho de falha de parking — sem chamar " +
+                "EstacionarAsync de novo dentro do mesmo processamento, e sem travar o teste.");
+
+            var tentativasDeParkingObservadas = publicador.Chamadas.Count(c => c.Exchange == RabbitMqTopologia.ExchangeParking);
+            Assert.InRange(tentativasDeParkingObservadas, 1, 500);
+        }
+        finally
+        {
+            await consumidor.StopAsync(CancellationToken.None);
+        }
+
+        Assert.False(await ExisteMovimentoAsync(tradeId));
+        Assert.DoesNotContain(MotivoParking.FalhaInesperadaNoProcessamento.Name, await LerMotivosDaFilaParkedAsync());
+    }
+
     private async Task VarrerBijecaoAsync(IReadOnlyList<(string ClienteId, string TradeId)> esperados)
     {
         await using var db = fixture.CriarDbContext();
@@ -657,13 +972,16 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
     private (ServiceProvider Provider, RabbitMqTradeConsumidor Consumidor, PublicadorComFalhaForcada Publicador) CriarConsumidor(
         Func<string, int, bool>? confirmar = null,
         Func<string, int, bool>? entregaMesmoComConfirmNegado = null,
-        IDictionary<string, string?>? configExtras = null)
+        IDictionary<string, string?>? configExtras = null,
+        Action<IServiceCollection>? configurarServicosExtras = null,
+        Func<string, int, Exception?>? lancarExcecaoAoPublicar = null)
     {
         var configuration = fixture.CriarConfiguration(configExtras);
-        var provider = fixture.CriarServiceProvider(configuration);
+        var provider = fixture.CriarServiceProvider(configuration, configurarServicosExtras);
         var connectionProvider = provider.GetRequiredService<RabbitMqConnectionProvider>();
         var publicadorReal = provider.GetRequiredService<IPublicadorComConfirmacao>();
-        var publicador = new PublicadorComFalhaForcada(publicadorReal, confirmar, entregaMesmoComConfirmNegado);
+        var publicador = new PublicadorComFalhaForcada(
+            publicadorReal, confirmar, entregaMesmoComConfirmNegado, lancarExcecaoAoPublicar);
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var roteador = provider.GetRequiredService<Custodia.Application.Eventos.RoteadorDeEventos>();
         var metrics = provider.GetRequiredService<ConsumidorMetrics>();
