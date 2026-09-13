@@ -2,7 +2,7 @@ using Custodia.Domain.Movimentos;
 
 namespace Custodia.Domain.Posicoes;
 
-public static class SequenciaCanonica
+public static class LivroSemEstornos
 {
     public static IReadOnlyList<Movimento> MovimentosEfetivos(IEnumerable<Movimento> movimentos, CortePosicional? corte = null)
     {

@@ -592,7 +592,7 @@ groups:
               to: 0
             datasourceUid: __DS_PROM__
             model:
-              expr: custodia_guarda_resgates_sem_aliq{job="custodia"}
+              expr: custodia_conciliacao_resgates_sem_valor_a_receber{job="custodia"}
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -618,11 +618,11 @@ groups:
         annotations:
           summary: Existe pelo menos um resgate efetivo (venda não revertida) sem a linha aliq:<tradeId>
           description: >-
-            Métrica: custodia_guarda_resgates_sem_aliq (Gauge, F5 onda 3, BusinessMetrics.
-            RegistrarGuardaResgatesSemAliq), medida a cada ciclo do GuardasF5Job
+            Métrica: custodia_conciliacao_resgates_sem_valor_a_receber (Gauge, F5 onda 3, BusinessMetrics.
+            RegistrarGuardaResgatesSemAliq), medida a cada ciclo do ConciliacaoDeResgatesJob
             (IHostedService de varredura periódica, default 300s, configurável por
-            Decisao:GuardasF5CicloIntervaloSegundos) reexecutando a MESMA consulta SQL do
-            backfill da janela F4→F5 (IBackfillJanelaF4F5ReadRepository.
+            Decisao:ConciliacaoDeResgatesCicloIntervaloSegundos) reexecutando a MESMA consulta SQL do
+            backfill da janela F4→F5 (IRepararResgatesAntigosReadRepository.
             ObterResgatesSemAliqAsync — resgate = tipo='venda' efetivo, sem qualquer ajuste
             revertendo-o, sem a linha aliq:<tradeId>). O DISCRIMINADOR É aliq:, NUNCA ir: —
             um resgate com prejuízo em TODOS os lotes legitimamente não tem ir: nem iof:
@@ -636,9 +636,9 @@ groups:
             pendências (mesma convenção de custodia_fila_profundidade); ausência de dado é
             job parado ou app fora do ar (custodia-app-down cobre isso), não "zero
             pendências". Ao diagnosticar: rode o comando administrativo
-            --backfill-janela-f4-f5 se a fase de migração F4→F5 ainda não fechou; se já
+            --reparar-resgates-antigos se a fase de migração F4→F5 ainda não fechou; se já
             fechou, busque o LogWarning de RegistrarGuardaResgatesSemAliq e o trade_id via
-            IBackfillJanelaF4F5ReadRepository.ObterResgatesSemAliqAsync para achar o cliente
+            IRepararResgatesAntigosReadRepository.ObterResgatesSemAliqAsync para achar o cliente
             e o resgate ofensor.
         labels:
           severity: warning
@@ -654,7 +654,7 @@ groups:
               to: 0
             datasourceUid: __DS_PROM__
             model:
-              expr: custodia_guarda_ajustes_de_resgate_sem_reversao{job="custodia"}
+              expr: custodia_conciliacao_estornos_sem_reversao_completa{job="custodia"}
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -680,9 +680,9 @@ groups:
         annotations:
           summary: "Existe pelo menos um ajuste sobre resgate cujo conjunto est: correspondente ainda não foi gravado por inteiro"
           description: >-
-            Métrica: custodia_guarda_ajustes_de_resgate_sem_reversao (Gauge, F5 onda 3,
+            Métrica: custodia_conciliacao_estornos_sem_reversao_completa (Gauge, F5 onda 3,
             BusinessMetrics.RegistrarGuardaAjustesDeResgateSemReversao), medida pelo mesmo
-            GuardasF5Job, reexecutando IBackfillJanelaF4F5ReadRepository.
+            ConciliacaoDeResgatesJob, reexecutando IRepararResgatesAntigosReadRepository.
             ObterAjustesDeResgateSemReversaoAsync (ajuste que reverte uma venda, com aliq:
             do resgate original existente E sem est:aliq: correspondente — o mesmo
             discriminador incondicional da guarda 1/4, aplicado à reversão: se a
@@ -694,10 +694,10 @@ groups:
             (ProcessarTradeRegisteredCommandHandler.ReverterDerivadosDoResgateAsync) grava o
             conjunto est: na MESMA transação do ajuste sobre o principal. ORDEM: esta guarda
             só faz sentido rodar DEPOIS do backfill da janela F4→F5 ter passado pela metade
-            (i) — rodar o comando --backfill-janela-f4-f5 aplica sempre as duas metades em
+            (i) — rodar o comando --reparar-resgates-antigos aplica sempre as duas metades em
             sequência (i então ii) numa única invocação. noDataState=OK pela mesma
             convenção das guardas deste grupo. Ao diagnosticar: rode
-            --backfill-janela-f4-f5 se a migração ainda não fechou; se já fechou, é bug do
+            --reparar-resgates-antigos se a migração ainda não fechou; se já fechou, é bug do
             handler de estorno — busque o LogWarning de
             RegistrarGuardaAjustesDeResgateSemReversao.
         labels:
@@ -714,7 +714,7 @@ groups:
               to: 0
             datasourceUid: __DS_PROM__
             model:
-              expr: custodia_guarda_a_liquidar_vencida_sem_liquidacao{job="custodia"}
+              expr: custodia_conciliacao_dinheiro_nao_creditado{job="custodia"}
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -740,11 +740,11 @@ groups:
         annotations:
           summary: Existe pelo menos um a_liquidar vencido e não revertido sem a perna liq:<fato>:brl
           description: >-
-            Métrica: custodia_guarda_a_liquidar_vencida_sem_liquidacao (Gauge, F5 onda 3,
+            Métrica: custodia_conciliacao_dinheiro_nao_creditado (Gauge, F5 onda 3,
             BusinessMetrics.RegistrarGuardaALiquidarVencidaSemLiquidacao). É a ÚNICA das
             quatro guardas que reusa, LITERALMENTE, a MESMA consulta que o
             LiquidarResgatesVencidosCommandHandler usa para achar candidatas
-            (ILiquidacaoCandidataReadRepository.ObterAbertasNaoRevertidasAsync — que já
+            (IAReceberVencidoReadRepository.ObterAbertasNaoRevertidasAsync — que já
             filtra nem a linha aliq: nem o movimento principal revertidos), com o MESMO
             filtro de vencimento (D+1 útil <= hoje, via IProximoDiaUtilService) que o job
             aplica candidata a candidata — por isso um JOB ATRASADO OU PARADO APONTA PARA SI
@@ -773,7 +773,7 @@ groups:
               to: 0
             datasourceUid: __DS_PROM__
             model:
-              expr: custodia_guarda_tributo_divergente_do_rederivado{job="custodia"}
+              expr: custodia_conciliacao_tributo_divergente{job="custodia"}
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -799,14 +799,14 @@ groups:
         annotations:
           summary: Existe pelo menos um resgate já tributado cujo IR/IOF diverge do re-derivado da fila FIFO de hoje
           description: >-
-            Métrica: custodia_guarda_tributo_divergente_do_rederivado (Gauge, F5 onda 3,
+            Métrica: custodia_conciliacao_tributo_divergente (Gauge, F5 onda 3,
             BusinessMetrics.RegistrarGuardaTributoDivergenteDoRederivado). ÚNICA das quatro
             guardas que NÃO é consulta de ausência: para cada resgate efetivo já tributado
-            (aliq: presente), re-deriva IR/IOF via RederivacaoTributosResgate — a MESMA
+            (aliq: presente), re-deriva IR/IOF via RecalculoDeTributos — a MESMA
             função de domínio que o handler ao vivo usa para tributar, com o CORTE
             POSICIONAL DO PRÓPRIO RESGATE (nunca da fila cheia, que alertaria toda chave com
             qualquer movimento posterior a um resgate) — e compara com as linhas ir:/iof:
-            EFETIVAS (SequenciaCanonica.MovimentosEfetivos; resgate estornado nunca alerta).
+            EFETIVAS (LivroSemEstornos.MovimentosEfetivos; resgate estornado nunca alerta).
             "Base zero ⇒ ausência de linha" conta como CONCORDÂNCIA (ambos os lados chegam a
             zero). Cobre TRÊS causas com uma consulta: compra retroativa; estorno de compra
             cujo lote uma venda já tributada consumiu; e venda ou resgate retroativo que
@@ -814,7 +814,7 @@ groups:
             das guardas 1-3 (linha ausente, conserta com backfill/religar job), esta é
             DINHEIRO JÁ CALCULADO ERRADO gravado numa tabela sem UPDATE — o conserto é
             estorno do resgate e relançamento, NUNCA UPDATE na linha de tributo. for=5m
-            absorve o ciclo do GuardasF5Job (default 300s) sem exigir dois ciclos seguidos.
+            absorve o ciclo do ConciliacaoDeResgatesJob (default 300s) sem exigir dois ciclos seguidos.
             noDataState=OK pela mesma convenção. Ao diagnosticar: busque o LogCritical de
             RegistrarGuardaTributoDivergenteDoRederivado e, para o par (cliente_id,
             instrumento_id) apontado, confira se houve compra/estorno de compra/venda com

@@ -1,4 +1,4 @@
-using Custodia.Application.Backfill;
+using Custodia.Application.Reparo;
 using Custodia.Application.Calendario;
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Eventos;
@@ -7,7 +7,7 @@ using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 using Custodia.Domain.Posicoes;
-using Custodia.Infrastructure.Backfill;
+using Custodia.Infrastructure.Reparo;
 using Custodia.Infrastructure.Common;
 using Custodia.Infrastructure.Liquidacao;
 using Custodia.Infrastructure.Tests.Liquidacao;
@@ -17,10 +17,10 @@ using Custodia.Infrastructure.Tests.Persistence;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 
-namespace Custodia.Infrastructure.Tests.Backfill;
+namespace Custodia.Infrastructure.Tests.Reparo;
 
 [Collection("infra-postgres")]
-public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(InfrastructurePostgresFixture fixture)
+public sealed class RepararResgatesAntigosCommandHandlerIntegrationTests(InfrastructurePostgresFixture fixture)
 {
     private static readonly DateTimeOffset RegistradoEm = new(2026, 8, 1, 10, 0, 0, TimeSpan.Zero);
 
@@ -30,12 +30,12 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
 
     private NpgsqlDataSource CriarDataSource() => fixture.DataSource;
 
-    private BackfillJanelaF4F5CommandHandler CriarHandlerDeBackfill(
+    private RepararResgatesAntigosCommandHandler CriarHandlerDeBackfill(
         AppDbContext dbContext,
         IBusinessMetrics? metrics = null,
         IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null) =>
         new(
-            new BackfillJanelaF4F5ReadRepository(CriarDataSource()),
+            new RepararResgatesAntigosReadRepository(CriarDataSource()),
             new MovimentoReadRepository(CriarDataSource()),
             new MovimentoWriteRepository(dbContext),
             new MovimentoTravamentoRepository(dbContext),
@@ -60,7 +60,7 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
 
     private LiquidarResgatesVencidosCommandHandler CriarHandlerDeLiquidacao(AppDbContext dbContext) =>
         new(
-            new LiquidacaoCandidataReadRepository(CriarDataSource()),
+            new AReceberVencidoReadRepository(CriarDataSource()),
             new MovimentoTravamentoRepository(dbContext),
             new MovimentoReadRepository(CriarDataSource()),
             new MovimentoWriteRepository(dbContext),
@@ -75,12 +75,12 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
             new ConfigurationBuilder().Build(),
             TimeProvider.System);
 
-    private async Task<Result<BackfillJanelaF4F5Resultado>> RodarBackfillAsync(
+    private async Task<Result<RepararResgatesAntigosResultado>> RodarBackfillAsync(
         IBusinessMetrics? metrics = null, IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null)
     {
         await using var db = fixture.CriarDbContext();
         return await CriarHandlerDeBackfill(db, metrics, pontoDeSuspensao)
-            .Handle(new BackfillJanelaF4F5Command(), CancellationToken.None);
+            .Handle(new RepararResgatesAntigosCommand(), CancellationToken.None);
     }
 
     private static TradeRegisteredEvento CriarEventoDeEstorno(string tradeIdDoEstorno, Movimento titulo, DateOnly dataEvento) =>
@@ -157,7 +157,7 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
         await InserirCompraAsync(clienteId, instrumentoId, "op-compra-1", new DateOnly(2026, 6, 1), 10m, 1000m);
         await InserirVendaSemDerivadosAsync(clienteId, instrumentoId, "op-resgate-1", new DateOnly(2026, 6, 11), 10m, 1200m);
 
-        var candidatosAntesEscopadosNoCliente = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+        var candidatosAntesEscopadosNoCliente = await new RepararResgatesAntigosReadRepository(CriarDataSource())
             .ObterResgatesSemAliqAsync(CancellationToken.None);
         Assert.Contains(candidatosAntesEscopadosNoCliente.Value, c => c.ClienteId == clienteId && c.TradeId == "op-resgate-1");
 
@@ -165,7 +165,7 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
 
         Assert.True(resultado.IsSuccess);
 
-        var candidatosDepoisEscopadosNoCliente = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+        var candidatosDepoisEscopadosNoCliente = await new RepararResgatesAntigosReadRepository(CriarDataSource())
             .ObterResgatesSemAliqAsync(CancellationToken.None);
         Assert.DoesNotContain(candidatosDepoisEscopadosNoCliente.Value, c => c.ClienteId == clienteId);
 
@@ -235,7 +235,7 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
             clienteId, instrumentoId, "op-resgate-sql-revertido", new DateOnly(2026, 6, 11), 10m, 1200m);
         await InserirAjusteSobreAsync(vendaRevertida, clienteId, "op-estorno-sql-revertido");
 
-        var candidatos = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+        var candidatos = await new RepararResgatesAntigosReadRepository(CriarDataSource())
             .ObterResgatesSemAliqAsync(CancellationToken.None);
 
         Assert.True(candidatos.IsSuccess);
@@ -302,7 +302,7 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
             Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, resultadoEstorno.Value.Tipo);
             estornoFoiEscriturado = true;
 
-            var candidatosComOEstornoJaCommitadoMasSemAliqAinda = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+            var candidatosComOEstornoJaCommitadoMasSemAliqAinda = await new RepararResgatesAntigosReadRepository(CriarDataSource())
                 .ObterAjustesDeResgateSemReversaoAsync(ct);
             candidatosDeReversaoNoInstanteDaSuspensao.AddRange(candidatosComOEstornoJaCommitadoMasSemAliqAinda.Value);
         });
@@ -327,7 +327,7 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
         Assert.Equal(ir.Id, estIr.RefEstorno);
         Assert.Equal(iof.Id, estIof.RefEstorno);
 
-        var pendenciasFinais = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+        var pendenciasFinais = await new RepararResgatesAntigosReadRepository(CriarDataSource())
             .ObterAjustesDeResgateSemReversaoAsync(CancellationToken.None);
         Assert.True(pendenciasFinais.IsSuccess);
         Assert.DoesNotContain(pendenciasFinais.Value, p => p.EstornoTradeId == "op-estorno-corrida");
@@ -381,12 +381,12 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
         var segunda = await RodarBackfillAsync();
         Assert.True(segunda.IsSuccess);
 
-        var guardaResgates = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+        var guardaResgates = await new RepararResgatesAntigosReadRepository(CriarDataSource())
             .ObterResgatesSemAliqAsync(CancellationToken.None);
         Assert.True(guardaResgates.IsSuccess);
         Assert.DoesNotContain(guardaResgates.Value, r => r.ClienteId == clienteId);
 
-        var guardaAjustes = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+        var guardaAjustes = await new RepararResgatesAntigosReadRepository(CriarDataSource())
             .ObterAjustesDeResgateSemReversaoAsync(CancellationToken.None);
         Assert.True(guardaAjustes.IsSuccess);
         Assert.DoesNotContain(guardaAjustes.Value, a => a.ClienteId == clienteId);

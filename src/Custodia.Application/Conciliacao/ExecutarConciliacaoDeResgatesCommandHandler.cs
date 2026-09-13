@@ -1,5 +1,5 @@
 using MediatR;
-using Custodia.Application.Backfill;
+using Custodia.Application.Reparo;
 using Custodia.Application.Calendario;
 using Custodia.Application.Liquidacao;
 using Custodia.Application.Movimentos;
@@ -8,18 +8,18 @@ using Custodia.Domain.Movimentos;
 using Custodia.Domain.Posicoes;
 using Custodia.Domain.Tributos;
 
-namespace Custodia.Application.Guardas;
+namespace Custodia.Application.Conciliacao;
 
-public sealed class ExecutarGuardasF5CommandHandler(
-    IBackfillJanelaF4F5ReadRepository backfillReadRepository,
-    ILiquidacaoCandidataReadRepository liquidacaoCandidataReadRepository,
-    IGuardasF5ReadRepository guardasF5ReadRepository,
+public sealed class ExecutarConciliacaoDeResgatesCommandHandler(
+    IRepararResgatesAntigosReadRepository backfillReadRepository,
+    IAReceberVencidoReadRepository liquidacaoCandidataReadRepository,
+    IConciliacaoDeResgatesReadRepository guardasF5ReadRepository,
     IMovimentoReadRepository movimentoReadRepository,
     IProximoDiaUtilService proximoDiaUtilService,
     ICalendarioDiasUteisReadRepository calendarioDiasUteisReadRepository)
-    : IRequestHandler<ExecutarGuardasF5Command, Result<ResultadoGuardasF5>>
+    : IRequestHandler<ExecutarConciliacaoDeResgatesCommand, Result<ResultadoConciliacaoDeResgates>>
 {
-    public async Task<Result<ResultadoGuardasF5>> Handle(ExecutarGuardasF5Command request, CancellationToken ct)
+    public async Task<Result<ResultadoConciliacaoDeResgates>> Handle(ExecutarConciliacaoDeResgatesCommand request, CancellationToken ct)
     {
         var resgatesSemAliqResult = await backfillReadRepository.ObterResgatesSemAliqAsync(ct);
 
@@ -49,7 +49,7 @@ public sealed class ExecutarGuardasF5CommandHandler(
             return tributosDivergentesResult.Error;
         }
 
-        return new ResultadoGuardasF5(
+        return new ResultadoConciliacaoDeResgates(
             resgatesSemAliqResult.Value.Count,
             ajustesSemReversaoResult.Value.Count,
             aLiquidarVencidaResult.Value,
@@ -141,7 +141,7 @@ public sealed class ExecutarGuardasF5CommandHandler(
             return false;
         }
 
-        var rederivacao = RederivacaoTributosResgate.Rederivar(movimentosDoTitulo, resgate);
+        var rederivacao = RecalculoDeTributos.Rederivar(movimentosDoTitulo, resgate);
 
         var movimentosALiquidarResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
             candidato.ClienteId, InstrumentosCaixa.ALiquidar, ct);
@@ -151,7 +151,7 @@ public sealed class ExecutarGuardasF5CommandHandler(
             return movimentosALiquidarResult.Error;
         }
 
-        var efetivosALiquidar = SequenciaCanonica.MovimentosEfetivos(movimentosALiquidarResult.Value);
+        var efetivosALiquidar = LivroSemEstornos.MovimentosEfetivos(movimentosALiquidarResult.Value);
 
         var irEfetivo = efetivosALiquidar.SingleOrDefault(m => m.RefExterna == $"ir:{candidato.TradeId}");
         var iofEfetivo = efetivosALiquidar.SingleOrDefault(m => m.RefExterna == $"iof:{candidato.TradeId}");

@@ -44,7 +44,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
         IBusinessMetrics? businessMetrics = null,
         long? teto = null) =>
         new(
-            new LiquidacaoCandidataReadRepository(CriarDataSource()),
+            new AReceberVencidoReadRepository(CriarDataSource()),
             new MovimentoTravamentoRepository(dbContext),
             new MovimentoReadRepository(CriarDataSource()),
             new MovimentoWriteRepository(dbContext),
@@ -220,7 +220,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
             new LiquidarResgatesVencidosCommand(), CancellationToken.None);
 
         Assert.True(resultado.IsSuccess);
-        Assert.Equal(DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia, resultado.Value.Desfecho);
+        Assert.Equal(DesfechoLiquidacaoDeResgates.DadoQuebrado, resultado.Value.Desfecho);
         Assert.True(resultado.Value.FatosInconsistentes >= 1);
 
         Assert.False(await ExisteMovimentoAsync(clienteId, "liq:op-orfao-real:aliq"));

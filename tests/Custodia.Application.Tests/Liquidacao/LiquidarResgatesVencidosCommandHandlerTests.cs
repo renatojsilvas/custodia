@@ -72,14 +72,14 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
         FakeBusinessMetrics Metrics,
         FakeMovimentoTravamentoRepository Travamento,
         FakeRecalculoEnfileiradorPort Recalculo) CriarHandler(
-        IReadOnlyList<LiquidacaoCandidata> candidatas,
+        IReadOnlyList<AReceberVencido> candidatas,
         IReadOnlyList<Movimento> movimentosExistentes,
         DateOnly hoje,
         Func<DateOnly, Result<ProximoDiaUtilConsulta>>? proximoDiaUtil = null,
         long? teto = null,
         DateTimeOffset? agora = null)
     {
-        var candidataRead = new FakeLiquidacaoCandidataReadRepository(candidatas);
+        var candidataRead = new FakeAReceberVencidoReadRepository(candidatas);
         var movimentoRead = new FakeMovimentoReadRepository(movimentosExistentes);
         var movimentoWrite = new FakeMovimentoWriteRepository();
         var travamento = new FakeMovimentoTravamentoRepository(movimentosExistentes);
@@ -136,8 +136,8 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
         var fato2 = CriarFato("op-2", 10m, 1200m, idInicial: 10);
         var candidatas = new[]
         {
-            new LiquidacaoCandidata(ClienteId, "op-1", DataDoResgate),
-            new LiquidacaoCandidata(ClienteId, "op-2", DataDoResgate),
+            new AReceberVencido(ClienteId, "op-1", DataDoResgate),
+            new AReceberVencido(ClienteId, "op-2", DataDoResgate),
         };
 
         var (handler, movimentoWrite, _, _, metrics, travamento, _) = CriarHandler(
@@ -159,7 +159,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
     public async Task Handle_CandidataVencida_InsereAsDuasPernasComSaldoLiquido_EAtualizaAsDuasPosicoes()
     {
         var fato = CriarFato("op-resgate-1", 10m, 1200m, ir: 15.30m, iof: 132.00m);
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-resgate-1", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-resgate-1", DataDoResgate) };
 
         var (handler, movimentoWrite, posicaoWrite, _, _, travamento, _) = CriarHandler(
             candidatas, fato.Linhas(), hoje: DataDeLiquidacaoPadrao);
@@ -194,7 +194,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
     public async Task Handle_SemIrNemIof_SaldoIgualAoValorBrutoDoALiquidar()
     {
         var fato = CriarFato("op-resgate-sem-tributo", 10m, 1000m);
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-resgate-sem-tributo", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-resgate-sem-tributo", DataDoResgate) };
 
         var (handler, movimentoWrite, _, _, _, _, _) = CriarHandler(candidatas, fato.Linhas(), DataDeLiquidacaoPadrao);
 
@@ -209,7 +209,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
     public async Task Handle_CandidataAindaNaoVencida_NaoInsereNada_ContaComoNaoVencida()
     {
         var fato = CriarFato("op-resgate-recente", 10m, 1200m);
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-resgate-recente", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-resgate-recente", DataDoResgate) };
 
         var (handler, movimentoWrite, _, unitOfWork, _, _, _) = CriarHandler(
             candidatas, fato.Linhas(), hoje: DataDoResgate);
@@ -235,8 +235,8 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
 
         var candidatas = new[]
         {
-            new LiquidacaoCandidata(ClienteId, "op-revertido", DataDoResgate),
-            new LiquidacaoCandidata(ClienteId, "op-valido", DataDoResgate),
+            new AReceberVencido(ClienteId, "op-revertido", DataDoResgate),
+            new AReceberVencido(ClienteId, "op-valido", DataDoResgate),
         };
 
         var movimentosExistentes = new List<Movimento>();
@@ -263,7 +263,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
             50, ClienteId, InstrumentoId, TipoMovimento.Ajuste, DataDoResgate.AddDays(2), RegistradoEmDoResgate,
             10m, -1200m, "est:op-estorno-1", refEstorno: fato.Venda.Id);
 
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-principal-revertido", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-principal-revertido", DataDoResgate) };
         var movimentosExistentes = new List<Movimento>(fato.Linhas()) { ajusteRevertendoPrincipal };
 
         var (handler, movimentoWrite, _, _, _, _, _) = CriarHandler(candidatas, movimentosExistentes, DataDeLiquidacaoPadrao);
@@ -284,8 +284,8 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
 
         var candidatas = new[]
         {
-            new LiquidacaoCandidata(ClienteId, "op-orfao", DataDoResgate),
-            new LiquidacaoCandidata(ClienteId, "op-valido-no-mesmo-ciclo", DataDoResgate),
+            new AReceberVencido(ClienteId, "op-orfao", DataDoResgate),
+            new AReceberVencido(ClienteId, "op-valido-no-mesmo-ciclo", DataDoResgate),
         };
 
         var movimentosExistentes = new List<Movimento> { fatoOrfao.Aliq };
@@ -297,7 +297,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
         var resultado = await handler.Handle(new LiquidarResgatesVencidosCommand(), CancellationToken.None);
 
         Assert.True(resultado.IsSuccess);
-        Assert.Equal(DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia, resultado.Value.Desfecho);
+        Assert.Equal(DesfechoLiquidacaoDeResgates.DadoQuebrado, resultado.Value.Desfecho);
         Assert.Equal(1, resultado.Value.FatosInconsistentes);
         Assert.Equal(1, resultado.Value.FatosLiquidados);
 
@@ -320,7 +320,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
             50, ClienteId, InstrumentosCaixa.ALiquidar, TipoMovimento.Liquidacao, DataDeLiquidacaoPadrao, RegistradoEmDoResgate,
             -1200m, 1200m, "liq:op-ja-liquidado:aliq");
 
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-ja-liquidado", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-ja-liquidado", DataDoResgate) };
         var movimentosExistentes = new List<Movimento>(fato.Linhas()) { liqAliqExistente };
 
         var (handler, movimentoWrite, _, _, _, _, _) = CriarHandler(candidatas, movimentosExistentes, DataDeLiquidacaoPadrao);
@@ -336,7 +336,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
     public async Task Handle_CalendarioExaurido_DevolveFalha_RegistraMetricaDeAlerta()
     {
         var fato = CriarFato("op-calendario-exaurido", 10m, 1200m);
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-calendario-exaurido", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-calendario-exaurido", DataDoResgate) };
 
         var (handler, movimentoWrite, _, unitOfWork, metrics, _, _) = CriarHandler(
             candidatas,
@@ -361,7 +361,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
     {
         var dataDeLiquidacaoRetroativa = DataDoResgate.AddDays(1);
         var fato = CriarFato("op-catchup", 10m, 1200m);
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-catchup", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-catchup", DataDoResgate) };
         var hojeMuitoDepois = dataDeLiquidacaoRetroativa.AddDays(3);
 
         var (handler, movimentoWrite, _, _, _, _, recalculo) = CriarHandler(
@@ -384,7 +384,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
     public async Task Handle_DataDeLiquidacaoIgualAHoje_NaoEnfileiraRecalculo()
     {
         var fato = CriarFato("op-em-dia", 10m, 1200m);
-        var candidatas = new[] { new LiquidacaoCandidata(ClienteId, "op-em-dia", DataDoResgate) };
+        var candidatas = new[] { new AReceberVencido(ClienteId, "op-em-dia", DataDoResgate) };
 
         var (handler, _, _, _, _, _, recalculo) = CriarHandler(candidatas, fato.Linhas(), hoje: DataDeLiquidacaoPadrao);
 

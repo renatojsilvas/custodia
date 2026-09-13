@@ -43,7 +43,7 @@ public sealed class LiquidacaoDeResgatesJobTests
     public async Task ExecutarUmCicloAsync_ComCandidataPulada_LogaAvisoComONumeroDeInconsistentesENaoSeDeclaraCompletude()
     {
         var resultado = Result<ResultadoLiquidacaoDeResgates>.Success(new ResultadoLiquidacaoDeResgates(
-            DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia,
+            DesfechoLiquidacaoDeResgates.DadoQuebrado,
             CandidatasExaminadas: 5,
             FatosLiquidados: 2,
             FatosNaoVencidos: 1,

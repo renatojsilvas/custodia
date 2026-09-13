@@ -1,14 +1,14 @@
-using Custodia.Application.Backfill;
+using Custodia.Application.Reparo;
 using Custodia.Domain.Common;
 using Custodia.Infrastructure.Persistence;
 using Dapper;
 using Npgsql;
 
-namespace Custodia.Infrastructure.Backfill;
+namespace Custodia.Infrastructure.Reparo;
 
-public sealed class BackfillJanelaF4F5ReadRepository(NpgsqlDataSource dataSource) : IBackfillJanelaF4F5ReadRepository
+public sealed class RepararResgatesAntigosReadRepository(NpgsqlDataSource dataSource) : IRepararResgatesAntigosReadRepository
 {
-    static BackfillJanelaF4F5ReadRepository()
+    static RepararResgatesAntigosReadRepository()
     {
         DapperTypeHandlers.Register();
     }

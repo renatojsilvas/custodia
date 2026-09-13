@@ -49,7 +49,7 @@ public sealed class LiquidacaoDeResgatesJob(
                 return;
             }
 
-            if (resultado.Value.Desfecho == DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia)
+            if (resultado.Value.Desfecho == DesfechoLiquidacaoDeResgates.DadoQuebrado)
             {
                 logger.LogWarning(
                     "Ciclo do job de liquidação de resgates concluído por PARCIAL_POR_INCONSISTENCIA: " +

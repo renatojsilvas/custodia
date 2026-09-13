@@ -131,7 +131,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             return movimentosDaChaveResult.Error;
         }
 
-        var rederivacao = RederivacaoTributosResgate.Rederivar(movimentosDaChaveResult.Value, vendaResult.Value);
+        var rederivacao = RecalculoDeTributos.Rederivar(movimentosDaChaveResult.Value, vendaResult.Value);
         var consumo = rederivacao.Consumo;
         var tributos = rederivacao.Tributos;
 

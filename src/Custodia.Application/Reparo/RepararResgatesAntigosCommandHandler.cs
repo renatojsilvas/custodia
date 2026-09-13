@@ -6,10 +6,10 @@ using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 using Custodia.Domain.Tributos;
 
-namespace Custodia.Application.Backfill;
+namespace Custodia.Application.Reparo;
 
-public sealed class BackfillJanelaF4F5CommandHandler(
-    IBackfillJanelaF4F5ReadRepository backfillReadRepository,
+public sealed class RepararResgatesAntigosCommandHandler(
+    IRepararResgatesAntigosReadRepository backfillReadRepository,
     IMovimentoReadRepository movimentoReadRepository,
     IMovimentoWriteRepository movimentoWriteRepository,
     IMovimentoTravamentoRepository movimentoTravamentoRepository,
@@ -19,10 +19,10 @@ public sealed class BackfillJanelaF4F5CommandHandler(
     IBusinessMetrics businessMetrics,
     IPontoDeSuspensaoAposTravamento pontoDeSuspensaoAposTravamento,
     TimeProvider timeProvider)
-    : IRequestHandler<BackfillJanelaF4F5Command, Result<BackfillJanelaF4F5Resultado>>
+    : IRequestHandler<RepararResgatesAntigosCommand, Result<RepararResgatesAntigosResultado>>
 {
-    public async Task<Result<BackfillJanelaF4F5Resultado>> Handle(
-        BackfillJanelaF4F5Command request, CancellationToken ct)
+    public async Task<Result<RepararResgatesAntigosResultado>> Handle(
+        RepararResgatesAntigosCommand request, CancellationToken ct)
     {
         var resgatesResult = await BackfillarResgatesSemAliqAsync(ct);
 
@@ -38,7 +38,7 @@ public sealed class BackfillJanelaF4F5CommandHandler(
             return ajustesResult.Error;
         }
 
-        return new BackfillJanelaF4F5Resultado(
+        return new RepararResgatesAntigosResultado(
             resgatesResult.Value.Candidatos,
             resgatesResult.Value.Processados,
             ajustesResult.Value.Candidatos,
@@ -114,7 +114,7 @@ public sealed class BackfillJanelaF4F5CommandHandler(
             return false;
         }
 
-        var rederivacao = RederivacaoTributosResgate.Rederivar(movimentosDaChave, resgate);
+        var rederivacao = RecalculoDeTributos.Rederivar(movimentosDaChave, resgate);
         var consumo = rederivacao.Consumo;
         var tributos = rederivacao.Tributos;
 

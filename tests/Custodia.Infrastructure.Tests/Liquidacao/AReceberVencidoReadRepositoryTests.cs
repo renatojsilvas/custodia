@@ -9,7 +9,7 @@ using Npgsql;
 namespace Custodia.Infrastructure.Tests.Liquidacao;
 
 [Collection("infra-postgres")]
-public sealed class LiquidacaoCandidataReadRepositoryTests(InfrastructurePostgresFixture fixture)
+public sealed class AReceberVencidoReadRepositoryTests(InfrastructurePostgresFixture fixture)
 {
     private static readonly DateOnly DataEvento = new(2026, 8, 10);
     private static readonly DateTimeOffset RegistradoEm = new(2026, 8, 10, 14, 0, 0, TimeSpan.Zero);
@@ -18,7 +18,7 @@ public sealed class LiquidacaoCandidataReadRepositoryTests(InfrastructurePostgre
 
     private static string NovoInstrumentoId() => $"td:candidata-{Guid.NewGuid():N}";
 
-    private LiquidacaoCandidataReadRepository CriarRepositorio() => new(fixture.DataSource);
+    private AReceberVencidoReadRepository CriarRepositorio() => new(fixture.DataSource);
 
     private async Task<Movimento> InserirAsync(
         string clienteId, string instrumentoId, TipoMovimento tipo, string refExterna,

@@ -4,13 +4,13 @@ using Custodia.API;
 using Custodia.API.Extensions;
 using Custodia.API.Middleware;
 using Custodia.Application;
-using Custodia.Application.Backfill;
+using Custodia.Application.Reparo;
 using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Eventos;
 using Custodia.Infrastructure;
 using Custodia.Infrastructure.Calendario;
-using Custodia.Infrastructure.Guardas;
+using Custodia.Infrastructure.Conciliacao;
 using Custodia.Infrastructure.Liquidacao;
 using Custodia.Infrastructure.Messaging;
 using MediatR;
@@ -18,12 +18,12 @@ using IResult = Microsoft.AspNetCore.Http.IResult;
 
 const string VerboReconstruirPosicoes = "--reconstruir-posicoes";
 const string VerboDrenarParking = "--drenar-parking";
-const string VerboBackfillJanelaF4F5 = "--backfill-janela-f4-f5";
+const string VerboRepararResgatesAntigos = "--reparar-resgates-antigos";
 const string ArgumentoPassagemId = "--passagem-id";
 const int CodigoDeSaidaUso = 64;
 
 if (args.Length > 0
-    && (args[0] == VerboReconstruirPosicoes || args[0] == VerboDrenarParking || args[0] == VerboBackfillJanelaF4F5))
+    && (args[0] == VerboReconstruirPosicoes || args[0] == VerboDrenarParking || args[0] == VerboRepararResgatesAntigos))
 {
     var codigoDeSaidaAdmin = await ExecutarComandoAdministrativoAsync(args);
     Environment.Exit(codigoDeSaidaAdmin);
@@ -43,7 +43,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<RabbitMqTradeConsumidor>();
     builder.Services.AddHostedService<RabbitMqFilaProfundidadePoller>();
     builder.Services.AddHostedService<CalendarioDiasUteisHorizonteGuard>();
-    builder.Services.AddHostedService<GuardasF5Job>();
+    builder.Services.AddHostedService<ConciliacaoDeResgatesJob>();
 
     if (builder.Configuration.GetValue(ChaveConfiguracaoLiquidacaoJobHabilitado, defaultValue: true))
     {
@@ -140,16 +140,16 @@ static async Task<int> ExecutarComandoAdministrativoAsync(string[] args)
     {
         VerboReconstruirPosicoes => await ExecutarReconstruirPosicoesAsync(adminHost.Services, args),
         VerboDrenarParking => await ExecutarDrenarParkingAsync(adminHost.Services, args),
-        VerboBackfillJanelaF4F5 => await ExecutarBackfillJanelaF4F5Async(adminHost.Services),
+        VerboRepararResgatesAntigos => await ExecutarRepararResgatesAntigosAsync(adminHost.Services),
         _ => CodigoDeSaidaUso,
     };
 }
 
-static async Task<int> ExecutarBackfillJanelaF4F5Async(IServiceProvider servicos)
+static async Task<int> ExecutarRepararResgatesAntigosAsync(IServiceProvider servicos)
 {
     using var escopo = servicos.CreateScope();
     var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
-    var resultado = await mediator.Send(new BackfillJanelaF4F5Command());
+    var resultado = await mediator.Send(new RepararResgatesAntigosCommand());
 
     if (resultado.IsFailure)
     {

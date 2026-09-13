@@ -41,7 +41,7 @@ public sealed class EstornoDeResgateIntegrationTests(InfrastructurePostgresFixtu
 
     private LiquidarResgatesVencidosCommandHandler CriarHandlerDeLiquidacao(AppDbContext db) =>
         new(
-            new LiquidacaoCandidataReadRepository(CriarDataSource()),
+            new AReceberVencidoReadRepository(CriarDataSource()),
             new MovimentoTravamentoRepository(db),
             new MovimentoReadRepository(CriarDataSource()),
             new MovimentoWriteRepository(db),

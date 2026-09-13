@@ -6,7 +6,7 @@ public static class FilaDeLotes
 {
     public static IReadOnlyList<Lote> Reconstruir(IEnumerable<Movimento> movimentos, CortePosicional corte)
     {
-        var efetivos = SequenciaCanonica.MovimentosEfetivos(movimentos, corte);
+        var efetivos = LivroSemEstornos.MovimentosEfetivos(movimentos, corte);
 
         var fila = new LinkedList<Lote>();
 

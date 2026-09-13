@@ -4,7 +4,7 @@ using Custodia.Domain.Tributos;
 
 namespace Custodia.Domain.Tests.Tributos;
 
-public sealed class RederivacaoTributosResgateTests
+public sealed class RecalculoDeTributosTests
 {
     private const string ClienteId = "cliente-1";
     private const string InstrumentoId = "td:tesouro-selic-2029";
@@ -23,7 +23,7 @@ public sealed class RederivacaoTributosResgateTests
         var resgate = MovimentoTestExtensions.MovimentoValido(
             2, ClienteId, InstrumentoId, TipoMovimento.Venda, Dia(11), Instante(11), -10m, 1200m, "resgate-1");
 
-        var resultado = RederivacaoTributosResgate.Rederivar([compra, resgate], resgate);
+        var resultado = RecalculoDeTributos.Rederivar([compra, resgate], resgate);
 
         Assert.True(resultado.Consumo.CoberturaCompleta);
         var loteConsumido = Assert.Single(resultado.Consumo.Lotes);
@@ -40,7 +40,7 @@ public sealed class RederivacaoTributosResgateTests
         var resgate = MovimentoTestExtensions.MovimentoValido(
             1, ClienteId, InstrumentoId, TipoMovimento.Venda, Dia(5), Instante(5), -10m, 1000m, "resgate-descoberto");
 
-        var resultado = RederivacaoTributosResgate.Rederivar([resgate], resgate);
+        var resultado = RecalculoDeTributos.Rederivar([resgate], resgate);
 
         Assert.False(resultado.Consumo.CoberturaCompleta);
         Assert.Equal(10m, resultado.Consumo.QuantidadeDescoberta);
@@ -57,7 +57,7 @@ public sealed class RederivacaoTributosResgateTests
         var resgate = MovimentoTestExtensions.MovimentoValido(
             2, ClienteId, InstrumentoId, TipoMovimento.Venda, Dia(6), Instante(6), -10m, 1000m, "resgate-prejuizo");
 
-        var resultado = RederivacaoTributosResgate.Rederivar([compra, resgate], resgate);
+        var resultado = RecalculoDeTributos.Rederivar([compra, resgate], resgate);
 
         Assert.Equal(0m, resultado.Tributos.Ir);
         Assert.Equal(0m, resultado.Tributos.Iof);

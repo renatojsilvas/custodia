@@ -3,11 +3,11 @@ using Custodia.Domain.Posicoes;
 
 namespace Custodia.Domain.Tributos;
 
-public sealed record RederivacaoDeResgate(ConsumoDeFila Consumo, ResultadoTributosResgate Tributos);
+public sealed record RecalculoDeTributosDeResgate(ConsumoDeFila Consumo, ResultadoTributosResgate Tributos);
 
-public static class RederivacaoTributosResgate
+public static class RecalculoDeTributos
 {
-    public static RederivacaoDeResgate Rederivar(IReadOnlyList<Movimento> movimentosDaChave, Movimento resgate)
+    public static RecalculoDeTributosDeResgate Rederivar(IReadOnlyList<Movimento> movimentosDaChave, Movimento resgate)
     {
         ArgumentNullException.ThrowIfNull(movimentosDaChave);
         ArgumentNullException.ThrowIfNull(resgate);
@@ -18,6 +18,6 @@ public static class RederivacaoTributosResgate
         var consumo = FilaDeLotes.ConsumirParaResgate(fila, Math.Abs(resgate.QtdDelta), corte);
         var tributos = MotorTributosResgate.Calcular(consumo.Lotes, resgate.ValorFinanceiro);
 
-        return new RederivacaoDeResgate(consumo, tributos);
+        return new RecalculoDeTributosDeResgate(consumo, tributos);
     }
 }

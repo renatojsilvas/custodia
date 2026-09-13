@@ -1192,7 +1192,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
     }
 
     [Fact]
-    public async Task Handle_EstornoDeResgateCujoALiquidarAindaNaoExiste_JanelaF4F5_ReverteSoOPrincipal_NaoTentaReverterDerivados()
+    public async Task Handle_EstornoDeResgateCujoALiquidarAindaNaoExiste_AntesDaConciliacaoExistir_ReverteSoOPrincipal_NaoTentaReverterDerivados()
     {
         var fato = CriarFatoDeResgate(ClienteId, InstrumentoId, "op-resgate-legado", quantidade: 10m, valorBruto: 1200m);
         var (handler, movimentoWrite, _, _, _, travamento) = CriarHandler(movimentosExistentes: [fato.Venda]);

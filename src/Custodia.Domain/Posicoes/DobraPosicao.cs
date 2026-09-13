@@ -8,7 +8,7 @@ public static class DobraPosicao
 
     public static PosicaoTresColunas Dobrar(IEnumerable<Movimento> movimentos, CortePosicional? corte = null)
     {
-        var efetivos = SequenciaCanonica.MovimentosEfetivos(movimentos, corte);
+        var efetivos = LivroSemEstornos.MovimentosEfetivos(movimentos, corte);
 
         var estado = PosicaoTresColunas.Zero;
 

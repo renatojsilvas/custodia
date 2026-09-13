@@ -3,7 +3,7 @@ namespace Custodia.Application.Liquidacao;
 public enum DesfechoLiquidacaoDeResgates
 {
     Completude,
-    ParcialPorInconsistencia,
+    DadoQuebrado,
 }
 
 public sealed record ResultadoLiquidacaoDeResgates(

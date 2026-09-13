@@ -10,7 +10,7 @@ using Microsoft.Extensions.Configuration;
 namespace Custodia.Application.Liquidacao;
 
 public sealed class LiquidarResgatesVencidosCommandHandler(
-    ILiquidacaoCandidataReadRepository candidataReadRepository,
+    IAReceberVencidoReadRepository candidataReadRepository,
     IMovimentoTravamentoRepository movimentoTravamentoRepository,
     IMovimentoReadRepository movimentoReadRepository,
     IMovimentoWriteRepository movimentoWriteRepository,
@@ -99,7 +99,7 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
         }
 
         var desfecho = fatosInconsistentes > 0
-            ? DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia
+            ? DesfechoLiquidacaoDeResgates.DadoQuebrado
             : DesfechoLiquidacaoDeResgates.Completude;
 
         return new ResultadoLiquidacaoDeResgates(
@@ -107,7 +107,7 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
     }
 
     private async Task<Result<DesfechoDeCandidata>> ProcessarCandidataAsync(
-        LiquidacaoCandidata candidata, DateOnly hoje, CancellationToken ct)
+        AReceberVencido candidata, DateOnly hoje, CancellationToken ct)
     {
         var refAliq = $"aliq:{candidata.TradeId}";
 

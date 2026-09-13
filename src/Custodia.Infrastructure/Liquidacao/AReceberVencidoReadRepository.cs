@@ -6,9 +6,9 @@ using Npgsql;
 
 namespace Custodia.Infrastructure.Liquidacao;
 
-public sealed class LiquidacaoCandidataReadRepository(NpgsqlDataSource dataSource) : ILiquidacaoCandidataReadRepository
+public sealed class AReceberVencidoReadRepository(NpgsqlDataSource dataSource) : IAReceberVencidoReadRepository
 {
-    static LiquidacaoCandidataReadRepository()
+    static AReceberVencidoReadRepository()
     {
         DapperTypeHandlers.Register();
     }
@@ -39,15 +39,15 @@ public sealed class LiquidacaoCandidataReadRepository(NpgsqlDataSource dataSourc
         ORDER BY a.data_evento, a.registrado_em, a.id
         """;
 
-    public async Task<Result<IReadOnlyList<LiquidacaoCandidata>>> ObterAbertasNaoRevertidasAsync(CancellationToken ct)
+    public async Task<Result<IReadOnlyList<AReceberVencido>>> ObterAbertasNaoRevertidasAsync(CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
 
-        var rows = await connection.QueryAsync<LiquidacaoCandidata>(
+        var rows = await connection.QueryAsync<AReceberVencido>(
             new CommandDefinition(SqlAbertasNaoRevertidas, cancellationToken: ct));
 
-        IReadOnlyList<LiquidacaoCandidata> candidatas = rows.ToList();
+        IReadOnlyList<AReceberVencido> candidatas = rows.ToList();
 
-        return Result<IReadOnlyList<LiquidacaoCandidata>>.Success(candidatas);
+        return Result<IReadOnlyList<AReceberVencido>>.Success(candidatas);
     }
 }

@@ -1,21 +1,21 @@
 using Custodia.Application.Calendario;
-using Custodia.Application.Guardas;
+using Custodia.Application.Conciliacao;
 using Custodia.Application.Liquidacao;
 using Custodia.Application.Movimentos;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
-using Custodia.Infrastructure.Backfill;
+using Custodia.Infrastructure.Reparo;
 using Custodia.Infrastructure.Calendario;
-using Custodia.Infrastructure.Guardas;
+using Custodia.Infrastructure.Conciliacao;
 using Custodia.Infrastructure.Liquidacao;
 using Custodia.Infrastructure.Persistence.Repositories;
 using Custodia.Infrastructure.Tests.Persistence;
 using Npgsql;
 
-namespace Custodia.Infrastructure.Tests.Guardas;
+namespace Custodia.Infrastructure.Tests.Conciliacao;
 
 [Collection("infra-postgres")]
-public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(InfrastructurePostgresFixture fixture)
+public sealed class ExecutarConciliacaoDeResgatesCommandHandlerIntegrationTests(InfrastructurePostgresFixture fixture)
 {
     private static readonly DateTimeOffset RegistradoEm = new(2026, 8, 1, 10, 0, 0, TimeSpan.Zero);
 
@@ -25,18 +25,18 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
 
     private NpgsqlDataSource CriarDataSource() => fixture.DataSource;
 
-    private ExecutarGuardasF5CommandHandler CriarHandlerDeGuardas() =>
+    private ExecutarConciliacaoDeResgatesCommandHandler CriarHandlerDeConciliacao() =>
         new(
-            new BackfillJanelaF4F5ReadRepository(CriarDataSource()),
-            new LiquidacaoCandidataReadRepository(CriarDataSource()),
-            new GuardasF5ReadRepository(CriarDataSource()),
+            new RepararResgatesAntigosReadRepository(CriarDataSource()),
+            new AReceberVencidoReadRepository(CriarDataSource()),
+            new ConciliacaoDeResgatesReadRepository(CriarDataSource()),
             new MovimentoReadRepository(CriarDataSource()),
             new ProximoDiaUtilService(new CalendarioDiasUteisReadRepository(CriarDataSource())),
             new CalendarioDiasUteisReadRepository(CriarDataSource()));
 
-    private async Task<ResultadoGuardasF5> ExecutarGuardasAsync()
+    private async Task<ResultadoConciliacaoDeResgates> ExecutarConciliacaoAsync()
     {
-        var resultado = await CriarHandlerDeGuardas().Handle(new ExecutarGuardasF5Command(), CancellationToken.None);
+        var resultado = await CriarHandlerDeConciliacao().Handle(new ExecutarConciliacaoDeResgatesCommand(), CancellationToken.None);
         Assert.True(resultado.IsSuccess);
         return resultado.Value;
     }
@@ -75,14 +75,14 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
     [Fact]
     public async Task Guarda1_ResgateEfetivoSemAliq_Acusa_ComControleNegativoDePrejuizoQueTemAliqSemIrNemIof()
     {
-        var antes = await ExecutarGuardasAsync();
+        var antes = await ExecutarConciliacaoAsync();
 
         var clienteId = NovoClienteId();
         var instrumentoAcusa = NovoInstrumentoId();
         await InserirCompraAsync(clienteId, instrumentoAcusa, "g1-compra-acusa", new DateOnly(2026, 6, 1), 10m, 1000m);
         await InserirVendaAsync(clienteId, instrumentoAcusa, "g1-resgate-acusa", new DateOnly(2026, 6, 11), 10m, 1200m);
 
-        var depoisDoPositivo = await ExecutarGuardasAsync();
+        var depoisDoPositivo = await ExecutarConciliacaoAsync();
         Assert.Equal(antes.ResgatesSemAliq + 1, depoisDoPositivo.ResgatesSemAliq);
 
         var instrumentoPrejuizo = NovoInstrumentoId();
@@ -92,14 +92,14 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
             clienteId, InstrumentosCaixa.ALiquidar, TipoMovimento.ALiquidar, new DateOnly(2026, 1, 10), "aliq:g1-resgate-prejuizo",
             1000m, 1000m);
 
-        var depoisDoControleNegativo = await ExecutarGuardasAsync();
+        var depoisDoControleNegativo = await ExecutarConciliacaoAsync();
         Assert.Equal(depoisDoPositivo.ResgatesSemAliq, depoisDoControleNegativo.ResgatesSemAliq);
     }
 
     [Fact]
     public async Task Guarda2_AjusteSobreResgateSemConjuntoEst_Acusa_ComControleNegativoDeReversaoCompletaSemIof()
     {
-        var antes = await ExecutarGuardasAsync();
+        var antes = await ExecutarConciliacaoAsync();
 
         var clienteId = NovoClienteId();
 
@@ -110,7 +110,7 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
             1200m, 1200m);
         await InserirAjusteSobreAsync(vendaAcusa, clienteId, "g2-estorno-acusa");
 
-        var depoisDoPositivo = await ExecutarGuardasAsync();
+        var depoisDoPositivo = await ExecutarConciliacaoAsync();
         Assert.Equal(antes.AjustesDeResgateSemReversao + 1, depoisDoPositivo.AjustesDeResgateSemReversao);
 
         var instrumentoCompleto = NovoInstrumentoId();
@@ -127,14 +127,14 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
         await InserirAjusteSobreAsync(irCompleta, clienteId, "est:ir:g2-estorno-completo");
         _ = ajusteCompleto;
 
-        var depoisDoControleNegativo = await ExecutarGuardasAsync();
+        var depoisDoControleNegativo = await ExecutarConciliacaoAsync();
         Assert.Equal(depoisDoPositivo.AjustesDeResgateSemReversao, depoisDoControleNegativo.AjustesDeResgateSemReversao);
     }
 
     [Fact]
     public async Task Guarda3_ALiquidarVencidaSemLiquidacao_Acusa_ComControleNegativoDeLiquidacaoJaGravada()
     {
-        var antes = await ExecutarGuardasAsync();
+        var antes = await ExecutarConciliacaoAsync();
 
         var clienteId = NovoClienteId();
 
@@ -142,7 +142,7 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
             clienteId, InstrumentosCaixa.ALiquidar, TipoMovimento.ALiquidar, new DateOnly(2026, 1, 5), "aliq:g3-vencida",
             1000m, 1000m);
 
-        var depoisDoPositivo = await ExecutarGuardasAsync();
+        var depoisDoPositivo = await ExecutarConciliacaoAsync();
         Assert.Equal(antes.ALiquidarVencidaSemLiquidacao + 1, depoisDoPositivo.ALiquidarVencidaSemLiquidacao);
 
         await InserirAsync(
@@ -155,14 +155,14 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
             clienteId, InstrumentosCaixa.Brl, TipoMovimento.Liquidacao, new DateOnly(2026, 1, 6), "liq:g3-liquidada:brl",
             1000m, 1000m);
 
-        var depoisDoControleNegativo = await ExecutarGuardasAsync();
+        var depoisDoControleNegativo = await ExecutarConciliacaoAsync();
         Assert.Equal(depoisDoPositivo.ALiquidarVencidaSemLiquidacao, depoisDoControleNegativo.ALiquidarVencidaSemLiquidacao);
     }
 
     [Fact]
     public async Task Guarda4_TributoDivergenteDoRederivado_AcusaCompraRetroativa_ComControleNegativoDeTributoQueBate()
     {
-        var antes = await ExecutarGuardasAsync();
+        var antes = await ExecutarConciliacaoAsync();
 
         var clienteId = NovoClienteId();
 
@@ -179,7 +179,7 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
             clienteId, InstrumentosCaixa.ALiquidar, TipoMovimento.ALiquidar, new DateOnly(2026, 1, 20), "aliq:g4-resgate-bate",
             1300m, 1300m);
 
-        var depoisDoControleNegativo = await ExecutarGuardasAsync();
+        var depoisDoControleNegativo = await ExecutarConciliacaoAsync();
         Assert.Equal(antes.TributosDivergentesDoRederivado, depoisDoControleNegativo.TributosDivergentesDoRederivado);
 
         var instrumentoDivergente = NovoInstrumentoId();
@@ -197,14 +197,14 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
 
         await InserirCompraAsync(clienteId, instrumentoDivergente, "g4-compra-retroativa", new DateOnly(2025, 12, 25), 10m, 500m);
 
-        var depoisDoPositivo = await ExecutarGuardasAsync();
+        var depoisDoPositivo = await ExecutarConciliacaoAsync();
         Assert.Equal(depoisDoControleNegativo.TributosDivergentesDoRederivado + 1, depoisDoPositivo.TributosDivergentesDoRederivado);
     }
 
     [Fact]
     public async Task Guarda4_ComCompraRegistradaDepoisDoResgateNoMesmoDataEvento_NaoAcusaPoisARederivacaoRespeitaOCortePorRegistradoEm()
     {
-        var antes = await ExecutarGuardasAsync();
+        var antes = await ExecutarConciliacaoAsync();
 
         var clienteId = NovoClienteId();
         var instrumentoId = NovoInstrumentoId();
@@ -221,7 +221,7 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
             clienteId, instrumentoId, "g4-corte-compra-mesmo-dia", new DateOnly(2026, 6, 11), 5m, 700m,
             registradoEm: RegistradoEm.AddMinutes(1));
 
-        var depois = await ExecutarGuardasAsync();
+        var depois = await ExecutarConciliacaoAsync();
         Assert.Equal(antes.TributosDivergentesDoRederivado, depois.TributosDivergentesDoRederivado);
     }
 }

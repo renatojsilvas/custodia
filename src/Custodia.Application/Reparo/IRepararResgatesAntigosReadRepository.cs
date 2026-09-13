@@ -1,8 +1,8 @@
 using Custodia.Domain.Common;
 
-namespace Custodia.Application.Backfill;
+namespace Custodia.Application.Reparo;
 
-public interface IBackfillJanelaF4F5ReadRepository
+public interface IRepararResgatesAntigosReadRepository
 {
     Task<Result<IReadOnlyList<ResgateSemAliq>>> ObterResgatesSemAliqAsync(CancellationToken ct);
 

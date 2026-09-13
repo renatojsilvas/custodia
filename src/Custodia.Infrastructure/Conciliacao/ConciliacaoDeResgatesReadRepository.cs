@@ -1,14 +1,14 @@
-using Custodia.Application.Guardas;
+using Custodia.Application.Conciliacao;
 using Custodia.Domain.Common;
 using Custodia.Infrastructure.Persistence;
 using Dapper;
 using Npgsql;
 
-namespace Custodia.Infrastructure.Guardas;
+namespace Custodia.Infrastructure.Conciliacao;
 
-public sealed class GuardasF5ReadRepository(NpgsqlDataSource dataSource) : IGuardasF5ReadRepository
+public sealed class ConciliacaoDeResgatesReadRepository(NpgsqlDataSource dataSource) : IConciliacaoDeResgatesReadRepository
 {
-    static GuardasF5ReadRepository()
+    static ConciliacaoDeResgatesReadRepository()
     {
         DapperTypeHandlers.Register();
     }

@@ -1,6 +1,6 @@
-namespace Custodia.Application.Guardas;
+namespace Custodia.Application.Conciliacao;
 
-public sealed record ResultadoGuardasF5(
+public sealed record ResultadoConciliacaoDeResgates(
     int ResgatesSemAliq,
     int AjustesDeResgateSemReversao,
     int ALiquidarVencidaSemLiquidacao,

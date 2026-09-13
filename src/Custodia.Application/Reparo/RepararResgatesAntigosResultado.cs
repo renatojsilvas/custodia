@@ -1,6 +1,6 @@
-namespace Custodia.Application.Backfill;
+namespace Custodia.Application.Reparo;
 
-public sealed record BackfillJanelaF4F5Resultado(
+public sealed record RepararResgatesAntigosResultado(
     int ResgatesCandidatos,
     int ResgatesBackfilled,
     int AjustesCandidatos,

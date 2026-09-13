@@ -1,8 +1,8 @@
 using Custodia.Domain.Common;
 
-namespace Custodia.Application.Guardas;
+namespace Custodia.Application.Conciliacao;
 
-public interface IGuardasF5ReadRepository
+public interface IConciliacaoDeResgatesReadRepository
 {
     Task<Result<IReadOnlyList<ResgateTributado>>> ObterResgatesTributadosAsync(CancellationToken ct);
 }

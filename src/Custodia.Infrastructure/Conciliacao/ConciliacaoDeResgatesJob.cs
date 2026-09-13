@@ -1,21 +1,21 @@
 using Custodia.Application.Common.Interfaces;
-using Custodia.Application.Guardas;
+using Custodia.Application.Conciliacao;
 using MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace Custodia.Infrastructure.Guardas;
+namespace Custodia.Infrastructure.Conciliacao;
 
-public sealed class GuardasF5Job(
+public sealed class ConciliacaoDeResgatesJob(
     IServiceScopeFactory scopeFactory,
     IConfiguration configuracao,
-    ILogger<GuardasF5Job> logger) : BackgroundService
+    ILogger<ConciliacaoDeResgatesJob> logger) : BackgroundService
 {
     public const int CicloIntervaloSegundosPadrao = 300;
 
-    private const string ChaveConfiguracaoCicloIntervaloSegundos = "Decisao:GuardasF5CicloIntervaloSegundos";
+    private const string ChaveConfiguracaoCicloIntervaloSegundos = "Decisao:ConciliacaoDeResgatesCicloIntervaloSegundos";
 
     private readonly TimeSpan _intervalo = TimeSpan.FromSeconds(
         configuracao.GetValue<int?>(ChaveConfiguracaoCicloIntervaloSegundos) ?? CicloIntervaloSegundosPadrao);
@@ -39,12 +39,12 @@ public sealed class GuardasF5Job(
             var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
             var businessMetrics = escopo.ServiceProvider.GetRequiredService<IBusinessMetrics>();
 
-            var resultado = await mediator.Send(new ExecutarGuardasF5Command(), ct);
+            var resultado = await mediator.Send(new ExecutarConciliacaoDeResgatesCommand(), ct);
 
             if (resultado.IsFailure)
             {
                 logger.LogError(
-                    "Varredura das guardas permanentes do F5 falhou: {CodigoDeErro} - {Mensagem}. " +
+                    "Conciliação de resgates falhou: {CodigoDeErro} - {Mensagem}. " +
                     "Nova tentativa no próximo ciclo.",
                     resultado.Error.Code,
                     resultado.Error.Description);
@@ -58,7 +58,7 @@ public sealed class GuardasF5Job(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "Falha inesperada na varredura das guardas permanentes do F5; nova tentativa no próximo ciclo.");
+            logger.LogError(ex, "Falha inesperada na conciliação de resgates; nova tentativa no próximo ciclo.");
         }
     }
 }
