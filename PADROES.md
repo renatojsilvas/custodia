@@ -1741,3 +1741,32 @@ seguinte, a duplicação é dívida com data marcada, não conveniência.
 **E o corolário de despacho:** peça ao executor que responda essa pergunta ao desfazer a duplicação.
 A extração sozinha remove o risco futuro em silêncio; a pergunta transforma o que estava latente em
 achado escrito, e é ela que diz se algo já estava errado em produção.
+
+### 10.50. Varredura de confirmação de rename roda SEM o filtro de ruído — alvo e ruído coabitam a linha
+
+**Medido na `custodia`, F5 (2026-09-13), padronizando a grafia de um conceito.**
+
+Renomeei um tipo de `X` para `Y` e precisei reverter parte do rename. Para achar o que reverter,
+varri por `Y` **excluindo** as linhas que continham o tipo legitimamente renomeado — um filtro de
+ruído, para não reler dezenas de ocorrências corretas. A varredura devolveu uma lista, eu reverti a
+lista inteira, e o compilador acusou **18 erros** em um arquivo que a varredura **não mostrou**.
+
+O motivo é banal e por isso escapa: as chamadas eram `Resultado.Y(TipoRenomeado.Valor)` — o **alvo**
+e o **ruído** na **mesma linha**. `grep -v` opera por linha, não por ocorrência, então excluir o
+ruído excluiu o alvo junto.
+
+**Regra: a varredura que CONFIRMA um rename roda sem filtro nenhum.** Filtro serve para *explorar*
+(reduzir o que você lê enquanto entende o problema); a confirmação é uma pergunta de completude, e
+completude não se afirma sobre um conjunto que você mesmo reduziu. Se a saída sem filtro for grande,
+restrinja por **caminho** (`src/` e `tests/` separados, um diretório por vez) — nunca por conteúdo da
+linha.
+
+**Corolário que vale além de rename:** toda vez que você usar `grep -v` para tirar ruído, pergunte se
+existe uma linha onde o ruído e o alvo coabitam. Se existir, o filtro não é conservador — ele é
+**cego naquele caso exato**, e o caso exato costuma ser o mais interessante, porque é onde os dois
+conceitos se encontram.
+
+**E o que salvou aqui foi o compilador, não a disciplina:** num rename de símbolo C# o erro aparece
+em segundos. Numa varredura de string (SQL embutido, nome de métrica, chave de configuração,
+documento) **não há compilador**, o filtro cego passa despercebido, e o que sobrevive é uma ocorrência
+órfã que ninguém procura de novo.

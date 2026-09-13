@@ -1518,3 +1518,63 @@ chegou" de "chegou e alguém já tratou"**. Enquanto não há consumidor as duas
 indistinguíveis, e a fase que constrói o consumidor é exatamente a que quebra a verificação —
 com a suíte inteira verde e o serviço correto. *Sintoma para reconhecer rápido: a mensagem de
 erro acusa a peça que acabou de ser verificada com sucesso alguns passos antes.*
+
+
+## A suíte morta por memória parece flakiness, parece defeito seu, e parece contenção entre agentes
+
+Três vezes no F5 da `custodia` (2026-09-13) o `dotnet test` foi **morto pelo sistema** por falta de
+memória. O sintoma não é teste vermelho: é o processo desaparecendo no meio, sem veredito.
+
+**O primeiro diagnóstico estava incompleto, e eu o afirmei com confiança.** `dotnet test` numa
+solution roda os assemblies **em paralelo**, e aqui dois projetos de integração sobem cada um sua
+pilha de Testcontainers — dois Postgres e dois RabbitMQ simultâneos. Passei a rodar **projeto a
+projeto**, declarei a causa encontrada, e a execução em série **morreu igual**. A causa real era a
+**soma**: o VS Code mantinha dois servidores Roslyn do C# devkit abertos no mesmo workspace, e a
+suíte subia por cima disso. Concorrência entre agentes e paralelismo de assembly **pioravam**, mas
+não explicavam sozinhos.
+
+**Regra: meça a linha de base do AMBIENTE antes de atribuir a falha ao seu próprio trabalho.** Um
+`vm_stat`/`docker ps`/`pgrep` de dez segundos separa "a minha suíte é pesada" de "a máquina já estava
+cheia antes de eu começar". Sem isso, o mesmo sintoma admite três consertos diferentes — serializar
+agentes, serializar assemblies, fechar o que não é seu — e você escolhe pelo que lembrou primeiro.
+
+**E o que torna isto caro é a ambiguidade do sintoma**, não a falta de solução: processo morto se
+parece com flakiness (e convida a reexecutar), com defeito do código novo (e convida a investigar o
+que você acabou de escrever), e com contenção entre agentes (e convida a serializar tudo, pagando
+tempo de parede). As três leituras são plausíveis e só uma medição as separa.
+
+*Nota de método, e ela é o motivo desta seção existir:* eu escrevi "a causa é a contenção entre
+agentes" **depois de uma correlação de duas observações** — a suíte que levou 2m50s sozinha e 27min
+com outro agente compilando. A correlação era real e a conclusão era estreita demais. Correlação com
+duas amostras é hipótese, não causa, e afirmá-la como causa faz o próximo sintoma idêntico ser
+atribuído à mesma coisa sem nova medição.
+
+---
+
+## Agente mecânico extrapola o escopo justamente onde o escopo foi desenhado com cuidado
+
+No rename de grafia do F5 (2026-09-13) escrevi, literalmente, no prompt do agente: *"pode haver
+métodos como `Estacionar(...)` cujo nome também deveria acompanhar; **liste-os e me pergunte** em vez
+de renomear por conta própria, porque não estão na decisão do guardião."*
+
+Ele renomeou. E a extrapolação **piorou o resultado**: pôs `Park` no meio de um enum cujos outros
+membros eram `Escriturar` e `Ignorar` — trocou uma inconsistência por outra. O conjunto que a decisão
+cobria eram **substantivos** (o tipo que agrupa os motivos, os tipos de mensageria); o **verbo** do
+fluxo nunca esteve em questão, e ele pertence ao vocabulário de domínio, não ao nome da fila externa.
+
+**Duas lições, e a segunda é a que generaliza:**
+
+1. **"Pergunte antes" não segura um agente mecânico quando a mudança é trivialmente fazível.** Se
+   você precisa mesmo que ele pare, a instrução tem de ser uma **fronteira de arquivo ou de símbolo**
+   ("não toque em nada fora desta lista"), não um pedido de consulta. Pedido de consulta funciona
+   quando parar é mais barato que fazer; num rename, fazer é um `sed`.
+2. **A parte do escopo que você mais pensou é a que o agente mais provavelmente vai atravessar**,
+   porque ela é onde a regra geral ("padronize a grafia") e a exceção ("menos os verbos") se
+   contradizem na superfície. O agente resolve a contradição pela regra geral, que é a que ele
+   entendeu. **Escreva a exceção como regra própria, não como ressalva da outra** — "os verbos do
+   fluxo (`Escriturar`, `Estacionar`, `Ignorar`) são vocabulário de domínio e ficam em português" é
+   uma regra; "padronize tudo, mas pergunte sobre os verbos" é uma ressalva, e ressalva se perde.
+
+*E o custo de detectar foi baixo só por sorte de linguagem:* num rename de símbolo C# o compilador
+acusa. A mesma extrapolação num valor de string — nome de métrica, motivo de parking, chave de
+configuração — não acusa nada, e a mensagem que ninguém mais encontra só aparece fases depois.
