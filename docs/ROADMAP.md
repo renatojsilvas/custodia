@@ -5401,6 +5401,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
 
   NAO ENTRA: cupom e vencimento (F9), snapshot e o worker da 7.4 (F7), extrato (F8).
 
+  PAUTA EXTRA DO GUARDIAO NESTA FASE (decidida pelo dono em 2026-09-13, a ser conferida DEPOIS
+  da onda 2): o conceito de PARKING tem TRES GRAFIAS no repo, e isso e anterior ao F5 —
+  `MotivoEstacionamento` (portugues), `ParkingDrenador`/`ParkingDrenadorMetrics` (ingles) e
+  `IMensagemParkeadaReprocessador` (aportuguesamento). A fila se chama `custodia.parked`, entao o
+  termo vem de fora e teria justificativa para ficar em ingles; o que nao se justifica e o mesmo
+  conceito ter nome diferente em tres lugares. A convencao do repo e clara e o resto do codigo a
+  segue — PORTUGUES no vocabulario de dominio, INGLES em framework/infra e no que vem de contrato
+  externo, com sufixo em ingles (`Repository`, `Handler`, `Command`, `Metrics`, `Guard`, `Row`,
+  `Middleware`). Peca ao guardiao que escolha UMA grafia e liste os pontos a renomear. E barato
+  agora e caro depois que o F7 e o F8 encostarem no drenador.
   Ao final, guardiao-padroes e DEPOIS revisor, em serie, nunca em paralelo. Achado grave
   corrigido pede AS DUAS de novo sobre o delta. Peca ao guardiao que confira tambem os
   textos que VOCE escreveu. Commite antes de rodar o revisor.
