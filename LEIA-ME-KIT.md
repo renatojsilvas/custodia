@@ -1363,7 +1363,30 @@ tinha **540** — o número foi escrito depois da primeira rodada de correção 
 segunda acrescentou nove testes. A **mensagem do commit da mesma entrega já dizia 540**: o arquivo
 contradizia o commit que o gravou.
 
-Os quatro, para a forma ficar visível:
+**QUINTO caso, e ele é de uma VARIANTE que os quatro anteriores não têm: o total estava certo e a
+DIVISÃO estava errada.** No F5 da `custodia` (2026-09-12), fechando a pendência do `prazo`, fui
+atualizar a frase "São **CINCO** adjudicações até aqui — **duas** que entraram, três que não" para
+somar a sexta. Ao contar no arquivo em vez de aceitar o número, a enumeração logo abaixo da frase
+tinha **uma** que entrou e **quatro** que não. O "cinco" estava certo desde sempre; o "duas/três"
+nunca esteve. O defeito atravessou todas as revisões anteriores porque **a varredura por numeral
+procura o numeral do TOTAL**, e a divisão mora na mesma frase, atrás de uma vírgula, parecendo
+aposto explicativo em vez de afirmação.
+
+**Regra que isto acrescenta:** contagem de conjunto **partido** tem **dois** numerais — o total e
+cada parcela —, e conferir o total não confere a partição. Quando a frase for "são N, X de um jeito e
+Y de outro", **some X + Y e compare com N**, e depois conte os membros de cada parcela na
+enumeração. Três números, três conferências. *E o corolário para quem escreve:* se a enumeração
+existe logo abaixo, **não escreva a divisão** — ela é derivável e só serve para envelhecer.
+
+**E o segundo motivo de isto estar aqui, que é sobre despachar e não sobre contar:** eu havia pedido
+a varredura por numeral ao `advisor`, com a lista dos conjuntos afetados, e ele devolveu
+"CINCO → SEIS, três que entraram, três que não" — propagando a divisão errada, porque **assumiu que
+o número existente estava certo** e só somou o item novo. Um subagente pedido para varrer numeral
+faz aritmética sobre o que está escrito; **quem confere contra a enumeração é quem despacha**. É o
+espelho da regra 3 acima: não ponha numeral num prompt sem contar, e não aceite numeral de um
+relatório sem contar.
+
+Os cinco, para a forma ficar visível:
 
 | numeral escrito | valor real | quando envelheceu |
 |---|---|---|
@@ -1371,8 +1394,11 @@ Os quatro, para a forma ficar visível:
 | "o mesmo conjunto de **4–5 linhas**" | 4–6 e 4–5, por família | quando as famílias foram enumeradas |
 | "**NOVE** CHECKs em movimentos" | doze | quando o achado do espaço acrescentou três |
 | "Suíte 506 → **531**" | 540 | quando a segunda rodada de correção acrescentou nove testes |
+| "cinco adjudicações — **duas** que entraram, três que não" | cinco, **uma** e quatro | nunca esteve certo: o total era certo, a divisão não |
 
-**A forma é sempre a mesma, e é o que torna isto previsível em vez de azar:** quem escreve o numeral
+**A forma dos QUATRO PRIMEIROS é sempre a mesma, e é o que torna isto previsível em vez de azar**
+(o quinto é a variante da divisão, e a defesa dele é somar as parcelas, não reler o total): quem
+escreve o numeral
 é a mesma pessoa que acabou de mudar a coisa contada, no mesmo commit ou no seguinte; o numeral não
 contém a palavra do assunto, então `grep` por tema não o alcança; e ele **parece atual**, porque foi
 escrito agora.
