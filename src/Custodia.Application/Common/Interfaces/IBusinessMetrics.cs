@@ -13,4 +13,12 @@ public interface IBusinessMetrics
     void RegistrarLiquidacaoCalendarioExaurido(string clienteId, string tradeId);
 
     void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora);
+
+    void RegistrarGuardaResgatesSemAliq(int quantidade);
+
+    void RegistrarGuardaAjustesDeResgateSemReversao(int quantidade);
+
+    void RegistrarGuardaALiquidarVencidaSemLiquidacao(int quantidade);
+
+    void RegistrarGuardaTributoDivergenteDoRederivado(int quantidade);
 }

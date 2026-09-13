@@ -131,10 +131,9 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             return movimentosDaChaveResult.Error;
         }
 
-        var corteDoResgate = new CortePosicional(evento.DataEvento, evento.RegistradoEm);
-        var filaAntesDoResgate = FilaDeLotes.Reconstruir(movimentosDaChaveResult.Value, corteDoResgate);
-        var consumo = FilaDeLotes.ConsumirParaResgate(filaAntesDoResgate, evento.Quantidade, corteDoResgate);
-        var tributos = MotorTributosResgate.Calcular(consumo.Lotes, evento.ValorFinanceiro);
+        var rederivacao = RederivacaoTributosResgate.Rederivar(movimentosDaChaveResult.Value, vendaResult.Value);
+        var consumo = rederivacao.Consumo;
+        var tributos = rederivacao.Tributos;
 
         if (!consumo.CoberturaCompleta)
         {
@@ -240,7 +239,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.EstornoDivergente);
         }
 
-        var ajusteTituloResult = CriarAjusteDeReversao(titulo, evento.ClienteId, evento.RegistradoEm, evento.TradeId);
+        var ajusteTituloResult = AjusteDeReversao.Criar(titulo, evento.ClienteId, evento.RegistradoEm, evento.TradeId);
 
         if (ajusteTituloResult.IsFailure)
         {
@@ -261,7 +260,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         {
             var pernaOriginal = pernaOriginalResult.Value.Linha!;
 
-            var ajustePernaResult = CriarAjusteDeReversao(
+            var ajustePernaResult = AjusteDeReversao.Criar(
                 pernaOriginal, evento.ClienteId, evento.RegistradoEm, $"{evento.TradeId}:brl");
 
             if (ajustePernaResult.IsFailure)
@@ -317,7 +316,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
         await pontoDeSuspensaoAposTravamento.AposTravarAsync(aliq.ClienteId, aliq.RefExterna, ct);
 
-        var ajusteAliqResult = CriarAjusteDeReversao(
+        var ajusteAliqResult = AjusteDeReversao.Criar(
             aliq, evento.ClienteId, evento.RegistradoEm, $"est:aliq:{evento.TradeId}");
 
         if (ajusteAliqResult.IsFailure)
@@ -351,7 +350,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
                 continue;
             }
 
-            var ajusteDerivadaResult = CriarAjusteDeReversao(
+            var ajusteDerivadaResult = AjusteDeReversao.Criar(
                 derivadaResult.Value.Linha!, evento.ClienteId, evento.RegistradoEm, refExternaEstorno);
 
             if (ajusteDerivadaResult.IsFailure)
@@ -370,22 +369,6 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         evento.InstrumentoId == titulo.InstrumentoId
         && evento.Quantidade == Math.Abs(titulo.QtdDelta)
         && evento.ValorFinanceiro == titulo.ValorFinanceiro;
-
-    private static Result<Movimento> CriarAjusteDeReversao(
-        Movimento revertida,
-        string clienteId,
-        DateTimeOffset registradoEm,
-        string refExterna) =>
-        Movimento.Create(
-            clienteId,
-            revertida.InstrumentoId,
-            TipoMovimento.Ajuste,
-            revertida.DataEvento,
-            registradoEm,
-            qtdDelta: -revertida.QtdDelta,
-            valorFinanceiro: -revertida.ValorFinanceiro,
-            refExterna: refExterna,
-            refEstorno: revertida.Id);
 
     private async Task<Result<ResultadoTradeRegistered>> GravarTudoAsync(
         IReadOnlyList<Movimento> movimentos, CancellationToken ct)

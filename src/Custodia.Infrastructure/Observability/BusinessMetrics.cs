@@ -48,6 +48,85 @@ public sealed class BusinessMetrics(ILogger<BusinessMetrics> logger) : IBusiness
         "correspondente) — estado impossível por construção em produção, mas que o job não pode assumir. " +
         "O ciclo continua para as demais candidatas; a linha órfã realerta a cada ciclo até correção manual.");
 
+    private static readonly Gauge GuardaResgatesSemAliqGauge = Metrics.CreateGauge(
+        "custodia_guarda_resgates_sem_aliq",
+        "Guarda permanente 1/4 do F5: quantidade de resgates efetivos (venda não revertida) sem a linha " +
+        "aliq:<tradeId> — discriminador incondicional, gravado com ou sem tributo porque a_liquidar entra " +
+        "BRUTO. Deveria ser sempre zero fora da janela F4→F5; reaparecer indica bug do handler ou backfill " +
+        "pendente.");
+
+    private static readonly Gauge GuardaAjustesDeResgateSemReversaoGauge = Metrics.CreateGauge(
+        "custodia_guarda_ajustes_de_resgate_sem_reversao",
+        "Guarda permanente 2/4 do F5: quantidade de ajustes sobre resgate cujo conjunto est: correspondente " +
+        "ainda não foi gravado por inteiro (discriminado por est:aliq:, o mesmo padrão da guarda 1). Deveria " +
+        "ser sempre zero fora da janela F4→F5.");
+
+    private static readonly Gauge GuardaALiquidarVencidaSemLiquidacaoGauge = Metrics.CreateGauge(
+        "custodia_guarda_a_liquidar_vencida_sem_liquidacao",
+        "Guarda permanente 3/4 do F5: quantidade de a_liquidar vencida e não revertida sem liq:<fato>:brl — a " +
+        "MESMA consulta que o job de liquidação usa para achar candidatas. Um job atrasado aponta para si " +
+        "mesmo em vez de deixar o livro incompleto em silêncio.");
+
+    private static readonly Gauge GuardaTributoDivergenteDoRederivadoGauge = Metrics.CreateGauge(
+        "custodia_guarda_tributo_divergente_do_rederivado",
+        "Guarda permanente 4/4 do F5: quantidade de resgates efetivos já tributados cujo IR/IOF re-derivado da " +
+        "fila FIFO, com o corte posicional do próprio resgate, diverge das linhas ir:/iof: efetivas gravadas no " +
+        "livro. Única das quatro que não é consulta de ausência — cobre compra retroativa, estorno de compra " +
+        "já consumida e venda ou resgate retroativo que passa a preceder um resgate já tributado.");
+
+    public void RegistrarGuardaResgatesSemAliq(int quantidade)
+    {
+        GuardaResgatesSemAliqGauge.Set(quantidade);
+
+        if (quantidade > 0)
+        {
+            logger.LogWarning(
+                "Guarda F5 1/4: {Quantidade} resgate(s) efetivo(s) sem a linha aliq:<tradeId>. " +
+                "Rode o backfill da janela F4→F5 (metade i) se ainda não rodou; reaparecer depois indica bug do handler.",
+                quantidade);
+        }
+    }
+
+    public void RegistrarGuardaAjustesDeResgateSemReversao(int quantidade)
+    {
+        GuardaAjustesDeResgateSemReversaoGauge.Set(quantidade);
+
+        if (quantidade > 0)
+        {
+            logger.LogWarning(
+                "Guarda F5 2/4: {Quantidade} ajuste(s) sobre resgate sem o conjunto est: correspondente. " +
+                "Rode o backfill da janela F4→F5 (metade ii, sempre depois da metade i) se ainda não rodou.",
+                quantidade);
+        }
+    }
+
+    public void RegistrarGuardaALiquidarVencidaSemLiquidacao(int quantidade)
+    {
+        GuardaALiquidarVencidaSemLiquidacaoGauge.Set(quantidade);
+
+        if (quantidade > 0)
+        {
+            logger.LogWarning(
+                "Guarda F5 3/4: {Quantidade} a_liquidar vencida e não revertida sem liq:<fato>:brl. " +
+                "O job de liquidação está atrasado ou parado.",
+                quantidade);
+        }
+    }
+
+    public void RegistrarGuardaTributoDivergenteDoRederivado(int quantidade)
+    {
+        GuardaTributoDivergenteDoRederivadoGauge.Set(quantidade);
+
+        if (quantidade > 0)
+        {
+            logger.LogCritical(
+                "Guarda F5 4/4: {Quantidade} resgate(s) com tributo divergente do re-derivado pela fila FIFO. " +
+                "Investigue compra retroativa, estorno de compra já consumida ou venda/resgate retroativo à " +
+                "frente de um resgate já tributado. Conserto é estorno do resgate e relançamento, nunca UPDATE.",
+                quantidade);
+        }
+    }
+
     public void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora)
     {
         LiquidacaoCandidataInconsistenteTotal.Inc();

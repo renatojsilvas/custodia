@@ -1,10 +1,14 @@
+using Custodia.Application.Backfill;
 using Custodia.Application.Calendario;
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Eventos;
+using Custodia.Application.Guardas;
 using Custodia.Application.Liquidacao;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
+using Custodia.Infrastructure.Backfill;
 using Custodia.Infrastructure.Common;
+using Custodia.Infrastructure.Guardas;
 using Custodia.Infrastructure.Liquidacao;
 using Custodia.Infrastructure.Messaging;
 using Custodia.Infrastructure.Observability;
@@ -46,6 +50,8 @@ public static class DependencyInjection
         services.AddScoped<IProximoDiaUtilService, ProximoDiaUtilService>();
         services.AddScoped<IMovimentoTravamentoRepository, MovimentoTravamentoRepository>();
         services.AddScoped<ILiquidacaoCandidataReadRepository, LiquidacaoCandidataReadRepository>();
+        services.AddScoped<IBackfillJanelaF4F5ReadRepository, BackfillJanelaF4F5ReadRepository>();
+        services.AddScoped<IGuardasF5ReadRepository, GuardasF5ReadRepository>();
         services.AddSingleton<IRecalculoEnfileiradorPort, RecalculoEnfileiradorNuloPort>();
         services.AddSingleton<IPontoDeSuspensaoAposTravamento, PontoDeSuspensaoAposTravamentoInerte>();
         services.AddSingleton<RoteadorDeEventos>();
