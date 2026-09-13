@@ -6,6 +6,7 @@ using Custodia.Domain.Common;
 using Custodia.Domain.Eventos;
 using Custodia.Domain.Movimentos;
 using Custodia.Domain.Posicoes;
+using Custodia.Domain.Tributos;
 
 namespace Custodia.Application.Eventos;
 
@@ -104,7 +105,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
     private async Task<Result<ResultadoTradeRegistered>> ProcessarResgateAsync(
         TradeRegisteredEvento evento, CancellationToken ct)
     {
-        var movimentoResult = Movimento.Create(
+        var vendaResult = Movimento.Create(
             evento.ClienteId,
             evento.InstrumentoId,
             TipoMovimento.Venda,
@@ -114,13 +115,84 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             valorFinanceiro: evento.ValorFinanceiro,
             refExterna: evento.TradeId);
 
-        if (movimentoResult.IsFailure)
+        if (vendaResult.IsFailure)
         {
             return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
         }
 
-        return await GravarTudoAsync([movimentoResult.Value], ct);
+        var movimentosDaChaveResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
+            evento.ClienteId, evento.InstrumentoId, ct);
+
+        if (movimentosDaChaveResult.IsFailure)
+        {
+            return movimentosDaChaveResult.Error;
+        }
+
+        var filaAntesDoResgate = FilaDeLotes.Reconstruir(movimentosDaChaveResult.Value);
+        var consumo = FilaDeLotes.ConsumirParaResgate(filaAntesDoResgate, evento.Quantidade, evento.DataEvento);
+        var tributos = MotorTributosResgate.Calcular(consumo.Lotes, evento.ValorFinanceiro, evento.DataEvento);
+
+        if (!consumo.CoberturaCompleta)
+        {
+            businessMetrics.RegistrarResgateTributadoSobrePrecoMedioProvisorio(
+                evento.ClienteId, evento.InstrumentoId, consumo.QuantidadeDescoberta);
+        }
+
+        var pendencias = new List<Movimento> { vendaResult.Value };
+
+        if (tributos.Ir > 0m)
+        {
+            var irResult = CriarMovimentoDeTributo(evento, TipoMovimento.IrRetido, tributos.Ir, $"ir:{evento.TradeId}");
+            if (irResult.IsFailure)
+            {
+                return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            }
+
+            pendencias.Add(irResult.Value);
+        }
+
+        if (tributos.Iof > 0m)
+        {
+            var iofResult = CriarMovimentoDeTributo(evento, TipoMovimento.Iof, tributos.Iof, $"iof:{evento.TradeId}");
+            if (iofResult.IsFailure)
+            {
+                return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            }
+
+            pendencias.Add(iofResult.Value);
+        }
+
+        var aliqResult = Movimento.Create(
+            evento.ClienteId,
+            InstrumentosCaixa.ALiquidar,
+            TipoMovimento.ALiquidar,
+            evento.DataEvento,
+            evento.RegistradoEm,
+            qtdDelta: evento.ValorFinanceiro,
+            valorFinanceiro: evento.ValorFinanceiro,
+            refExterna: $"aliq:{evento.TradeId}");
+
+        if (aliqResult.IsFailure)
+        {
+            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+        }
+
+        pendencias.Add(aliqResult.Value);
+
+        return await GravarTudoAsync(pendencias, ct);
     }
+
+    private static Result<Movimento> CriarMovimentoDeTributo(
+        TradeRegisteredEvento evento, TipoMovimento tipo, decimal valor, string refExterna) =>
+        Movimento.Create(
+            evento.ClienteId,
+            InstrumentosCaixa.ALiquidar,
+            tipo,
+            evento.DataEvento,
+            evento.RegistradoEm,
+            qtdDelta: -valor,
+            valorFinanceiro: valor,
+            refExterna: refExterna);
 
     private async Task<Result<ResultadoTradeRegistered>> ProcessarEstornoAsync(
         TradeRegisteredEvento evento, CancellationToken ct)
@@ -223,15 +295,23 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
     private async Task<Result<ResultadoTradeRegistered>> GravarTudoAsync(
         IReadOnlyList<Movimento> movimentos, CancellationToken ct)
     {
+        var estadosJaAplicadosNesteLote = new Dictionary<(string ClienteId, string InstrumentoId), PosicaoTresColunas>();
+
         foreach (var movimento in movimentos)
         {
-            var posicaoResult = await AplicarNaPosicaoAsync(
-                movimento.ClienteId, movimento.InstrumentoId, movimento, ct);
+            var chaveNoLote = (movimento.ClienteId, movimento.InstrumentoId);
+
+            var posicaoResult = estadosJaAplicadosNesteLote.TryGetValue(chaveNoLote, out var estadoAnteriorNoLote)
+                ? Result<PosicaoTresColunas>.Success(
+                    DobraPosicao.AplicarIncremental(estadoAnteriorNoLote, movimento, movimento.DataEvento).Estado!)
+                : await AplicarNaPosicaoAsync(movimento.ClienteId, movimento.InstrumentoId, movimento, ct);
 
             if (posicaoResult.IsFailure)
             {
                 return posicaoResult.Error;
             }
+
+            estadosJaAplicadosNesteLote[chaveNoLote] = posicaoResult.Value;
 
             var adicionarResult = await movimentoWriteRepository.AdicionarAsync(movimento, ct);
             if (adicionarResult.IsFailure)

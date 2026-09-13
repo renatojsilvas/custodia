@@ -97,7 +97,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
         var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
 
         Assert.True(resultado.IsSuccess);
-        var gravado = Assert.Single(movimentoWrite.Adicionados);
+        var gravado = movimentoWrite.Adicionados.Single(m => m.RefExterna == evento.TradeId);
         Assert.Equal(TipoMovimento.Venda, gravado.Tipo);
         Assert.NotEqual(TipoMovimento.Resgate, gravado.Tipo);
         Assert.Equal(-4m, gravado.QtdDelta);
@@ -563,12 +563,21 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, resultado.Value.Tipo);
-        Assert.Single(movimentoWrite.Adicionados);
+        Assert.Equal(2, movimentoWrite.Adicionados.Count);
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.Tipo == TipoMovimento.IrRetido);
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.Tipo == TipoMovimento.Iof);
+        var aliq = movimentoWrite.Adicionados.Single(m => m.Tipo == TipoMovimento.ALiquidar);
+        Assert.Equal(2500m, aliq.QtdDelta);
 
         var sinalizacao = Assert.Single(metrics.Sinalizacoes);
         Assert.Equal(ClienteId, sinalizacao.ClienteId);
         Assert.Equal(InstrumentoId, sinalizacao.InstrumentoId);
         Assert.True(sinalizacao.QuantidadeResultante < 0m);
+
+        var sinalizacaoDeFilaInsuficiente = Assert.Single(metrics.SinalizacoesDeResgateSobrePrecoMedioProvisorio);
+        Assert.Equal(ClienteId, sinalizacaoDeFilaInsuficiente.ClienteId);
+        Assert.Equal(InstrumentoId, sinalizacaoDeFilaInsuficiente.InstrumentoId);
+        Assert.Equal(15m, sinalizacaoDeFilaInsuficiente.QuantidadeDescoberta);
     }
 
     [Fact]

@@ -8,6 +8,7 @@ using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Eventos;
 using Custodia.Infrastructure;
+using Custodia.Infrastructure.Calendario;
 using Custodia.Infrastructure.Messaging;
 using MediatR;
 using IResult = Microsoft.AspNetCore.Http.IResult;
@@ -34,6 +35,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<RabbitMqTradeConsumidor>();
     builder.Services.AddHostedService<RabbitMqFilaProfundidadePoller>();
+    builder.Services.AddHostedService<CalendarioDiasUteisHorizonteGuard>();
 }
 var app = builder.Build();
 NormalizeApiKeyConfiguration(app.Configuration);

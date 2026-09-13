@@ -1,0 +1,302 @@
+using System;
+using Custodia.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+
+#nullable disable
+
+namespace Custodia.Infrastructure.Persistence.Migrations
+{
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260912100000_CriaCalendarioDiasUteis")]
+    partial class CriaCalendarioDiasUteis
+    {
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        {
+#pragma warning disable 612, 618
+            modelBuilder
+                .HasAnnotation("ProductVersion", "8.0.11")
+                .HasAnnotation("Relational:MaxIdentifierLength", 63);
+
+            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Custodia.Domain.Movimentos.Movimento", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ClienteId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("cliente_id");
+
+                    b.Property<DateOnly>("DataEvento")
+                        .HasColumnType("date")
+                        .HasColumnName("data_evento");
+
+                    b.Property<string>("InstrumentoId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("instrumento_id");
+
+                    b.Property<decimal>("QtdDelta")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)")
+                        .HasColumnName("qtd_delta");
+
+                    b.Property<long?>("RefEstorno")
+                        .HasColumnType("bigint")
+                        .HasColumnName("ref_estorno");
+
+                    b.Property<string>("RefExterna")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ref_externa");
+
+                    b.Property<DateTimeOffset>("RegistradoEm")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("registrado_em")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("tipo");
+
+                    b.Property<decimal>("ValorFinanceiro")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("valor_financeiro");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("Id", "ClienteId", "InstrumentoId")
+                        .HasName("ux_movimentos_id_cliente_instrumento");
+
+                    b.HasIndex("RefEstorno")
+                        .IsUnique()
+                        .HasDatabaseName("ix_movimentos_ref_estorno_unico")
+                        .HasFilter("ref_estorno IS NOT NULL");
+
+                    b.HasIndex("ClienteId", "RefExterna")
+                        .IsUnique()
+                        .HasDatabaseName("ix_movimentos_cliente_ref_externa");
+
+                    b.HasIndex("RefEstorno", "ClienteId", "InstrumentoId")
+                        .HasDatabaseName("ix_movimentos_ref_estorno_cliente_instrumento");
+
+                    b.HasIndex("ClienteId", "InstrumentoId", "DataEvento", "RegistradoEm", "Id")
+                        .HasDatabaseName("ix_movimentos_cliente_instrumento_data_evento_registrado_em_id");
+
+                    b.ToTable("movimentos", null, t =>
+                        {
+                            t.HasTrigger("trg_movimentos_data_evento_futura");
+
+                            t.HasTrigger("trg_movimentos_imutavel");
+
+                            t.HasCheckConstraint("ck_movimentos_ajuste_coerente", "(tipo = 'ajuste') = (ref_estorno IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_movimentos_cliente_id_nao_vazio", "btrim(cliente_id) <> ''");
+
+                            t.HasCheckConstraint("ck_movimentos_cliente_id_sem_espaco_nas_bordas", "cliente_id !~ '^[\\s\\u00A0\\u1680\\u2007\\u202F]|[\\s\\u00A0\\u1680\\u2007\\u202F]$'");
+
+                            t.HasCheckConstraint("ck_movimentos_cupom_sem_quantidade", "tipo <> 'cupom' OR qtd_delta = 0");
+
+                            t.HasCheckConstraint("ck_movimentos_estorno_nao_auto", "ref_estorno IS NULL OR ref_estorno <> id");
+
+                            t.HasCheckConstraint("ck_movimentos_instrumento_caixa_valido", "lower(btrim(instrumento_id)) NOT LIKE 'caixa:%' OR instrumento_id IN ('caixa:BRL', 'caixa:a_liquidar')");
+
+                            t.HasCheckConstraint("ck_movimentos_instrumento_id_nao_vazio", "btrim(instrumento_id) <> ''");
+
+                            t.HasCheckConstraint("ck_movimentos_instrumento_id_sem_espaco_nas_bordas", "instrumento_id !~ '^[\\s\\u00A0\\u1680\\u2007\\u202F]|[\\s\\u00A0\\u1680\\u2007\\u202F]$'");
+
+                            t.HasCheckConstraint("ck_movimentos_ref_externa_nao_vazia", "btrim(ref_externa) <> ''");
+
+                            t.HasCheckConstraint("ck_movimentos_ref_externa_sem_espaco_nas_bordas", "ref_externa !~ '^[\\s\\u00A0\\u1680\\u2007\\u202F]|[\\s\\u00A0\\u1680\\u2007\\u202F]$'");
+
+                            t.HasCheckConstraint("ck_movimentos_tipo_valido", "tipo IN ('compra', 'venda', 'aporte', 'cupom', 'resgate', 'ir_retido', 'iof', 'a_liquidar', 'liquidacao', 'ajuste')");
+
+                            t.HasCheckConstraint("ck_movimentos_valor_nao_negativo", "tipo = 'ajuste' OR valor_financeiro >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Custodia.Domain.Posicoes.PosicaoCorrente", b =>
+                {
+                    b.Property<string>("ClienteId")
+                        .HasColumnType("text")
+                        .HasColumnName("cliente_id");
+
+                    b.Property<string>("InstrumentoId")
+                        .HasColumnType("text")
+                        .HasColumnName("instrumento_id");
+
+                    b.Property<decimal?>("CustoTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("custo_total");
+
+                    b.Property<decimal?>("PrecoMedio")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("preco_medio");
+
+                    b.Property<decimal>("Quantidade")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)")
+                        .HasColumnName("quantidade");
+
+                    b.HasKey("ClienteId", "InstrumentoId");
+
+                    b.ToTable("posicao_corrente", (string)null);
+                });
+
+            modelBuilder.Entity("Custodia.Domain.Posicoes.SnapshotPosicao", b =>
+                {
+                    b.Property<string>("ClienteId")
+                        .HasColumnType("text")
+                        .HasColumnName("cliente_id");
+
+                    b.Property<string>("InstrumentoId")
+                        .HasColumnType("text")
+                        .HasColumnName("instrumento_id");
+
+                    b.Property<DateOnly>("Data")
+                        .HasColumnType("date")
+                        .HasColumnName("data");
+
+                    b.Property<DateTimeOffset>("CalculadoEm")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("calculado_em")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<decimal?>("Custo")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("custo");
+
+                    b.Property<decimal>("Preco")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("preco");
+
+                    b.Property<decimal?>("PrecoMedio")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("preco_medio");
+
+                    b.Property<decimal>("Quantidade")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)")
+                        .HasColumnName("quantidade");
+
+                    b.Property<decimal>("Valor")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("valor");
+
+                    b.Property<bool>("Vigente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("vigente");
+
+                    b.HasKey("ClienteId", "InstrumentoId", "Data", "CalculadoEm");
+
+                    b.ToTable("snapshots_posicao", (string)null);
+                });
+
+            modelBuilder.Entity("Custodia.Domain.Precos.HistoricoPreco", b =>
+                {
+                    b.Property<string>("InstrumentoId")
+                        .HasColumnType("text")
+                        .HasColumnName("instrumento_id");
+
+                    b.Property<DateOnly>("DataRef")
+                        .HasColumnType("date")
+                        .HasColumnName("data_ref");
+
+                    b.Property<string>("Campo")
+                        .HasColumnType("text")
+                        .HasColumnName("campo");
+
+                    b.Property<string>("Fonte")
+                        .HasColumnType("text")
+                        .HasColumnName("fonte");
+
+                    b.Property<int>("Revisao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("revisao");
+
+                    b.Property<DateTimeOffset>("ObservadoEm")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observado_em")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<decimal>("Valor")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("valor");
+
+                    b.HasKey("InstrumentoId", "DataRef", "Campo", "Fonte", "Revisao");
+
+                    b.HasIndex("InstrumentoId", "DataRef")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("ix_historico_precos_lookup");
+
+                    b.ToTable("historico_precos", (string)null);
+                });
+
+            modelBuilder.Entity("Custodia.Domain.Precos.PrecoAtual", b =>
+                {
+                    b.Property<string>("InstrumentoId")
+                        .HasColumnType("text")
+                        .HasColumnName("instrumento_id");
+
+                    b.Property<string>("Campo")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("campo");
+
+                    b.Property<DateOnly>("DataRef")
+                        .HasColumnType("date")
+                        .HasColumnName("data_ref");
+
+                    b.Property<int>("Revisao")
+                        .HasColumnType("integer")
+                        .HasColumnName("revisao");
+
+                    b.Property<decimal>("Valor")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("valor");
+
+                    b.HasKey("InstrumentoId");
+
+                    b.ToTable("preco_atual", (string)null);
+                });
+
+            modelBuilder.Entity("Custodia.Domain.Movimentos.Movimento", b =>
+                {
+                    b.HasOne("Custodia.Domain.Movimentos.Movimento", null)
+                        .WithMany()
+                        .HasForeignKey("RefEstorno", "ClienteId", "InstrumentoId")
+                        .HasPrincipalKey("Id", "ClienteId", "InstrumentoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_movimentos_movimentos_ref_estorno");
+                });
+#pragma warning restore 612, 618
+        }
+    }
+}
