@@ -158,7 +158,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
         }
         catch (JsonException)
         {
-            desfecho = DesfechoRoteamento.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            desfecho = DesfechoRoteamento.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         switch (desfecho.Tipo)
@@ -226,7 +226,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
 
         if (voltasJaFeitas >= _orfaoTetoVoltas)
         {
-            await EstacionarAsync(ea, cabecalhosOriginais, MotivoEstacionamento.EstornoOrfaoExpirado, corpo);
+            await EstacionarAsync(ea, cabecalhosOriginais, MotivoParking.EstornoOrfaoExpirado, corpo);
             return;
         }
 
@@ -234,7 +234,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
 
         if (tentativasDeEntregaNestaFila >= _retryTetoTentativas)
         {
-            await EstacionarAsync(ea, cabecalhosOriginais, MotivoEstacionamento.RetryIndisponivel, corpo);
+            await EstacionarAsync(ea, cabecalhosOriginais, MotivoParking.RetryIndisponivel, corpo);
             return;
         }
 
@@ -260,7 +260,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
     }
 
     private async Task EstacionarAsync(
-        BasicDeliverEventArgs ea, Dictionary<string, object?> cabecalhosOriginais, MotivoEstacionamento motivo, byte[] corpo)
+        BasicDeliverEventArgs ea, Dictionary<string, object?> cabecalhosOriginais, MotivoParking motivo, byte[] corpo)
     {
         var cabecalhosParaRepublicar = new Dictionary<string, object?>(cabecalhosOriginais);
         RabbitMqCabecalhos.DefinirMotivo(cabecalhosParaRepublicar, motivo.Name);

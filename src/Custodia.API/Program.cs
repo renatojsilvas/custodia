@@ -196,7 +196,7 @@ static async Task<int> ExecutarDrenarParkingAsync(IServiceProvider servicos, str
         return CodigoDeSaidaUso;
     }
 
-    var motivoResult = MotivoEstacionamento.FromName(args[1]);
+    var motivoResult = MotivoParking.FromName(args[1]);
     if (motivoResult.IsFailure)
     {
         Console.Error.WriteLine($"Motivo de estacionamento desconhecido: '{args[1]}'.");

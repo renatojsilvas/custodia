@@ -161,7 +161,7 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
                     motivosAcumulados.Add(motivo);
                 }
 
-                return motivosAcumulados.Contains(MotivoEstacionamento.EstornoOrfaoExpirado.Name);
+                return motivosAcumulados.Contains(MotivoParking.EstornoOrfaoExpirado.Name);
             }, TimeoutComDuasVoltasDeRetry);
 
             Assert.True(
@@ -224,7 +224,7 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
             var duasParkedComoOrfaoExpirado = await EsperarAsync(async () =>
             {
                 motivosAcumulados.AddRange(await LerMotivosDaFilaParkedAsync());
-                return motivosAcumulados.Count(m => m == MotivoEstacionamento.EstornoOrfaoExpirado.Name) >= 2;
+                return motivosAcumulados.Count(m => m == MotivoParking.EstornoOrfaoExpirado.Name) >= 2;
             }, TimeoutComDuasVoltasDeRetry);
 
             Assert.True(
@@ -355,9 +355,9 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
 
             var motivosEsperados = new HashSet<string>
             {
-                MotivoEstacionamento.EstornoClienteDivergente.Name,
-                MotivoEstacionamento.VersaoNaoSuportada.Name,
-                MotivoEstacionamento.EstornoDivergente.Name,
+                MotivoParking.EstornoClienteDivergente.Name,
+                MotivoParking.VersaoNaoSuportada.Name,
+                MotivoParking.EstornoDivergente.Name,
             };
 
             var motivosAcumulados = new HashSet<string>();
@@ -421,7 +421,7 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
                     motivosAcumulados.Add(motivo);
                 }
 
-                return motivosAcumulados.Contains(MotivoEstacionamento.EstornoDuplicado.Name);
+                return motivosAcumulados.Contains(MotivoParking.EstornoDuplicado.Name);
             }, TimeoutCurto));
         }
         finally
@@ -470,7 +470,7 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
                     motivosAcumulados.Add(motivo);
                 }
 
-                return motivosAcumulados.Contains(MotivoEstacionamento.RetryIndisponivel.Name);
+                return motivosAcumulados.Contains(MotivoParking.RetryIndisponivel.Name);
             }, TimeoutCurto);
 
             Assert.True(
@@ -626,7 +626,7 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
                     motivosAcumulados.Add(motivo);
                 }
 
-                return motivosAcumulados.Contains(MotivoEstacionamento.TipoNaoTratadoPrices.Name);
+                return motivosAcumulados.Contains(MotivoParking.TipoNaoTratadoPrices.Name);
             }, TimeoutCurto));
 
             Assert.Single(motivosAcumulados);

@@ -55,14 +55,14 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
     {
         if (evento.ValorOrigemSaldoBruto is null)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.OrigemRecursoAusente);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.OrigemRecursoAusente);
         }
 
         if (!DecimalContrato.TryParse(evento.ValorOrigemSaldoBruto, out var valorOrigemSaldo)
             || valorOrigemSaldo < 0m
             || valorOrigemSaldo > evento.ValorFinanceiro)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.OrigemRecursoInvalida);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.OrigemRecursoInvalida);
         }
 
         var principalResult = Movimento.Create(
@@ -77,7 +77,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
         if (principalResult.IsFailure)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         var pendencias = new List<Movimento> { principalResult.Value };
@@ -96,7 +96,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
             if (pernaResult.IsFailure)
             {
-                return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.OrigemRecursoInvalida);
+                return ResultadoTradeRegistered.Estacionar(MotivoParking.OrigemRecursoInvalida);
             }
 
             pendencias.Add(pernaResult.Value);
@@ -120,7 +120,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
         if (vendaResult.IsFailure)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         var movimentosDaChaveResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
@@ -148,7 +148,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             var irResult = CriarMovimentoDeTributo(evento, TipoMovimento.IrRetido, tributos.Ir, $"ir:{evento.TradeId}");
             if (irResult.IsFailure)
             {
-                return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+                return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
             }
 
             pendencias.Add(irResult.Value);
@@ -159,7 +159,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             var iofResult = CriarMovimentoDeTributo(evento, TipoMovimento.Iof, tributos.Iof, $"iof:{evento.TradeId}");
             if (iofResult.IsFailure)
             {
-                return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+                return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
             }
 
             pendencias.Add(iofResult.Value);
@@ -177,7 +177,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
         if (aliqResult.IsFailure)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         pendencias.Add(aliqResult.Value);
@@ -228,7 +228,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
             if (qualquerClienteResult.Value.Encontrado)
             {
-                return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.EstornoClienteDivergente);
+                return ResultadoTradeRegistered.Estacionar(MotivoParking.EstornoClienteDivergente);
             }
 
             return ResultadoTradeRegistered.EnviarParaRetry();
@@ -236,14 +236,14 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
         if (!ConferenciaBate(evento, titulo))
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.EstornoDivergente);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.EstornoDivergente);
         }
 
         var ajusteTituloResult = AjusteDeReversao.Criar(titulo, evento.ClienteId, evento.RegistradoEm, evento.TradeId);
 
         if (ajusteTituloResult.IsFailure)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         var pendencias = new List<Movimento> { ajusteTituloResult.Value };
@@ -265,7 +265,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
             if (ajustePernaResult.IsFailure)
             {
-                return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+                return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
             }
 
             pendencias.Add(ajustePernaResult.Value);
@@ -322,7 +322,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         if (ajusteAliqResult.IsFailure)
         {
             return ResultadoReversaoDeDerivados.Interromper(
-                ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido));
+                ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido));
         }
 
         pendencias.Add(ajusteAliqResult.Value);
@@ -356,7 +356,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             if (ajusteDerivadaResult.IsFailure)
             {
                 return ResultadoReversaoDeDerivados.Interromper(
-                    ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido));
+                    ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido));
             }
 
             pendencias.Add(ajusteDerivadaResult.Value);
@@ -459,22 +459,22 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
 
         if (erro == MovimentoWriteErrors.RefEstornoDuplicado)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.EstornoDuplicado);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.EstornoDuplicado);
         }
 
         if (erro == MovimentoWriteErrors.IdentificadorComEspacoNaBorda)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.IdentificadorComEspacoNaBorda);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.IdentificadorComEspacoNaBorda);
         }
 
         if (erro == MovimentoWriteErrors.ValorNumericoExcedeMagnitudeOuEscalaSuportada)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         if (erro == MovimentoWriteErrors.DataEventoFutura)
         {
-            return ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            return ResultadoTradeRegistered.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         if (erro == MovimentoWriteErrors.OperacaoNaoPermitidaSobreMovimentoImutavel)

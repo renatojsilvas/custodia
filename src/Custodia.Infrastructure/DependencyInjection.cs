@@ -60,7 +60,7 @@ public static class DependencyInjection
         services.AddSingleton<ConsumidorMetrics>();
         services.AddSingleton<IIdentificadorDePassagem, IdentificadorDePassagemAleatorio>();
         services.AddSingleton<IPontoDeSuspensaoDrenagem, PontoDeSuspensaoDrenagemInerte>();
-        services.AddSingleton<IMensagemParkeadaReprocessador, RoteadorMensagemParkeadaReprocessador>();
+        services.AddSingleton<IMensagemParkingReprocessador, RoteadorMensagemParkingReprocessador>();
         services.AddSingleton<ParkingDrenadorMetrics>();
         services.AddSingleton<ParkingDrenador>();
 

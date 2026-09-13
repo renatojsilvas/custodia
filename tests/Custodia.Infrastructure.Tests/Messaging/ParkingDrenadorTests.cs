@@ -26,27 +26,27 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
 
-        await PlantarAsync(canalAux, "trades.registered", "{}", MotivoEstacionamento.TipoNaoTratadoPrices.Name);
-        await PlantarAsync(canalAux, "corpactions.evento", "{}", MotivoEstacionamento.TipoNaoTratadoCorpactions.Name);
+        await PlantarAsync(canalAux, "trades.registered", "{}", MotivoParking.TipoNaoTratadoPrices.Name);
+        await PlantarAsync(canalAux, "corpactions.evento", "{}", MotivoParking.TipoNaoTratadoCorpactions.Name);
         await EsperarContagemAsync(canalAux, 2);
 
         var (drenador, _) = CriarDrenador();
 
         var resultado = await drenador.DrenarAsync(
-            MotivoEstacionamento.TipoNaoTratadoPrices, null, CancellationToken.None);
+            MotivoParking.TipoNaoTratadoPrices, null, CancellationToken.None);
 
         Assert.Equal(DesfechoDrenagem.Completude, resultado.Desfecho);
         Assert.Equal(1, resultado.NMotivo);
         Assert.Equal(0, resultado.ResidualMotivo);
 
         var motivosRestantes = await LerMotivosDaFilaAsync(canalAux);
-        Assert.Equal([MotivoEstacionamento.TipoNaoTratadoCorpactions.Name], motivosRestantes);
+        Assert.Equal([MotivoParking.TipoNaoTratadoCorpactions.Name], motivosRestantes);
     }
 
     [Fact]
     public async Task DrenarAsync_Completude_ExaminaAsNSemResidualComPeloMenosUmaProcessada_PublicaOResidualNaMetrica()
     {
-        var motivo = MotivoEstacionamento.PayloadInvalido;
+        var motivo = MotivoParking.PayloadInvalido;
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(canalAux, "trades.registered", "{}", motivo.Name);
@@ -66,13 +66,13 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_HandlerRejeitaDePropositoAMensagemDoMotivoPedido_DevolveParcialMesmoComNMotivoZero()
     {
-        var motivo = MotivoEstacionamento.VersaoNaoSuportada;
+        var motivo = MotivoParking.VersaoNaoSuportada;
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(canalAux, "trades.registered", "{}", motivo.Name);
         await EsperarContagemAsync(canalAux, 1);
 
-        var reprocessador = new FakeMensagemParkeadaReprocessador((_, _) => ResultadoReprocessamento.Falha(motivo));
+        var reprocessador = new FakeMensagemParkingReprocessador((_, _) => ResultadoReprocessamento.Falha(motivo));
         var (drenador, metrics) = CriarDrenador(reprocessador);
 
         var resultado = await drenador.DrenarAsync(motivo, null, CancellationToken.None);
@@ -89,7 +89,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_FilaVazia_DevolveVazioDoMotivo()
     {
-        var motivo = MotivoEstacionamento.EstornoDuplicado;
+        var motivo = MotivoParking.EstornoDuplicado;
         var (drenador, metrics) = CriarDrenador();
 
         var resultado = await drenador.DrenarAsync(motivo, null, CancellationToken.None);
@@ -104,8 +104,8 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_FilaSoComOutrosMotivos_DevolveVazioDoMotivoMesmoComEstoqueMaiorQueZero()
     {
-        var motivoPedido = MotivoEstacionamento.EstornoDivergente;
-        var outroMotivo = MotivoEstacionamento.OrigemRecursoInvalida;
+        var motivoPedido = MotivoParking.EstornoDivergente;
+        var outroMotivo = MotivoParking.OrigemRecursoInvalida;
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(canalAux, "trades.registered", "{}", outroMotivo.Name);
@@ -128,7 +128,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_EstoqueAcimaDoTeto_DevolveLimitePorTetoENaoPublicaAMetrica()
     {
-        var motivo = MotivoEstacionamento.RetryIndisponivel;
+        var motivo = MotivoParking.RetryIndisponivel;
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(canalAux, "trades.registered", "{}", motivo.Name);
@@ -153,7 +153,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_MensagemJaCarimbadaComAPassagemCorrente_DevolveLimitePorVoltaENaoPublicaAMetrica()
     {
-        var motivo = MotivoEstacionamento.OrigemRecursoAusente;
+        var motivo = MotivoParking.OrigemRecursoAusente;
         const string passagemFixa = "passagem-fixa-teste-de-volta";
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
@@ -173,7 +173,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_FilaPurgadaEntreALeituraDoEstoqueEOConsumo_DevolveInterrompidaENaoPublicaAMetrica()
     {
-        var motivo = MotivoEstacionamento.OrigemRecursoInvalida;
+        var motivo = MotivoParking.OrigemRecursoInvalida;
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(canalAux, "trades.registered", "{}", motivo.Name);
@@ -201,7 +201,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_ComSondaDeDeployDoF2EUmaMensagemDoMotivo_DescontaASondaDeNEDevolveCompletude()
     {
-        var motivo = MotivoEstacionamento.IdentificadorComEspacoNaBorda;
+        var motivo = MotivoParking.IdentificadorComEspacoNaBorda;
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(canalAux, "custodia-f2-topologia", "custodia-f2-sonda-abortada", motivo: null);
@@ -224,7 +224,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     [Fact]
     public async Task DrenarAsync_ApenasComSondaDeDeployDoF2_DevolveVazioDoMotivoNuncaSucessoPorLixo()
     {
-        var motivo = MotivoEstacionamento.EstornoClienteDivergente;
+        var motivo = MotivoParking.EstornoClienteDivergente;
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(canalAux, "custodia-f2-topologia", "custodia-f2-sonda-solitaria", motivo: null);
@@ -272,13 +272,13 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
         await using var conexaoAux = await fixture.CriarConexaoAmqpAsync();
         await using var canalAux = await conexaoAux.CreateChannelAsync();
         await PlantarAsync(
-            canalAux, "trades.registered", estornoPayload, MotivoEstacionamento.EstornoOrfaoExpirado.Name);
+            canalAux, "trades.registered", estornoPayload, MotivoParking.EstornoOrfaoExpirado.Name);
         await EsperarContagemAsync(canalAux, 1);
 
         var drenador = new ParkingDrenador(
             provider.GetRequiredService<RabbitMqConnectionProvider>(),
             provider.GetRequiredService<IPublicadorComConfirmacao>(),
-            provider.GetRequiredService<IMensagemParkeadaReprocessador>(),
+            provider.GetRequiredService<IMensagemParkingReprocessador>(),
             provider.GetRequiredService<IIdentificadorDePassagem>(),
             provider.GetRequiredService<IPontoDeSuspensaoDrenagem>(),
             new ParkingDrenadorMetrics(),
@@ -286,7 +286,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
             provider.GetRequiredService<ILogger<ParkingDrenador>>());
 
         var resultado = await drenador.DrenarAsync(
-            MotivoEstacionamento.EstornoOrfaoExpirado, null, CancellationToken.None);
+            MotivoParking.EstornoOrfaoExpirado, null, CancellationToken.None);
 
         Assert.Equal(DesfechoDrenagem.Completude, resultado.Desfecho);
         Assert.Equal(1, resultado.NMotivo);
@@ -299,7 +299,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
     }
 
     private (ParkingDrenador Drenador, ParkingDrenadorMetrics Metrics) CriarDrenador(
-        IMensagemParkeadaReprocessador? reprocessador = null,
+        IMensagemParkingReprocessador? reprocessador = null,
         IPontoDeSuspensaoDrenagem? gancho = null,
         IDictionary<string, string?>? configExtras = null)
     {
@@ -313,7 +313,7 @@ public sealed class ParkingDrenadorTests(RabbitMqConsumidorFixture fixture) : IA
         var drenador = new ParkingDrenador(
             connectionProvider,
             publicador,
-            reprocessador ?? new FakeMensagemParkeadaReprocessador(),
+            reprocessador ?? new FakeMensagemParkingReprocessador(),
             new IdentificadorDePassagemAleatorio(),
             gancho ?? new PontoDeSuspensaoDrenagemInerte(),
             metrics,

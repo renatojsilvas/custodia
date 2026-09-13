@@ -140,7 +140,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.OrigemRecursoAusente, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.OrigemRecursoAusente, resultado.Value.Motivo);
         Assert.Empty(movimentoWrite.Adicionados);
         Assert.Equal(0, unitOfWork.ChamadasDeSaveChanges);
     }
@@ -159,7 +159,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.OrigemRecursoInvalida, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.OrigemRecursoInvalida, resultado.Value.Motivo);
         Assert.Empty(movimentoWrite.Adicionados);
     }
 
@@ -230,7 +230,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.PayloadInvalido, resultado.Value.Motivo);
         Assert.Empty(movimentoWrite.Adicionados);
     }
 
@@ -282,7 +282,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.EstornoClienteDivergente, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.EstornoClienteDivergente, resultado.Value.Motivo);
         Assert.Empty(movimentoWrite.Adicionados);
     }
 
@@ -385,7 +385,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.EstornoDuplicado, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.EstornoDuplicado, resultado.Value.Motivo);
     }
 
     [Fact]
@@ -400,7 +400,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.IdentificadorComEspacoNaBorda, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.IdentificadorComEspacoNaBorda, resultado.Value.Motivo);
     }
 
     [Fact]
@@ -444,7 +444,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.PayloadInvalido, resultado.Value.Motivo);
     }
 
     [Fact]
@@ -459,7 +459,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.PayloadInvalido, resultado.Value.Motivo);
     }
 
     [Fact]
@@ -483,13 +483,13 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
             {
                 Assert.True(resultado.IsSuccess);
                 Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-                Assert.Equal(MotivoEstacionamento.EstornoDuplicado, resultado.Value.Motivo);
+                Assert.Equal(MotivoParking.EstornoDuplicado, resultado.Value.Motivo);
             },
             [nameof(MovimentoWriteErrors.IdentificadorComEspacoNaBorda)] = (resultado, _) =>
             {
                 Assert.True(resultado.IsSuccess);
                 Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-                Assert.Equal(MotivoEstacionamento.IdentificadorComEspacoNaBorda, resultado.Value.Motivo);
+                Assert.Equal(MotivoParking.IdentificadorComEspacoNaBorda, resultado.Value.Motivo);
             },
             [nameof(MovimentoWriteErrors.MensagemDuplicada)] = (resultado, _) =>
             {
@@ -501,13 +501,13 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
             {
                 Assert.True(resultado.IsSuccess);
                 Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-                Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+                Assert.Equal(MotivoParking.PayloadInvalido, resultado.Value.Motivo);
             },
             [nameof(MovimentoWriteErrors.DataEventoFutura)] = (resultado, _) =>
             {
                 Assert.True(resultado.IsSuccess);
                 Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-                Assert.Equal(MotivoEstacionamento.PayloadInvalido, resultado.Value.Motivo);
+                Assert.Equal(MotivoParking.PayloadInvalido, resultado.Value.Motivo);
             },
             [nameof(MovimentoWriteErrors.OperacaoNaoPermitidaSobreMovimentoImutavel)] = (resultado, erro) =>
             {
@@ -798,7 +798,7 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(ResultadoTradeRegisteredTipo.Estacionar, resultado.Value.Tipo);
-        Assert.Equal(MotivoEstacionamento.EstornoDivergente, resultado.Value.Motivo);
+        Assert.Equal(MotivoParking.EstornoDivergente, resultado.Value.Motivo);
         Assert.Empty(movimentoWrite.Adicionados);
     }
 

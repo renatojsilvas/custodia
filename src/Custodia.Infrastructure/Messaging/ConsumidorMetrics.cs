@@ -16,7 +16,7 @@ public sealed class ConsumidorMetrics
     private static readonly Counter EstacionamentosPorMotivoTotal = Metrics.CreateCounter(
         "custodia_estacionamento_mensagens_total",
         "Total de mensagens republicadas na custodia.parked pelo consumidor, por motivo " +
-        "(x-custodia-motivo). Cardinalidade fechada: os motivos são a lista de MotivoEstacionamento.",
+        "(x-custodia-motivo). Cardinalidade fechada: os motivos são a lista de MotivoParking.",
         new CounterConfiguration
         {
             LabelNames = ["motivo"],
