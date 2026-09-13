@@ -4,7 +4,7 @@ namespace Custodia.Domain.Posicoes;
 
 public static class FilaDeLotes
 {
-    public static IReadOnlyList<Lote> Reconstruir(IEnumerable<Movimento> movimentos, DateOnly? corte = null)
+    public static IReadOnlyList<Lote> Reconstruir(IEnumerable<Movimento> movimentos, CortePosicional corte)
     {
         var efetivos = SequenciaCanonica.MovimentosEfetivos(movimentos, corte);
 
@@ -38,12 +38,13 @@ public static class FilaDeLotes
     }
 
     public static ConsumoDeFila ConsumirParaResgate(
-        IReadOnlyList<Lote> filaAntesDoResgate, decimal quantidadeResgate, DateOnly dataResgate)
+        IReadOnlyList<Lote> filaAntesDoResgate, decimal quantidadeResgate, CortePosicional corte)
     {
         ArgumentNullException.ThrowIfNull(filaAntesDoResgate);
 
+        var dataResgate = corte.DataEvento;
         var fila = new LinkedList<Lote>(filaAntesDoResgate);
-        var consumos = new List<Lote>();
+        var consumos = new List<LoteConsumido>();
         var restante = quantidadeResgate;
 
         while (restante > 0m && fila.Count > 0)
@@ -52,13 +53,13 @@ public static class FilaDeLotes
 
             if (primeiro.Quantidade <= restante)
             {
-                consumos.Add(primeiro);
+                consumos.Add(ConsumirLote(primeiro, primeiro.Quantidade, dataResgate));
                 restante -= primeiro.Quantidade;
                 fila.RemoveFirst();
             }
             else
             {
-                consumos.Add(primeiro with { Quantidade = restante });
+                consumos.Add(ConsumirLote(primeiro, restante, dataResgate));
                 fila.First!.Value = primeiro with { Quantidade = primeiro.Quantidade - restante };
                 restante = 0m;
             }
@@ -67,15 +68,17 @@ public static class FilaDeLotes
         if (restante > 0m)
         {
             var ultimoLoteDaFilaOriginal = filaAntesDoResgate.Count > 0 ? filaAntesDoResgate[^1] : null;
+            var custoUnitario = ultimoLoteDaFilaOriginal?.CustoUnitario ?? 0m;
+            var dataAquisicao = ultimoLoteDaFilaOriginal?.DataAquisicao ?? dataResgate;
 
-            consumos.Add(new Lote(
-                restante,
-                ultimoLoteDaFilaOriginal?.CustoUnitario ?? 0m,
-                ultimoLoteDaFilaOriginal?.DataAquisicao ?? dataResgate));
+            consumos.Add(new LoteConsumido(restante, custoUnitario, dataAquisicao, dataResgate.DayNumber - dataAquisicao.DayNumber));
         }
 
         return new ConsumoDeFila(consumos, restante);
     }
+
+    private static LoteConsumido ConsumirLote(Lote lote, decimal quantidade, DateOnly dataResgate) =>
+        new(quantidade, lote.CustoUnitario, lote.DataAquisicao, dataResgate.DayNumber - lote.DataAquisicao.DayNumber);
 
     private static bool FormaLote(TipoMovimento tipo) =>
         tipo == TipoMovimento.Compra || tipo == TipoMovimento.Aporte;

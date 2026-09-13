@@ -128,9 +128,10 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             return movimentosDaChaveResult.Error;
         }
 
-        var filaAntesDoResgate = FilaDeLotes.Reconstruir(movimentosDaChaveResult.Value);
-        var consumo = FilaDeLotes.ConsumirParaResgate(filaAntesDoResgate, evento.Quantidade, evento.DataEvento);
-        var tributos = MotorTributosResgate.Calcular(consumo.Lotes, evento.ValorFinanceiro, evento.DataEvento);
+        var corteDoResgate = new CortePosicional(evento.DataEvento, evento.RegistradoEm);
+        var filaAntesDoResgate = FilaDeLotes.Reconstruir(movimentosDaChaveResult.Value, corteDoResgate);
+        var consumo = FilaDeLotes.ConsumirParaResgate(filaAntesDoResgate, evento.Quantidade, corteDoResgate);
+        var tributos = MotorTributosResgate.Calcular(consumo.Lotes, evento.ValorFinanceiro);
 
         if (!consumo.CoberturaCompleta)
         {

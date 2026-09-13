@@ -965,6 +965,38 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
     }
 
     [Fact]
+    public async Task Handle_ResgateRetroativoComCompraJaGravadaDeDataEventoPosterior_NaoConsomeAqueleLote_TributaPelosLotesQueExistiamENaoLanca()
+    {
+        var compraAntiga = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 5m, 500m, "op-compra-antiga");
+        var compraFutura = MovimentoTestFactory.Criar(
+            2, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(20), Instante(1), 10m, 1200m, "op-compra-futura");
+
+        var (handler, movimentoWrite, _, _, metrics) = CriarHandler(
+            movimentosExistentes: [compraAntiga, compraFutura]);
+
+        var evento = CriarEvento(
+            tradeId: "op-resgate-retroativo",
+            operacao: OperacaoTrade.Resgate,
+            quantidade: 10m,
+            valorFinanceiro: 500m,
+            diaEvento: 10);
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, resultado.Value.Tipo);
+
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.RefExterna == "ir:op-resgate-retroativo");
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.RefExterna == "iof:op-resgate-retroativo");
+
+        var sinalizacaoDeFilaInsuficiente = Assert.Single(metrics.SinalizacoesDeResgateSobrePrecoMedioProvisorio);
+        Assert.Equal(ClienteId, sinalizacaoDeFilaInsuficiente.ClienteId);
+        Assert.Equal(InstrumentoId, sinalizacaoDeFilaInsuficiente.InstrumentoId);
+        Assert.Equal(5m, sinalizacaoDeFilaInsuficiente.QuantidadeDescoberta);
+    }
+
+    [Fact]
     public async Task Handle_ReentregaDeResgateJaTributado_NaoDuplicaNenhumDosQuatroMovimentosDerivados()
     {
         var compra = MovimentoTestFactory.Criar(

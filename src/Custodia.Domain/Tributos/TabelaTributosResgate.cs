@@ -9,12 +9,12 @@ public static class TabelaTributosResgate
         30m, 26m, 23m, 20m, 16m, 13m, 10m, 6m, 3m,
     ];
 
-    private static readonly (int DiasMin, int DiasMax, decimal Aliquota)[] FaixasIrPorDiasCorridos =
+    private static readonly (int DiasMin, decimal Aliquota)[] FaixasIrPorDiasCorridos =
     [
-        (0, 180, 22.5m),
-        (181, 360, 20m),
-        (361, 720, 17.5m),
-        (721, 999_999, 15m),
+        (0, 22.5m),
+        (181, 20m),
+        (361, 17.5m),
+        (721, 15m),
     ];
 
     public static decimal? AliquotaIof(int diasCorridos) =>
@@ -24,6 +24,6 @@ public static class TabelaTributosResgate
 
     public static decimal AliquotaIr(int diasCorridos) =>
         FaixasIrPorDiasCorridos
-            .First(faixa => diasCorridos >= faixa.DiasMin && diasCorridos <= faixa.DiasMax)
+            .Last(faixa => diasCorridos >= faixa.DiasMin)
             .Aliquota;
 }
