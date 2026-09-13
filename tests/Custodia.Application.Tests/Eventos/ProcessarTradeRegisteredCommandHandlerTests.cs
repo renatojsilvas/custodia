@@ -820,4 +820,189 @@ public sealed class ProcessarTradeRegisteredCommandHandlerTests
         Assert.NotEqual(evento.Quantidade, ajuste.QtdDelta);
         Assert.NotEqual(evento.ValorFinanceiro, ajuste.ValorFinanceiro);
     }
+
+    [Fact]
+    public async Task Handle_ResgateComBasePositivaEPrazoMenorQueTrintaDias_GravaAsQuatroLinhasComRefExternaPropria()
+    {
+        var compra = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 1000m, "op-compra-1");
+
+        var (handler, movimentoWrite, _, _, _) = CriarHandler(movimentosExistentes: [compra]);
+        var evento = CriarEvento(
+            tradeId: "op-resgate-1", operacao: OperacaoTrade.Resgate, quantidade: 10m, valorFinanceiro: 1200m, diaEvento: 10);
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(4, movimentoWrite.Adicionados.Count);
+
+        var venda = movimentoWrite.Adicionados.Single(m => m.RefExterna == "op-resgate-1");
+        Assert.Equal(TipoMovimento.Venda, venda.Tipo);
+        Assert.Equal(InstrumentoId, venda.InstrumentoId);
+        Assert.Equal(-10m, venda.QtdDelta);
+        Assert.Equal(1200m, venda.ValorFinanceiro);
+
+        var ir = movimentoWrite.Adicionados.Single(m => m.RefExterna == "ir:op-resgate-1");
+        Assert.Equal(TipoMovimento.IrRetido, ir.Tipo);
+        Assert.Equal(InstrumentosCaixa.ALiquidar, ir.InstrumentoId);
+        Assert.Equal(-15.30m, ir.QtdDelta);
+        Assert.Equal(15.30m, ir.ValorFinanceiro);
+
+        var iof = movimentoWrite.Adicionados.Single(m => m.RefExterna == "iof:op-resgate-1");
+        Assert.Equal(TipoMovimento.Iof, iof.Tipo);
+        Assert.Equal(InstrumentosCaixa.ALiquidar, iof.InstrumentoId);
+        Assert.Equal(-132.00m, iof.QtdDelta);
+        Assert.Equal(132.00m, iof.ValorFinanceiro);
+
+        var aliq = movimentoWrite.Adicionados.Single(m => m.RefExterna == "aliq:op-resgate-1");
+        Assert.Equal(TipoMovimento.ALiquidar, aliq.Tipo);
+        Assert.Equal(InstrumentosCaixa.ALiquidar, aliq.InstrumentoId);
+        Assert.Equal(1200m, aliq.QtdDelta);
+        Assert.Equal(1200m, aliq.ValorFinanceiro);
+    }
+
+    [Fact]
+    public async Task Handle_ResgateComTributos_SomaDosQtdDeltaEmCaixaALiquidarEhOValorBrutoMenosIrMenosIof()
+    {
+        var compra = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 1000m, "op-compra-1");
+
+        var (handler, movimentoWrite, _, _, _) = CriarHandler(movimentosExistentes: [compra]);
+        var evento = CriarEvento(
+            tradeId: "op-resgate-1", operacao: OperacaoTrade.Resgate, quantidade: 10m, valorFinanceiro: 1200m, diaEvento: 10);
+
+        await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        var venda = movimentoWrite.Adicionados.Single(m => m.RefExterna == "op-resgate-1");
+        Assert.Equal(1200m, venda.ValorFinanceiro);
+
+        var somaCaixaALiquidar = movimentoWrite.Adicionados
+            .Where(m => m.InstrumentoId == InstrumentosCaixa.ALiquidar)
+            .Sum(m => m.QtdDelta);
+
+        Assert.Equal(1052.70m, somaCaixaALiquidar);
+        Assert.NotEqual(1200m, somaCaixaALiquidar);
+    }
+
+    [Fact]
+    public async Task Handle_ResgateSemLoteComPrazoMenorQueTrintaDias_GravaTresLinhasSemLinhaDeIof()
+    {
+        var compra = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 1000m, "op-compra-1");
+
+        var (handler, movimentoWrite, _, _, _) = CriarHandler(movimentosExistentes: [compra]);
+        var evento = CriarEvento(
+            tradeId: "op-resgate-1", operacao: OperacaoTrade.Resgate, quantidade: 10m, valorFinanceiro: 1200m, diaEvento: 40);
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(3, movimentoWrite.Adicionados.Count);
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.RefExterna == "iof:op-resgate-1");
+
+        var ir = movimentoWrite.Adicionados.Single(m => m.RefExterna == "ir:op-resgate-1");
+        Assert.Equal(-45.00m, ir.QtdDelta);
+    }
+
+    [Fact]
+    public async Task Handle_ResgateComSomaDasBasesPositivasIgualAZero_GravaDuasLinhasSemIrNemIof()
+    {
+        var compra = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 3000m, "op-compra-b");
+
+        var (handler, movimentoWrite, _, _, _) = CriarHandler(movimentosExistentes: [compra]);
+        var evento = CriarEvento(
+            tradeId: "op-resgate-prejuizo", operacao: OperacaoTrade.Resgate, quantidade: 10m, valorFinanceiro: 1000m, diaEvento: 5);
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(2, movimentoWrite.Adicionados.Count);
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.RefExterna == "ir:op-resgate-prejuizo");
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.RefExterna == "iof:op-resgate-prejuizo");
+    }
+
+    [Fact]
+    public async Task Handle_ResgateComFilaQueNaoCobreAVenda_GravaOConjuntoCompletoEDisparaOSinalDePrecoMedioProvisorio()
+    {
+        var compra = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 500m, "op-compra-1");
+
+        var (handler, movimentoWrite, _, _, metrics) = CriarHandler(movimentosExistentes: [compra]);
+        var evento = CriarEvento(
+            tradeId: "op-resgate-descoberto", operacao: OperacaoTrade.Resgate, quantidade: 15m, valorFinanceiro: 2000m, diaEvento: 40);
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+
+        var ir = movimentoWrite.Adicionados.SingleOrDefault(m => m.RefExterna == "ir:op-resgate-descoberto");
+        Assert.NotNull(ir);
+        Assert.True(ir!.QtdDelta < 0m);
+
+        var sinalizacao = Assert.Single(metrics.SinalizacoesDeResgateSobrePrecoMedioProvisorio);
+        Assert.Equal(ClienteId, sinalizacao.ClienteId);
+        Assert.Equal(InstrumentoId, sinalizacao.InstrumentoId);
+        Assert.Equal(5m, sinalizacao.QuantidadeDescoberta);
+    }
+
+    [Fact]
+    public async Task Handle_ResgateComFilaQueCobreAVendaComLotesDeDatasDiferentes_NaoDisparaOSinalDePrecoMedioProvisorio()
+    {
+        var compra1 = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 5m, 250m, "op-compra-1");
+        var compra2 = MovimentoTestFactory.Criar(
+            2, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(10), Instante(1), 10m, 600m, "op-compra-2");
+
+        var (handler, _, _, _, metrics) = CriarHandler(movimentosExistentes: [compra1, compra2]);
+        var evento = CriarEvento(
+            tradeId: "op-resgate-coberto", operacao: OperacaoTrade.Resgate, quantidade: 12m, valorFinanceiro: 1500m, diaEvento: 40);
+
+        var resultado = await handler.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Empty(metrics.SinalizacoesDeResgateSobrePrecoMedioProvisorio);
+    }
+
+    [Fact]
+    public async Task Handle_ReentregaDeResgateJaTributado_NaoDuplicaNenhumDosQuatroMovimentosDerivados()
+    {
+        var compra = MovimentoTestFactory.Criar(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, Dia(0), Instante(0), 10m, 1000m, "op-compra-1");
+
+        var (handlerPrimeiraVez, movimentoWritePrimeiraVez, _, _, _) = CriarHandler(movimentosExistentes: [compra]);
+        var evento = CriarEvento(
+            tradeId: "op-resgate-1", operacao: OperacaoTrade.Resgate, quantidade: 10m, valorFinanceiro: 1200m, diaEvento: 10);
+
+        await handlerPrimeiraVez.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+        Assert.Equal(4, movimentoWritePrimeiraVez.Adicionados.Count);
+
+        var movimentosPersistidos = new List<Movimento> { compra };
+        var idSeguinte = 2L;
+        foreach (var gravado in movimentoWritePrimeiraVez.Adicionados)
+        {
+            movimentosPersistidos.Add(MovimentoTestFactory.Criar(
+                idSeguinte++,
+                gravado.ClienteId,
+                gravado.InstrumentoId,
+                gravado.Tipo,
+                gravado.DataEvento,
+                gravado.RegistradoEm,
+                gravado.QtdDelta,
+                gravado.ValorFinanceiro,
+                gravado.RefExterna,
+                gravado.RefEstorno));
+        }
+
+        var (handlerSegundaVez, movimentoWriteSegundaVez, _, unitOfWorkSegundaVez, _) =
+            CriarHandler(movimentosExistentes: movimentosPersistidos);
+
+        var resultado = await handlerSegundaVez.Handle(new ProcessarTradeRegisteredCommand(evento), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, resultado.Value.Tipo);
+        Assert.True(resultado.Value.Replay);
+        Assert.Empty(movimentoWriteSegundaVez.Adicionados);
+        Assert.Equal(0, unitOfWorkSegundaVez.ChamadasDeSaveChanges);
+    }
 }

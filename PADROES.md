@@ -1657,3 +1657,57 @@ divergem: no mesmo incidente, a **outra** linha construída ali (a perna de caix
 **Corolário sobre relatório de revisão:** "mutei e a suíte passou" prova que **falta proteção**, não
 que o código está errado. Confira a direção antes de reescrever: ali o código estava certo e o que
 faltava era impedir que ficasse errado. Ref.: `custodia`, F4, `CriarAjusteDeReversao`.
+
+### 10.47. Porte de motor de tributos: a tabela de alíquotas é a parte visível, a COMPOSIÇÃO é a que muda o número
+
+**Medido na `custodia`, F5 (2026-09-12), ao portar o motor fiscal do simulador da TD API.**
+
+O roadmap dizia "base = o GANHO da alienação" para **os dois** tributos, IR e IOF. O código-fonte do
+motor portado diz outra coisa, e diz em três lugares que só se encontram lendo o arquivo inteiro em
+vez de procurar as faixas: o IOF é declarado `ordem: 1, cumulativo: true`, o IR é `ordem: 2,
+cumulativo: false`, e o laço que aplica os tributos itera `OrderBy(t => t.Ordem)`, toma a base do
+`rendimentoAjustado` e faz `rendimentoAjustado -= valor` quando o tributo é cumulativo. Portanto
+**base do IOF = ganho; base do IR = ganho MENOS o IOF.**
+
+Portar só as faixas e a tabela regressiva recolhe **IR a maior em todo lote com menos de 30 dias** —
+número gravado em tabela append-only, sem UPDATE.
+
+**Regra: ao portar um motor de tributos, porte a ORDEM e a CUMULATIVIDADE junto com as alíquotas.**
+Alíquota é o que se procura e o que se confere; composição é o que se esquece, porque não está na
+tabela — está no laço que a consome. Se o motor de origem tem campo de ordem ou de cumulatividade, ele
+tem composição, e a base de cada tributo é uma pergunta por tributo, não uma por motor.
+
+**E a regra sobre o TESTE, que é o motivo de isto valer uma seção:** a conferência contra o motor de
+origem **só pega este defeito se o caso conferido estiver na faixa em que os dois tributos coexistem**.
+Com 30 dias ou mais o IOF não existe, a base do IR volta a ser o ganho puro, e a implementação errada
+dá **o mesmo número** da certa — o teste fica verde sendo cego exatamente para o defeito que existe
+para pegar. O caso de conferência tem de ter **menos de 30 dias**, e o nome do teste tem de dizer por
+quê, senão alguém "simplifica" o fixture e a cegueira volta sem deixar rastro.
+
+**Corolário que generaliza para fora de tributo:** sempre que N regras se aplicam em cadeia e uma
+altera a entrada da seguinte, a especificação que descreve "a base" no singular está comprimindo N
+bases em uma. Procure o campo de ordem antes de acreditar no singular.
+
+### 10.48. Exceção determinística num consumidor com `requeue: true` é poison message em laço, e a métrica a chama de transitória
+
+**Medido na `custodia`, F4 — descoberto no F5 (2026-09-13), investigando outro defeito.**
+
+O consumidor tem um `catch` final que registra `LogCritical` e chama `BasicNackAsync(..., requeue: true)`,
+contabilizando o desfecho como `nack_requeue_transitorio`. Para falha **transitória** isso é correto: a
+mensagem volta e a próxima tentativa passa. Para falha **determinística** — um bug que lança sempre
+para aquele payload — o mesmo caminho produz **requeue infinito**: a mensagem nunca é processada,
+**nunca chega à fila de parking**, e o painel a exibe como problema transitório enquanto o laço gira.
+
+O gatilho concreto foi um `.First(...)` sobre faixas de alíquota que não cobriam a entrada produzida
+por um defeito de outro lugar. Qualquer exceção determinística serve.
+
+**Regra: `requeue: true` é resposta para falha transitória, e um `catch (Exception)` não sabe se a
+falha é transitória.** Quem captura tudo tem de **classificar** antes de decidir o desfecho (§10.31
+aplicada a consumo, não a laço de coleta): exceção reconhecidamente transitória volta para a fila;
+**exceção não classificada é parking com motivo próprio**, ou requeue **com teto de tentativas** e
+parking ao estourar. Rotular de "transitório" o que não se sabe ser transitório é a mesma falha da
+parada de laço que não distingue completude de limite — o rótulo afirma mais do que o código sabe.
+
+**E o efeito sobre o diagnóstico, que é o que custa tempo:** o operador procura instabilidade de
+infraestrutura, porque foi isso que a métrica disse. O defeito é de código, e a evidência dele está
+no `LogCritical` que ninguém lê enquanto o contador de "transitório" sobe.

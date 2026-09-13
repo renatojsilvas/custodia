@@ -4590,8 +4590,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     **como ela está hoje** e compare com as linhas `ir:`/`iof:` efetivas daquele fato —
     divergência vira **métrica + alerta**, com o mesmo nome de sinal, inclusive nos dois casos
     assimétricos ("linha ausente contra re-derivado > 0" e "linha existente contra re-derivado
-    0"). **Uma consulta só cobre as DUAS causas:** compra retroativa **e** estorno de uma compra
-    cujo lote uma venda já tributada havia consumido. Nenhuma coluna nova, nenhuma tabela nova,
+    0"). **Uma consulta só cobre as TRÊS causas** *(eram duas quando esta decisão foi escrita; a
+    terceira apareceu em 2026-09-13, com o corte posicional da fila)*: compra retroativa; estorno
+    de uma compra cujo lote uma venda já tributada havia consumido; e **venda ou resgate
+    RETROATIVO que passa a preceder um resgate já tributado** — quem fica errado nesse caso não é
+    o movimento retroativo, que na ordem canônica vem antes e está certo, mas o resgate **posterior**,
+    tributado antes de o retroativo existir. **E a re-derivação da guarda usa o corte posicional de
+    CADA resgate, não a fila cheia:** re-derivar da fila cheia faria toda chave com qualquer
+    movimento posterior a um resgate alertar — ruído permanente, que é o que a disciplina
+    anti-falso-positivo abaixo existe para impedir. A guarda e o caminho de escrita compartilham
+    **uma** função; a única diferença é que a guarda vê o livro de hoje. Nenhuma coluna nova, nenhuma tabela nova,
     nada materializado. O **gatilho** pega carona no caminho retroativo que a dobra já calcula
     (`data_evento < MAX` da chave, a mesma condição que força redobra), e a **varredura** é a
     entrega durável dele — pelo mesmo argumento que o F7 usa: um crash entre o commit e a
@@ -4683,9 +4691,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   ser **por lote**, e uma posição de N compras é conferível lote a lote. O limite declarado
   naquela alínea **melhora** com esta decisão, e foi reescrito lá.
 
-  **As três decisões derivadas que a escolha exigiu**, adjudicadas pelo `advisor` em
-  2026-09-12 porque sem elas o executor as decidiria enquanto escrevia o teste — que é a
-  vacuidade voltando com outra roupa:
+  **As decisões derivadas que a escolha exigiu — QUATRO**, adjudicadas pelo `advisor` em
+  2026-09-12 (as três primeiras) e em **2026-09-13** (a do corte, item 3, que só apareceu quando um
+  defeito real a forçou), porque sem elas o executor as decidiria enquanto escrevia o teste — que é
+  a vacuidade voltando com outra roupa. *Esta frase dizia "as TRÊS decisões" e ficou errada no
+  instante em que a quarta entrou, no mesmo dia em que eu estendi a seção do `LEIA-ME-KIT` que
+  descreve exatamente este defeito. A regra de lá vale contra quem a escreve: a varredura por
+  numeral roda depois do commit que ACRESCENTA membro, não no fecho da pendência que o motivou.*
 
   1. **A fila de lotes é FUNÇÃO AO LADO, não uma quarta saída de `DobraPosicao.Dobrar`.** O que
      as três implementações têm de fazer concordar é a **sequência canônica** (corte por
@@ -4705,7 +4717,40 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      nominalmente; e o extrato da corretora apura lote a lote e soma. **Corolário que reescreve
      uma condição já escrita:** "base zero ou negativa ⇒ não existem `ir:`/`iof:`" passa a ser
      **"Σ das bases positivas = 0"**, isto é, nenhum lote consumido com ganho > 0.
-  3. **A quantidade DESCOBERTA (fila exaurida) herda o custo unitário e a data de aquisição do
+  3. **O CORTE DA FILA É POSICIONAL, pela chave `(data_evento, registrado_em)` — nunca por data
+     pura, nunca pelo `id`** (adjudicado em 2026-09-13, depois de um defeito real: o handler
+     reconstruía a fila **sem corte nenhum**, e a suíte ficou verde com ele dentro porque nenhum
+     teste da fila tinha movimento posterior à venda). A fila que tributa um resgate tem de conter
+     o que existia **imediatamente antes daquele movimento na sequência canônica**, e só isso.
+     *Rejeitado corte por DATA (`data_evento <= D`):* conserta só metade — uma compra do **mesmo
+     dia registrada depois** do resgate continuaria formando lote para uma venda que, na ordem
+     canônica, veio antes; e **dois resgates do mesmo dia enxergariam a consumação um do outro**,
+     podendo exaurir a fila e disparar a regra 4 abaixo — IR de 22,5% sobre o valor integral **por
+     artefato de ordenação**. *Rejeitado cortar pelo `id`:* o movimento ainda não foi gravado e seu
+     `id` em memória é `0`, que **ordena primeiro** e inverteria o corte; `data_evento` e
+     `registrado_em` vêm do evento e existem antes do INSERT. O `<=` no empate exato é
+     **derivado**, não escolhido: `id` é `IdentityByDefaultColumn`, logo toda linha já gravada tem
+     `id` menor que a que está sendo inserida e a precede na tripla.
+     **A ARMADILHA QUE O CORTE POSICIONAL CRIA, e ela é do tipo que troca um defeito por outro:**
+     a efetividade dos pares revertidos tem de ser resolvida sobre o conjunto **INTEIRO**, e só
+     depois se corta o prefixo. Com corte por data isso era inócuo, porque o `ajuste` **copia a
+     `data_evento` do alvo** e o par nunca se partia; com corte posicional o par **PARTE** (alvo
+     dentro, `ajuste` fora) e **um lote revertido reapareceria VIVO na fila**, tributando sobre uma
+     compra que não existe mais. **Efetividade não é ordenada no tempo.**
+     **E o que realmente causou o defeito não foi o corte ausente, foi o `= null` na assinatura:**
+     `Reconstruir(movimentos)` **compilava, parecia certo e estava errado**. A saída é a §10.46 —
+     tornar a chamada errada **não compilável** —, não teste melhor. No caminho da fila o corte é
+     **obrigatório**; no caminho de `posicao_corrente` a dobra continua **sem corte**, e isso é
+     correto e não esquecimento (§7.1: `Σ qtd_delta` **sem recorte de data**; pôr corte lá é o
+     defeito inverso). **Os dois modos exigem DOIS testes de concordância** — `Σ quantidade dos
+     lotes vivos` igual à `quantidade` da dobra, uma vez sem corte e uma vez com o **mesmo** corte
+     nos dois lados. Sem o segundo, os modos divergem sem que nada reprove.
+     **Consequência aceita, que é a terceira causa da quarta guarda:** com corte, uma venda anterior
+     de `data_evento` mais recente também sai da fila do resgate retroativo, então dois resgates
+     podem ser tributados contra lotes **sobrepostos**. Quem fica errado é o resgate **posterior**,
+     e o caminho é o já decidido — grava, sinaliza, conserto é estorno e relançamento.
+
+  4. **A quantidade DESCOBERTA (fila exaurida) herda o custo unitário e a data de aquisição do
      ÚLTIMO lote da fila**; com a fila **vazia**, custo 0 e prazo 0 — o que dá IR de 22,5%
      sobre o valor integral e **IOF inexistente**, porque o dia 0 não tem célula na tabela
      diária portada. É o análogo FIFO de "`preco_medio` INALTERADO" da V1, e erra na direção
@@ -5115,8 +5160,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   desta fase — re-derive IR/IOF da fila COMO ELA ESTA HOJE e compare com as linhas ir:/iof:
   EFETIVAS daquele fato; divergencia vira metrica + alerta, nos DOIS sentidos assimetricos
   ("linha ausente contra re-derivado > 0" e "linha existente contra re-derivado 0"). UMA
-  consulta cobre as DUAS causas: compra retroativa E estorno de uma compra cujo lote uma
-  venda ja tributada consumiu. Arredondamento IDENTICO ao da escrita (10.25, 2 casas), so
+  consulta cobre as TRES causas (eram duas ate 2026-09-13): compra retroativa; estorno de uma
+  compra cujo lote uma venda ja tributada consumiu; e VENDA OU RESGATE RETROATIVO que passa a
+  preceder um resgate ja tributado — nesse caso quem esta errado e o resgate POSTERIOR, nao o
+  retroativo. E RE-DERIVE COM O CORTE POSICIONAL DE CADA RESGATE, nunca da fila cheia: da fila
+  cheia toda chave com movimento posterior a um resgate alerta, e o alerta vira ruido. Arredondamento IDENTICO ao da escrita (10.25, 2 casas), so
   linhas EFETIVAS, e "base zero => ausencia de linha" conta como CONCORDANCIA — sem isso o
   alerta vira ruido permanente.
 
