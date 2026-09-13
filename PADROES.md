@@ -1711,3 +1711,33 @@ parada de laço que não distingue completude de limite — o rótulo afirma mai
 **E o efeito sobre o diagnóstico, que é o que custa tempo:** o operador procura instabilidade de
 infraestrutura, porque foi isso que a métrica disse. O defeito é de código, e a evidência dele está
 no `LogCritical` que ninguém lê enquanto o contador de "transitório" sobe.
+
+### 10.49. Cópia idêntica em COMPORTAMENTO pode já estar divergente em ESTRUTURA — o ramo que falta está morto hoje
+
+**Medido na `custodia`, F5 (2026-09-13).** Um executor duplicou a orquestração que aplica um
+movimento na projeção de posição — ler o watermark da chave, ler a posição, decidir entre caminho
+incremental e redobra — para um segundo handler, e registrou a duplicação honestamente, justificando
+que não queria mexer no handler já em produção. Exigida a extração para um ponto só, a pergunta que
+eu fiz junto foi *"as duas cópias já divergiam?"*.
+
+**A resposta foi: em comportamento, não; em estrutura, sim.** O texto do método copiado era idêntico,
+mas a cópia nova **não tinha o dispatcher** que decide "é linha de `ajuste`? então redobra somando
+também o que já foi adicionado neste mesmo lote" — ela chamava o caminho simples direto. Isso não
+produzia resultado errado, porque naquele contexto o segundo handler nunca gravava `ajuste` e as duas
+linhas que ele grava nunca colidem na mesma chave dentro do mesmo lote. **O ramo estava morto.**
+
+**Regra: duplicação não se mede por diff de comportamento nem por teste — ela se mede pela
+ESTRUTURA.** Um teste não distingue as duas cópias enquanto o ramo ausente for inalcançável no
+contexto novo, e é justamente essa inalcançabilidade que faz a cópia parecer inofensiva na revisão.
+Quando uma fase futura mudar o contexto — o handler passa a gravar um tipo a mais, ou dois itens do
+mesmo lote passam a tocar a mesma chave —, a cópia fica **muda exatamente no caso que o ramo existia
+para cobrir**, e o sintoma aparece longe dali, numa reconciliação que alerta em operação normal.
+
+**Como usar isto numa revisão:** quando encontrar caminho duplicado, não pergunte "os dois dão o mesmo
+resultado?" — pergunte **"quais ramos o original tem que a cópia não tem, e o que tornaria cada um
+alcançável?"**. Se a resposta a "o que tornaria alcançável" for uma mudança plausível de fase
+seguinte, a duplicação é dívida com data marcada, não conveniência.
+
+**E o corolário de despacho:** peça ao executor que responda essa pergunta ao desfazer a duplicação.
+A extração sozinha remove o risco futuro em silêncio; a pergunta transforma o que estava latente em
+achado escrito, e é ela que diz se algo já estava errado em produção.

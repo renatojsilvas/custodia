@@ -1,5 +1,6 @@
 using Custodia.Application.Calendario;
 using Custodia.Application.Liquidacao;
+using Custodia.Application.Posicoes;
 using Custodia.Application.Tests.Fakes;
 using Custodia.Domain.Calendario;
 using Custodia.Domain.Common;
@@ -89,6 +90,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
             proximoDiaUtil: proximoDiaUtil ?? (data => Result<ProximoDiaUtilConsulta>.Success(ProximoDiaUtilConsulta.De(data.AddDays(1)))),
             horizonte: () => Result<HorizonteCalendarioConsulta>.Success(new HorizonteCalendarioConsulta(new DateOnly(2030, 12, 31), hoje)));
         var proximoDiaUtilService = new ProximoDiaUtilService(calendarioRead);
+        var aplicadorIncrementalDePosicao = new AplicadorIncrementalDePosicao(movimentoRead, posicaoRead);
         var recalculo = new FakeRecalculoEnfileiradorPort();
         var metrics = new FakeBusinessMetrics();
         var configuration = CriarConfiguracao(teto);
@@ -99,8 +101,8 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
             travamento,
             movimentoRead,
             movimentoWrite,
-            posicaoRead,
             posicaoWrite,
+            aplicadorIncrementalDePosicao,
             unitOfWork,
             proximoDiaUtilService,
             calendarioRead,
@@ -272,6 +274,42 @@ public sealed class LiquidarResgatesVencidosCommandHandlerTests
         Assert.Equal(0, resultado.Value.FatosLiquidados);
         Assert.Equal(1, resultado.Value.FatosJaTratados);
         Assert.Empty(movimentoWrite.Adicionados);
+    }
+
+    [Fact]
+    public async Task Handle_CandidataOrfaSemMovimentoPrincipal_EPulada_EAlertaComARefExternaOfensora_ComControlePositivoDeOutroFatoDoMesmoCiclo()
+    {
+        var fatoOrfao = CriarFato("op-orfao", 10m, 1200m, idInicial: 1);
+        var fatoValido = CriarFato("op-valido-no-mesmo-ciclo", 10m, 1200m, idInicial: 10);
+
+        var candidatas = new[]
+        {
+            new LiquidacaoCandidata(ClienteId, "op-orfao", DataDoResgate),
+            new LiquidacaoCandidata(ClienteId, "op-valido-no-mesmo-ciclo", DataDoResgate),
+        };
+
+        var movimentosExistentes = new List<Movimento> { fatoOrfao.Aliq };
+        movimentosExistentes.AddRange(fatoValido.Linhas());
+
+        var (handler, movimentoWrite, _, unitOfWork, metrics, _, _) = CriarHandler(
+            candidatas, movimentosExistentes, DataDeLiquidacaoPadrao);
+
+        var resultado = await handler.Handle(new LiquidarResgatesVencidosCommand(), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia, resultado.Value.Desfecho);
+        Assert.Equal(1, resultado.Value.FatosInconsistentes);
+        Assert.Equal(1, resultado.Value.FatosLiquidados);
+
+        Assert.DoesNotContain(movimentoWrite.Adicionados, m => m.RefExterna.StartsWith("liq:op-orfao", StringComparison.Ordinal));
+        Assert.Contains(movimentoWrite.Adicionados, m => m.RefExterna == "liq:op-valido-no-mesmo-ciclo:aliq");
+
+        var alerta = Assert.Single(metrics.CandidatasInconsistentesNaLiquidacao);
+        Assert.Equal(ClienteId, alerta.ClienteId);
+        Assert.Equal("op-orfao", alerta.TradeId);
+        Assert.Equal("aliq:op-orfao", alerta.RefExternaOfensora);
+
+        Assert.Equal(1, unitOfWork.ChamadasDeDescartarTransacao);
     }
 
     [Fact]

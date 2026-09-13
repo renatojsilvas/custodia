@@ -3,6 +3,7 @@ namespace Custodia.Application.Liquidacao;
 public enum DesfechoLiquidacaoDeResgates
 {
     Completude,
+    ParcialPorInconsistencia,
 }
 
 public sealed record ResultadoLiquidacaoDeResgates(
@@ -10,4 +11,5 @@ public sealed record ResultadoLiquidacaoDeResgates(
     int CandidatasExaminadas,
     int FatosLiquidados,
     int FatosNaoVencidos,
-    int FatosJaTratados);
+    int FatosJaTratados,
+    int FatosInconsistentes);

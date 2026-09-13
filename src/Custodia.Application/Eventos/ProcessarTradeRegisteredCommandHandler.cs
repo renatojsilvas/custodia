@@ -16,6 +16,7 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
     IMovimentoTravamentoRepository movimentoTravamentoRepository,
     IPosicaoCorrenteReadRepository posicaoCorrenteReadRepository,
     IPosicaoCorrenteWriteRepository posicaoCorrenteWriteRepository,
+    IAplicadorIncrementalDePosicao aplicadorIncrementalDePosicao,
     IUnitOfWork unitOfWork,
     IBusinessMetrics businessMetrics,
     IPontoDeSuspensaoAposTravamento pontoDeSuspensaoAposTravamento)
@@ -389,30 +390,16 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
     private async Task<Result<ResultadoTradeRegistered>> GravarTudoAsync(
         IReadOnlyList<Movimento> movimentos, CancellationToken ct)
     {
-        var estadosJaAplicadosNesteLote = new Dictionary<(string ClienteId, string InstrumentoId), PosicaoTresColunas>();
-        var movimentosJaAdicionadosNesteLotePorChave = new Dictionary<(string ClienteId, string InstrumentoId), List<Movimento>>();
+        var lote = new LoteDeAplicacaoDePosicao();
 
         foreach (var movimento in movimentos)
         {
-            var chaveNoLote = (movimento.ClienteId, movimento.InstrumentoId);
-
-            var posicaoResult = await ObterPosicaoAposAplicarNoLoteAsync(
-                chaveNoLote, movimento, estadosJaAplicadosNesteLote, movimentosJaAdicionadosNesteLotePorChave, ct);
+            var posicaoResult = await aplicadorIncrementalDePosicao.AplicarAsync(lote, movimento, ct);
 
             if (posicaoResult.IsFailure)
             {
                 return posicaoResult.Error;
             }
-
-            estadosJaAplicadosNesteLote[chaveNoLote] = posicaoResult.Value;
-
-            if (!movimentosJaAdicionadosNesteLotePorChave.TryGetValue(chaveNoLote, out var movimentosDaChaveNoLote))
-            {
-                movimentosDaChaveNoLote = [];
-                movimentosJaAdicionadosNesteLotePorChave[chaveNoLote] = movimentosDaChaveNoLote;
-            }
-
-            movimentosDaChaveNoLote.Add(movimento);
 
             var adicionarResult = await movimentoWriteRepository.AdicionarAsync(movimento, ct);
             if (adicionarResult.IsFailure)
@@ -442,83 +429,6 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         return saveResult.IsFailure
             ? ClassificarFalhaDeGravacao(saveResult.Error)
             : ResultadoTradeRegistered.Escriturado();
-    }
-
-    private async Task<Result<PosicaoTresColunas>> ObterPosicaoAposAplicarNoLoteAsync(
-        (string ClienteId, string InstrumentoId) chaveNoLote,
-        Movimento movimento,
-        Dictionary<(string ClienteId, string InstrumentoId), PosicaoTresColunas> estadosJaAplicadosNesteLote,
-        Dictionary<(string ClienteId, string InstrumentoId), List<Movimento>> movimentosJaAdicionadosNesteLotePorChave,
-        CancellationToken ct)
-    {
-        if (movimento.Tipo == TipoMovimento.Ajuste)
-        {
-            return await RedobrarComNovosDoLoteAsync(chaveNoLote, movimento, movimentosJaAdicionadosNesteLotePorChave, ct);
-        }
-
-        if (estadosJaAplicadosNesteLote.TryGetValue(chaveNoLote, out var estadoAnteriorNoLote))
-        {
-            return DobraPosicao.AplicarIncremental(estadoAnteriorNoLote, movimento, movimento.DataEvento).Estado!;
-        }
-
-        return await AplicarNaPosicaoAsync(movimento.ClienteId, movimento.InstrumentoId, movimento, ct);
-    }
-
-    private async Task<Result<PosicaoTresColunas>> RedobrarComNovosDoLoteAsync(
-        (string ClienteId, string InstrumentoId) chaveNoLote,
-        Movimento movimento,
-        Dictionary<(string ClienteId, string InstrumentoId), List<Movimento>> movimentosJaAdicionadosNesteLotePorChave,
-        CancellationToken ct)
-    {
-        var movimentosDaChaveResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
-            chaveNoLote.ClienteId, chaveNoLote.InstrumentoId, ct);
-
-        if (movimentosDaChaveResult.IsFailure)
-        {
-            return movimentosDaChaveResult.Error;
-        }
-
-        var jaAdicionadosNesteLote = movimentosJaAdicionadosNesteLotePorChave.TryGetValue(chaveNoLote, out var lista)
-            ? lista
-            : [];
-
-        var todos = movimentosDaChaveResult.Value.Concat(jaAdicionadosNesteLote).Append(movimento).ToList();
-        return DobraPosicao.Dobrar(todos);
-    }
-
-    private async Task<Result<PosicaoTresColunas>> AplicarNaPosicaoAsync(
-        string clienteId, string instrumentoId, Movimento movimentoRecemCriado, CancellationToken ct)
-    {
-        var maxDataEventoResult = await movimentoReadRepository.ObterMaxDataEventoAsync(clienteId, instrumentoId, ct);
-        if (maxDataEventoResult.IsFailure)
-        {
-            return maxDataEventoResult.Error;
-        }
-
-        var posicaoAtualResult = await posicaoCorrenteReadRepository.ObterAsync(clienteId, instrumentoId, ct);
-        if (posicaoAtualResult.IsFailure)
-        {
-            return posicaoAtualResult.Error;
-        }
-
-        var resultadoIncremental = DobraPosicao.AplicarIncremental(
-            posicaoAtualResult.Value, movimentoRecemCriado, maxDataEventoResult.Value.ComoNullable());
-
-        if (!resultadoIncremental.ExigeRedobraDaChave)
-        {
-            return resultadoIncremental.Estado!;
-        }
-
-        var movimentosDaChaveResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
-            clienteId, instrumentoId, ct);
-
-        if (movimentosDaChaveResult.IsFailure)
-        {
-            return movimentosDaChaveResult.Error;
-        }
-
-        var todos = movimentosDaChaveResult.Value.Append(movimentoRecemCriado).ToList();
-        return DobraPosicao.Dobrar(todos);
     }
 
     private async Task<Result> SinalizarSeNecessarioAsync(

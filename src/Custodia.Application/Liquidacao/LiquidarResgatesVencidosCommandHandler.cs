@@ -5,7 +5,6 @@ using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
-using Custodia.Domain.Posicoes;
 using Microsoft.Extensions.Configuration;
 
 namespace Custodia.Application.Liquidacao;
@@ -15,8 +14,8 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
     IMovimentoTravamentoRepository movimentoTravamentoRepository,
     IMovimentoReadRepository movimentoReadRepository,
     IMovimentoWriteRepository movimentoWriteRepository,
-    IPosicaoCorrenteReadRepository posicaoCorrenteReadRepository,
     IPosicaoCorrenteWriteRepository posicaoCorrenteWriteRepository,
+    IAplicadorIncrementalDePosicao aplicadorIncrementalDePosicao,
     IUnitOfWork unitOfWork,
     IProximoDiaUtilService proximoDiaUtilService,
     ICalendarioDiasUteisReadRepository calendarioDiasUteisReadRepository,
@@ -36,6 +35,7 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
         Liquidada,
         NaoVencida,
         JaTratada,
+        Inconsistente,
     }
 
     private readonly long _teto = configuration.GetValue<long?>(ChaveConfiguracaoTetoPorCiclo) ?? TetoPorCicloPadrao;
@@ -70,6 +70,7 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
         var fatosLiquidados = 0;
         var fatosNaoVencidos = 0;
         var fatosJaTratados = 0;
+        var fatosInconsistentes = 0;
 
         foreach (var candidata in candidatas)
         {
@@ -91,18 +92,27 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
                 case DesfechoDeCandidata.JaTratada:
                     fatosJaTratados++;
                     break;
+                case DesfechoDeCandidata.Inconsistente:
+                    fatosInconsistentes++;
+                    break;
             }
         }
 
+        var desfecho = fatosInconsistentes > 0
+            ? DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia
+            : DesfechoLiquidacaoDeResgates.Completude;
+
         return new ResultadoLiquidacaoDeResgates(
-            DesfechoLiquidacaoDeResgates.Completude, candidatas.Count, fatosLiquidados, fatosNaoVencidos, fatosJaTratados);
+            desfecho, candidatas.Count, fatosLiquidados, fatosNaoVencidos, fatosJaTratados, fatosInconsistentes);
     }
 
     private async Task<Result<DesfechoDeCandidata>> ProcessarCandidataAsync(
         LiquidacaoCandidata candidata, DateOnly hoje, CancellationToken ct)
     {
+        var refAliq = $"aliq:{candidata.TradeId}";
+
         var travamentoResult = await movimentoTravamentoRepository.TravarPorClienteERefExternaAsync(
-            candidata.ClienteId, $"aliq:{candidata.TradeId}", ct);
+            candidata.ClienteId, refAliq, ct);
 
         if (travamentoResult.IsFailure)
         {
@@ -155,8 +165,9 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
 
         if (!principalResult.Value.Encontrado)
         {
+            businessMetrics.RegistrarLiquidacaoCandidataInconsistente(candidata.ClienteId, candidata.TradeId, refAliq);
             await unitOfWork.DescartarTransacaoAsync(ct);
-            return LiquidacaoErrors.MovimentoPrincipalNaoEncontrado;
+            return DesfechoDeCandidata.Inconsistente;
         }
 
         var principal = principalResult.Value.Linha!;
@@ -251,9 +262,11 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
 
     private async Task<Result> GravarPernasDeLiquidacaoAsync(Movimento pernaAliq, Movimento pernaBrl, CancellationToken ct)
     {
+        var lote = new LoteDeAplicacaoDePosicao();
+
         foreach (var perna in new[] { pernaAliq, pernaBrl })
         {
-            var posicaoResult = await AplicarNaPosicaoAsync(perna.ClienteId, perna.InstrumentoId, perna, ct);
+            var posicaoResult = await aplicadorIncrementalDePosicao.AplicarAsync(lote, perna, ct);
 
             if (posicaoResult.IsFailure)
             {
@@ -277,43 +290,6 @@ public sealed class LiquidarResgatesVencidosCommandHandler(
         }
 
         return await unitOfWork.SaveChangesAsync(ct);
-    }
-
-    private async Task<Result<PosicaoTresColunas>> AplicarNaPosicaoAsync(
-        string clienteId, string instrumentoId, Movimento movimentoRecemCriado, CancellationToken ct)
-    {
-        var maxDataEventoResult = await movimentoReadRepository.ObterMaxDataEventoAsync(clienteId, instrumentoId, ct);
-
-        if (maxDataEventoResult.IsFailure)
-        {
-            return maxDataEventoResult.Error;
-        }
-
-        var posicaoAtualResult = await posicaoCorrenteReadRepository.ObterAsync(clienteId, instrumentoId, ct);
-
-        if (posicaoAtualResult.IsFailure)
-        {
-            return posicaoAtualResult.Error;
-        }
-
-        var resultadoIncremental = DobraPosicao.AplicarIncremental(
-            posicaoAtualResult.Value, movimentoRecemCriado, maxDataEventoResult.Value.ComoNullable());
-
-        if (!resultadoIncremental.ExigeRedobraDaChave)
-        {
-            return resultadoIncremental.Estado!;
-        }
-
-        var movimentosDaChaveResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
-            clienteId, instrumentoId, ct);
-
-        if (movimentosDaChaveResult.IsFailure)
-        {
-            return movimentosDaChaveResult.Error;
-        }
-
-        var todos = movimentosDaChaveResult.Value.Append(movimentoRecemCriado).ToList();
-        return DobraPosicao.Dobrar(todos);
     }
 
     private static bool ExisteAjusteRevertendo(IReadOnlyList<Movimento> movimentosDaChave, long alvoId) =>

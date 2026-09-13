@@ -2,6 +2,7 @@ using Custodia.Application.Calendario;
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Eventos;
 using Custodia.Application.Liquidacao;
+using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 using Custodia.Infrastructure.Common;
@@ -40,19 +41,20 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
         AppDbContext dbContext,
         IRecalculoEnfileiradorPort? recalculo = null,
         IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null,
+        IBusinessMetrics? businessMetrics = null,
         long? teto = null) =>
         new(
             new LiquidacaoCandidataReadRepository(CriarDataSource()),
             new MovimentoTravamentoRepository(dbContext),
             new MovimentoReadRepository(CriarDataSource()),
             new MovimentoWriteRepository(dbContext),
-            new PosicaoCorrenteReadRepository(CriarDataSource()),
             new PosicaoCorrenteWriteRepository(dbContext),
+            new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             dbContext,
             new ProximoDiaUtilService(new CalendarioDiasUteisReadRepository(CriarDataSource())),
             new CalendarioDiasUteisReadRepository(CriarDataSource()),
             recalculo ?? new FakeRecalculoEnfileiradorPort(),
-            new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
+            businessMetrics ?? new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
             pontoDeSuspensao ?? new PontoDeSuspensaoAposTravamentoInerte(),
             CriarConfiguracao(teto),
             TimeProvider.System);
@@ -65,6 +67,7 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
             new MovimentoTravamentoRepository(dbContext),
             new PosicaoCorrenteReadRepository(CriarDataSource()),
             new PosicaoCorrenteWriteRepository(dbContext),
+            new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             dbContext,
             new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
             pontoDeSuspensao ?? new PontoDeSuspensaoAposTravamentoInerte());
@@ -199,6 +202,33 @@ public sealed class LiquidarResgatesVencidosCommandHandlerIntegrationTests(Infra
 
         Assert.False(await ExisteMovimentoAsync(clienteId, "liq:op-job-revertido:aliq"));
         Assert.True(await ExisteMovimentoAsync(clienteId, "liq:op-job-valido:aliq"));
+    }
+
+    [Fact]
+    public async Task Handle_CandidataOrfaSemMovimentoPrincipal_EPulada_AlertaComARefExternaOfensora_ELiquidaOsSadiosDoMesmoCiclo()
+    {
+        var clienteId = NovoClienteId();
+        var dataEvento = new DateOnly(2026, 8, 10);
+
+        await InserirAliqAsync(clienteId, "op-orfao-real", dataEvento, 1200m);
+        await CriarFatoAsync(clienteId, NovoInstrumentoId(), "op-valido-real", dataEvento, 10m, 1200m);
+
+        var metrics = new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics();
+
+        await using var db = fixture.CriarDbContext();
+        var resultado = await CriarHandlerDeLiquidacao(db, businessMetrics: metrics).Handle(
+            new LiquidarResgatesVencidosCommand(), CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia, resultado.Value.Desfecho);
+        Assert.True(resultado.Value.FatosInconsistentes >= 1);
+
+        Assert.False(await ExisteMovimentoAsync(clienteId, "liq:op-orfao-real:aliq"));
+        Assert.True(await ExisteMovimentoAsync(clienteId, "liq:op-valido-real:aliq"));
+
+        Assert.Contains(
+            metrics.CandidatasInconsistentes,
+            a => a.ClienteId == clienteId && a.TradeId == "op-orfao-real" && a.RefExternaOfensora == "aliq:op-orfao-real");
     }
 
     [Fact]

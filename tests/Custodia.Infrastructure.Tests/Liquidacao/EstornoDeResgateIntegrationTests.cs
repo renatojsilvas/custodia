@@ -2,6 +2,7 @@ using Custodia.Application.Calendario;
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Eventos;
 using Custodia.Application.Liquidacao;
+using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Movimentos;
 using Custodia.Domain.Posicoes;
@@ -33,6 +34,7 @@ public sealed class EstornoDeResgateIntegrationTests(InfrastructurePostgresFixtu
             new MovimentoTravamentoRepository(db),
             new PosicaoCorrenteReadRepository(CriarDataSource()),
             new PosicaoCorrenteWriteRepository(db),
+            new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             db,
             new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
             new PontoDeSuspensaoAposTravamentoInerte());
@@ -43,8 +45,8 @@ public sealed class EstornoDeResgateIntegrationTests(InfrastructurePostgresFixtu
             new MovimentoTravamentoRepository(db),
             new MovimentoReadRepository(CriarDataSource()),
             new MovimentoWriteRepository(db),
-            new PosicaoCorrenteReadRepository(CriarDataSource()),
             new PosicaoCorrenteWriteRepository(db),
+            new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             db,
             new ProximoDiaUtilService(new CalendarioDiasUteisReadRepository(CriarDataSource())),
             new CalendarioDiasUteisReadRepository(CriarDataSource()),

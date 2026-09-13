@@ -42,6 +42,25 @@ public sealed class BusinessMetrics(ILogger<BusinessMetrics> logger) : IBusiness
         "Total de vezes em que o job de liquidação encontrou o horizonte do calendário de dias úteis esgotado " +
         "ao tentar calcular D+1 útil de uma linha a_liquidar vencida. Falha alta, nunca modo degradado.");
 
+    private static readonly Counter LiquidacaoCandidataInconsistenteTotal = Metrics.CreateCounter(
+        "custodia_liquidacao_candidata_inconsistente_total",
+        "Total de candidatas de liquidação puladas por inconsistência (a_liquidar sem o movimento principal " +
+        "correspondente) — estado impossível por construção em produção, mas que o job não pode assumir. " +
+        "O ciclo continua para as demais candidatas; a linha órfã realerta a cada ciclo até correção manual.");
+
+    public void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora)
+    {
+        LiquidacaoCandidataInconsistenteTotal.Inc();
+
+        logger.LogCritical(
+            "Candidata de liquidação inconsistente pulada: cliente {ClienteId}, trade {TradeId}, ref_externa " +
+            "ofensora {RefExternaOfensora} não tem o movimento principal correspondente. Estado impossível por " +
+            "construção — investigue manualmente. O ciclo continuou para as demais candidatas.",
+            clienteId,
+            tradeId,
+            refExternaOfensora);
+    }
+
     public void RegistrarPosicaoNegativaSinalizada(string clienteId, string instrumentoId, decimal quantidadeResultante)
     {
         PosicaoNegativaSinalizadaTotal.WithLabels(instrumentoId).Inc();

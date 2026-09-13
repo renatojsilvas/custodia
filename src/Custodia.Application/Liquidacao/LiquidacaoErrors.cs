@@ -24,11 +24,4 @@ public static class LiquidacaoErrors
             "O saldo do fato em caixa:a_liquidar excede a magnitude ou a escala suportada pela coluna " +
             "ao construir as duas pernas de liquidacao.",
             ErrorType.Unprocessable);
-
-    public static readonly Error MovimentoPrincipalNaoEncontrado =
-        new(
-            "Liquidacao.MovimentoPrincipalNaoEncontrado",
-            "Existe a_liquidar sem o movimento principal (venda) correspondente pela ref_externa — " +
-            "estado inconsistente do livro. Isto não deveria acontecer.",
-            ErrorType.Unprocessable);
 }

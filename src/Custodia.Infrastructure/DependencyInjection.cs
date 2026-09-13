@@ -41,6 +41,7 @@ public static class DependencyInjection
         services.AddScoped<IMovimentoWriteRepository, MovimentoWriteRepository>();
         services.AddScoped<IPosicaoCorrenteReadRepository, PosicaoCorrenteReadRepository>();
         services.AddScoped<IPosicaoCorrenteWriteRepository, PosicaoCorrenteWriteRepository>();
+        services.AddScoped<IAplicadorIncrementalDePosicao, AplicadorIncrementalDePosicao>();
         services.AddScoped<ICalendarioDiasUteisReadRepository, CalendarioDiasUteisReadRepository>();
         services.AddScoped<IProximoDiaUtilService, ProximoDiaUtilService>();
         services.AddScoped<IMovimentoTravamentoRepository, MovimentoTravamentoRepository>();

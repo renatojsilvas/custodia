@@ -11,4 +11,6 @@ public interface IBusinessMetrics
     void RegistrarLiquidacaoLimitePorTeto(long candidatasEncontradas, long teto);
 
     void RegistrarLiquidacaoCalendarioExaurido(string clienteId, string tradeId);
+
+    void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora);
 }

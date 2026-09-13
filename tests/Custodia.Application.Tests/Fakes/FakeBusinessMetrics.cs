@@ -13,6 +13,8 @@ internal sealed record LimitePorTetoDeLiquidacao(long CandidatasEncontradas, lon
 
 internal sealed record CalendarioExauridoNaLiquidacao(string ClienteId, string TradeId);
 
+internal sealed record CandidataInconsistenteNaLiquidacao(string ClienteId, string TradeId, string RefExternaOfensora);
+
 internal sealed class FakeBusinessMetrics : IBusinessMetrics
 {
     public List<SinalizacaoDePosicaoNegativa> Sinalizacoes { get; } = [];
@@ -24,6 +26,8 @@ internal sealed class FakeBusinessMetrics : IBusinessMetrics
     public List<LimitePorTetoDeLiquidacao> LimitesPorTetoDeLiquidacao { get; } = [];
 
     public List<CalendarioExauridoNaLiquidacao> CalendariosExauridosNaLiquidacao { get; } = [];
+
+    public List<CandidataInconsistenteNaLiquidacao> CandidatasInconsistentesNaLiquidacao { get; } = [];
 
     public void RegistrarPosicaoNegativaSinalizada(string clienteId, string instrumentoId, decimal quantidadeResultante) =>
         Sinalizacoes.Add(new SinalizacaoDePosicaoNegativa(clienteId, instrumentoId, quantidadeResultante));
@@ -41,4 +45,7 @@ internal sealed class FakeBusinessMetrics : IBusinessMetrics
 
     public void RegistrarLiquidacaoCalendarioExaurido(string clienteId, string tradeId) =>
         CalendariosExauridosNaLiquidacao.Add(new CalendarioExauridoNaLiquidacao(clienteId, tradeId));
+
+    public void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora) =>
+        CandidatasInconsistentesNaLiquidacao.Add(new CandidataInconsistenteNaLiquidacao(clienteId, tradeId, refExternaOfensora));
 }

@@ -169,7 +169,7 @@ no `operacoes` (`LEIA-ME-KIT`, "Especificar só a metade permissiva").
 | I12 | banco privado: exatamente **uma** connection string, para o próprio banco (ADR-12) | F1 / F3 |
 | I13 | **a chave de dedupe só se consome quando o movimento gravado está CORRETO E COMPLETO** | F3 (regra) · F4, F5, F6, F9 (aplicação) |
 | I14 | fila e bindings existem **ANTES** da primeira publicação | F2 |
-| I15 | toda condição de parada de laço declara **completude** ou **limite**, e as duas produzem resultados diferentes (§10.31); onde os dois rótulos não bastarem, o rótulo que falta se nomeia em vez de virar sucesso por omissão — no drenador do F4 são **seis**, e os três que faltavam (`VAZIO_DO_MOTIVO`, `PARCIAL` e `INTERROMPIDA`) apareceram por escrever o **procedimento de decisão** pergunta a pergunta — inclusive a pergunta *"por que a passagem não examinou as `N`?"*, que é a que faltava por último —, não por declarar a lista exaustiva | F2 (verificação do deploy), F4 (consumo e drenador), F5 (job de liquidação), F6 (os dois laços de coleta), F7 (batch do `eod.ready`, worker, **comando `materializar --desde --ate`** e **varredura de defasagem de snapshot**), F8 (cursor com clamp), F9 (fan-out por cliente) — **toda fase com laço, e a lista é a prova disso** |
+| I15 | toda condição de parada de laço declara **completude** ou **limite**, e as duas produzem resultados diferentes (§10.31); onde os dois rótulos não bastarem, o rótulo que falta se nomeia em vez de virar sucesso por omissão — no drenador do F4 são **seis**, e os três que faltavam (`VAZIO_DO_MOTIVO`, `PARCIAL` e `INTERROMPIDA`) apareceram por escrever o **procedimento de decisão** pergunta a pergunta — inclusive a pergunta *"por que a passagem não examinou as `N`?"*, que é a que faltava por último —, não por declarar a lista exaustiva; e no **job de liquidação do F5 são TRÊS**, com o terceiro (`PARCIAL POR INCONSISTÊNCIA`) aparecendo **só na implementação**, quando um estado impossível por construção mostrou que abortar o ciclo inteiro poria o dinheiro de todos os clientes em limbo — segunda confirmação de que o rótulo que falta não se descobre declarando a lista | F2 (verificação do deploy), F4 (consumo e drenador), F5 (job de liquidação), F6 (os dois laços de coleta), F7 (batch do `eod.ready`, worker, **comando `materializar --desde --ate`** e **varredura de defasagem de snapshot**), F8 (cursor com clamp), F9 (fan-out por cliente) — **toda fase com laço, e a lista é a prova disso** |
 | I16 | não existe verbo de escrita sob `/v1` (ADR-10), provado por teste e não por prosa | F8 |
 | I17 | `caixa:BRL` e `caixa:a_liquidar` são ids **locais** desta casa, com preço **1,000000 por definição** — nunca recebem `PriceObserved`, nunca são pedidos ao Hub, nunca entram no alerta de preço ausente | F3 (regra) · F6, F7 (aplicação) |
 | I18 | a Custódia não publica **nenhum evento de contrato da §5.1** e não tem outbox nem relay; o único tráfego AMQP que **a aplicação** emite é infraestrutura interna dela (`custodia.retry.in`, `custodia.parking`, e o que dead-letra para a `custodia.prices.dlq`), que não é evento de domínio. **Ressalva nomeada, para o invariante não ser lido como falso:** o *passo de deploy* do F2 publica `prices.smoke` no exchange `prices`, que é do Hub — é prova de fumaça de topologia, executada por script, e não a aplicação | F1 (texto) · F2 (topologia) · F4 (uso) |
@@ -4931,8 +4931,22 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     **que não foram revertidas por um `ajuste`** e que ainda não têm a perna
     `liq:<fato>:brl`, e insere as **duas** pernas com `data_evento` = a data de liquidação.
     Rodar duas vezes é no-op pela `ref_externa`. A condição de parada é classificada
-    (§10.31): **COMPLETUDE** = varri todas as `a_liquidar` vencidas e cada uma tem as duas
-    pernas; **LIMITE** = teto de linhas por ciclo → **falha**, nunca sucesso parcial. E a
+    (§10.31), e os rótulos são **TRÊS** — eram dois quando esta decisão foi escrita, e o
+    terceiro apareceu na implementação, em 2026-09-13: **COMPLETUDE** = varri todas as
+    `a_liquidar` vencidas e cada uma tem as duas pernas; **LIMITE** = teto de linhas por ciclo
+    → **falha**, nunca sucesso parcial, e **zero linha gravada** (nem começa a processar);
+    **PARCIAL POR INCONSISTÊNCIA** = encontrei `aliq:` sem o movimento principal do fato.
+    *Este terceiro caso é impossível por construção em produção* — `aliq:` e o principal nascem
+    na **mesma transação** —, *e é exatamente por isso que ele não pode abortar o ciclo:* o job
+    **credita dinheiro ao cliente**, e parar todas as liquidações de todos os clientes por causa
+    de uma linha órfã põe o dinheiro de todo mundo em limbo. Regra: a candidata inconsistente é
+    **pulada**, o alerta **nomeia a `ref_externa` ofensora** (alerta sem identidade não permite
+    agir), as candidatas sadias **do mesmo ciclo são liquidadas**, e o ciclo **nunca** se declara
+    COMPLETUDE. Isso honra a §10.31 — parcial jamais apresentado como completo — sem pagar o
+    preço de parar tudo, e dá ao job a mesma propriedade que a guarda abaixo já tem: a linha
+    órfã **reaparece e realerta a cada ciclo** até alguém agir. *A prova exige as duas metades:
+    a órfã é pulada **E** a sadia do mesmo ciclo é liquidada (§10.8) — sem o controle positivo o
+    teste passa com um job que não faz nada.* E a
     **mesma consulta que o job usa é a guarda permanente**: `a_liquidar` vencida sem
     `liq:<fato>:brl` vira **métrica e alerta**, então um job que atrasa **aponta para si
     mesmo** em vez de deixar o livro incompleto em silêncio. *Não confunda com o worker da
@@ -5284,9 +5298,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      liquidacao (D+1 util, derivada do data_evento da propria linha pelo calendario da
      decisao 1 — deterministica) e <= hoje, QUE NAO FORAM REVERTIDAS por um ajuste, e
      que ainda nao tem a perna liq:<fato>:brl; insere as DUAS pernas. Rodar duas vezes e
-     no-op pela ref_externa. Parada CLASSIFICADA (PADROES 10.31): COMPLETUDE = varri
-     todas as vencidas e cada uma tem as duas pernas; LIMITE = teto de linhas por ciclo
-     -> FALHA, nunca sucesso parcial. A MESMA CONSULTA e a guarda permanente
+     no-op pela ref_externa. Parada CLASSIFICADA (PADROES 10.31), e sao TRES rotulos:
+     COMPLETUDE = varri todas as vencidas e cada uma tem as duas pernas; LIMITE = teto de
+     linhas por ciclo -> FALHA, nunca sucesso parcial, com ZERO linha gravada; PARCIAL POR
+     INCONSISTENCIA = achei aliq: sem o movimento principal do fato -> PULA aquela candidata,
+     alerta NOMEANDO a ref_externa ofensora, LIQUIDA as sadias do mesmo ciclo, e o ciclo nunca
+     se declara COMPLETUDE. NAO ABORTE O CICLO INTEIRO: o job credita dinheiro ao cliente, e
+     uma linha orfa (impossivel em producao — aliq: e o principal nascem na MESMA transacao)
+     poria o dinheiro de todos em limbo. Prove AS DUAS METADES: a orfa pulada E a sadia do
+     mesmo ciclo liquidada (10.8). A MESMA CONSULTA e a guarda permanente
      ("a_liquidar vencida sem liq:<fato>:brl" -> metrica + alerta), entao um job que
      atrasa APONTA PARA SI MESMO. Este job NAO e o worker da 7.4 (esse e do F7).
      O FILTRO "que nao foram revertidas" NAO E DETALHE, E ELE OLHA DUAS LINHAS: nem a
