@@ -2,7 +2,7 @@ using Custodia.Domain.Eventos;
 
 namespace Custodia.Domain.Tests.Eventos;
 
-public sealed class MotivoEstacionamentoTests
+public sealed class MotivoParkingTests
 {
     private static readonly string[] ConjuntoFechadoEsperado =
     [
@@ -19,18 +19,19 @@ public sealed class MotivoEstacionamentoTests
         "origem_recurso_ausente",
         "origem_recurso_invalida",
         "identificador_com_espaco_na_borda",
+        "falha_inesperada_no_processamento",
     ];
 
     [Fact]
-    public void All_TemExatamenteTrezeValores()
+    public void All_TemExatamenteCatorzeValores()
     {
-        Assert.Equal(13, MotivoEstacionamento.All.Count);
+        Assert.Equal(14, MotivoParking.All.Count);
     }
 
     [Fact]
     public void All_EhOConjuntoFechadoLiteralDestaFase_NemUmAMenosNemUmAMais()
     {
-        var nomes = MotivoEstacionamento.All.Select(m => m.Name).ToHashSet();
+        var nomes = MotivoParking.All.Select(m => m.Name).ToHashSet();
         var esperado = ConjuntoFechadoEsperado.ToHashSet();
 
         Assert.Equal(esperado, nomes);
@@ -40,7 +41,7 @@ public sealed class MotivoEstacionamentoTests
     [MemberData(nameof(NomesEsperados))]
     public void FromName_ResolveCadaValorDoConjuntoFechado(string nome)
     {
-        var resultado = MotivoEstacionamento.FromName(nome);
+        var resultado = MotivoParking.FromName(nome);
 
         Assert.True(resultado.IsSuccess);
         Assert.Equal(nome, resultado.Value.Name);
@@ -52,17 +53,17 @@ public sealed class MotivoEstacionamentoTests
     [Fact]
     public void FromName_NomeDesconhecido_DevolveFalha()
     {
-        var resultado = MotivoEstacionamento.FromName("motivo_que_nao_existe");
+        var resultado = MotivoParking.FromName("motivo_que_nao_existe");
 
         Assert.True(resultado.IsFailure);
-        Assert.Equal(MotivoEstacionamentoErrors.MotivoInvalido, resultado.Error);
+        Assert.Equal(MotivoParkingErrors.MotivoInvalido, resultado.Error);
     }
 
     [Fact]
     public void FromName_NuloOuVazio_DevolveFalha()
     {
-        Assert.True(MotivoEstacionamento.FromName(null).IsFailure);
-        Assert.True(MotivoEstacionamento.FromName(string.Empty).IsFailure);
+        Assert.True(MotivoParking.FromName(null).IsFailure);
+        Assert.True(MotivoParking.FromName(string.Empty).IsFailure);
     }
 
     [Fact]

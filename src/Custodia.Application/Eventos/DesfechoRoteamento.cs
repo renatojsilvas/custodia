@@ -11,7 +11,7 @@ public enum DesfechoRoteamentoTipo
 
 public sealed record DesfechoRoteamento
 {
-    private DesfechoRoteamento(DesfechoRoteamentoTipo tipo, TradeRegisteredEvento? evento, MotivoEstacionamento? motivo)
+    private DesfechoRoteamento(DesfechoRoteamentoTipo tipo, TradeRegisteredEvento? evento, MotivoParking? motivo)
     {
         Tipo = tipo;
         Evento = evento;
@@ -22,12 +22,12 @@ public sealed record DesfechoRoteamento
 
     public TradeRegisteredEvento? Evento { get; }
 
-    public MotivoEstacionamento? Motivo { get; }
+    public MotivoParking? Motivo { get; }
 
     public static DesfechoRoteamento Escriturar(TradeRegisteredEvento evento) =>
         new(DesfechoRoteamentoTipo.Escriturar, evento, null);
 
-    public static DesfechoRoteamento Estacionar(MotivoEstacionamento motivo) =>
+    public static DesfechoRoteamento Estacionar(MotivoParking motivo) =>
         new(DesfechoRoteamentoTipo.Estacionar, null, motivo);
 
     public static DesfechoRoteamento Ignorar() =>

@@ -6,38 +6,14 @@ public static class DobraPosicao
 {
     private const decimal PrecoFixoPorDefinicao = 1.000000m;
 
-    public static PosicaoTresColunas Dobrar(IEnumerable<Movimento> movimentos, DateOnly? corte = null)
+    public static PosicaoTresColunas Dobrar(IEnumerable<Movimento> movimentos, MomentoDoLivro? corte = null)
     {
-        ArgumentNullException.ThrowIfNull(movimentos);
-
-        var candidatos = corte is null
-            ? movimentos.ToList()
-            : movimentos.Where(movimento => movimento.DataEvento <= corte.Value).ToList();
-
-        var ordenados = candidatos
-            .OrderBy(movimento => movimento.DataEvento)
-            .ThenBy(movimento => movimento.RegistradoEm)
-            .ThenBy(movimento => movimento.Id)
-            .ToList();
-
-        var reversoresPorAlvoId = ordenados
-            .Where(movimento => movimento.Tipo == TipoMovimento.Ajuste && movimento.RefEstorno is not null)
-            .ToLookup(movimento => movimento.RefEstorno!.Value, movimento => movimento);
+        var efetivos = LivroSemEstornos.MovimentosEfetivos(movimentos, corte);
 
         var estado = PosicaoTresColunas.Zero;
 
-        foreach (var movimento in ordenados)
+        foreach (var movimento in efetivos)
         {
-            if (movimento.Tipo == TipoMovimento.Ajuste)
-            {
-                continue;
-            }
-
-            if (!EhEfetiva(movimento, reversoresPorAlvoId, []))
-            {
-                continue;
-            }
-
             estado = AplicarMovimento(estado, movimento);
         }
 
@@ -66,25 +42,6 @@ public static class DobraPosicao
         }
 
         return ResultadoAplicacaoIncremental.Aplicado(AplicarMovimento(estadoAtual, movimento));
-    }
-
-    private static bool EhEfetiva(Movimento movimento, ILookup<long, Movimento> reversoresPorAlvoId, HashSet<long> emResolucao)
-    {
-        var reversores = reversoresPorAlvoId[movimento.Id];
-
-        if (!reversores.Any())
-        {
-            return true;
-        }
-
-        if (!emResolucao.Add(movimento.Id))
-        {
-            return true;
-        }
-
-        var existeReversorEfetivo = reversores.Any(reversor => EhEfetiva(reversor, reversoresPorAlvoId, emResolucao));
-        emResolucao.Remove(movimento.Id);
-        return !existeReversorEfetivo;
     }
 
     private static PosicaoTresColunas AplicarMovimento(PosicaoTresColunas estadoAnterior, Movimento movimento)

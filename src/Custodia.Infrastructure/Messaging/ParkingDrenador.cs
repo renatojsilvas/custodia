@@ -14,7 +14,7 @@ public sealed class ParkingDrenador
 
     private readonly RabbitMqConnectionProvider _connectionProvider;
     private readonly IPublicadorComConfirmacao _publicador;
-    private readonly IMensagemParkeadaReprocessador _reprocessador;
+    private readonly IMensagemParkingReprocessador _reprocessador;
     private readonly IIdentificadorDePassagem _identificadorDePassagem;
     private readonly IPontoDeSuspensaoDrenagem _pontoDeSuspensao;
     private readonly ParkingDrenadorMetrics _metrics;
@@ -24,7 +24,7 @@ public sealed class ParkingDrenador
     public ParkingDrenador(
         RabbitMqConnectionProvider connectionProvider,
         IPublicadorComConfirmacao publicador,
-        IMensagemParkeadaReprocessador reprocessador,
+        IMensagemParkingReprocessador reprocessador,
         IIdentificadorDePassagem identificadorDePassagem,
         IPontoDeSuspensaoDrenagem pontoDeSuspensao,
         ParkingDrenadorMetrics metrics,
@@ -42,7 +42,7 @@ public sealed class ParkingDrenador
     }
 
     public async Task<ResultadoDrenagem> DrenarAsync(
-        MotivoEstacionamento motivo, string? passagemIdForcado, CancellationToken ct)
+        MotivoParking motivo, string? passagemIdForcado, CancellationToken ct)
     {
         var conexao = await _connectionProvider.ObterConexaoAsync(ct);
         await using var canal = await conexao.CreateChannelAsync(cancellationToken: ct);

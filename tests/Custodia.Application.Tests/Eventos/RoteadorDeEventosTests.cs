@@ -34,7 +34,7 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear("trades.registered", "{\"v\": 1}");
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.PayloadInvalido, desfecho.Motivo);
+        Assert.Equal(MotivoParking.PayloadInvalido, desfecho.Motivo);
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear("trades.registered", payloadComVDois);
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.VersaoNaoSuportada, desfecho.Motivo);
+        Assert.Equal(MotivoParking.VersaoNaoSuportada, desfecho.Motivo);
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear("trades.registered", payloadComTipoErrado);
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.PayloadInvalido, desfecho.Motivo);
+        Assert.Equal(MotivoParking.PayloadInvalido, desfecho.Motivo);
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear("eod.ready", "{\"d\":\"2026-08-01\"}");
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.TipoNaoTratadoEod, desfecho.Motivo);
+        Assert.Equal(MotivoParking.TipoNaoTratadoEod, desfecho.Motivo);
     }
 
     [Theory]
@@ -77,7 +77,7 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear(routingKey, "{\"instrumentoId\":\"td:x\"}");
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.TipoNaoTratadoPrices, desfecho.Motivo);
+        Assert.Equal(MotivoParking.TipoNaoTratadoPrices, desfecho.Motivo);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear("corpactions.td", "{\"instrumentoId\":\"td:x\"}");
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.TipoNaoTratadoCorpactions, desfecho.Motivo);
+        Assert.Equal(MotivoParking.TipoNaoTratadoCorpactions, desfecho.Motivo);
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear("prices.smoke", "{\"instrumentoId\":\"td:x\",\"preco\":\"100.00\"}");
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.TipoNaoTratadoPrices, desfecho.Motivo);
+        Assert.Equal(MotivoParking.TipoNaoTratadoPrices, desfecho.Motivo);
     }
 
     [Fact]
@@ -112,6 +112,6 @@ public sealed class RoteadorDeEventosTests
         var desfecho = _roteador.Rotear("prices.smoke", "algum texto qualquer sem o prefixo esperado");
 
         Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
-        Assert.Equal(MotivoEstacionamento.TipoNaoTratadoPrices, desfecho.Motivo);
+        Assert.Equal(MotivoParking.TipoNaoTratadoPrices, desfecho.Motivo);
     }
 }

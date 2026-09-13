@@ -1,4 +1,5 @@
 using Custodia.Infrastructure.Observability;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Prometheus;
 
@@ -8,6 +9,9 @@ public sealed class BusinessMetricsTests
 {
     private static readonly Counter PosicaoNegativaSinalizadaTotal = Metrics.CreateCounter(
         "custodia_posicao_negativa_sinalizada_total", "help", new CounterConfiguration { LabelNames = ["instrumento_id"] });
+
+    private static readonly Gauge CalendarioDiasUteisHorizonteDiasRestantesGauge = Metrics.CreateGauge(
+        "custodia_calendario_dias_uteis_horizonte_dias_restantes", "help");
 
     private readonly BusinessMetrics _metrics = new(NullLogger<BusinessMetrics>.Instance);
 
@@ -36,5 +40,35 @@ public sealed class BusinessMetricsTests
 
         Assert.Null(exception);
         Assert.True(PosicaoNegativaSinalizadaTotal.WithLabels(instrumentoId).Value >= 2);
+    }
+
+    [Fact]
+    public void RegistrarHorizonteCalendarioDiasUteis_SempreAtualizaOGaugeComOValorInformado()
+    {
+        _metrics.RegistrarHorizonteCalendarioDiasUteis(diasRestantes: 1234, diasMinimosConfigurados: 90);
+
+        Assert.Equal(1234, CalendarioDiasUteisHorizonteDiasRestantesGauge.Value);
+    }
+
+    [Fact]
+    public void RegistrarHorizonteCalendarioDiasUteis_QuandoHorizonteEstaCurto_DisparaAlertaEmLogDeWarning()
+    {
+        var logger = new FakeLogger<BusinessMetrics>();
+        var metrics = new BusinessMetrics(logger);
+
+        metrics.RegistrarHorizonteCalendarioDiasUteis(diasRestantes: 30, diasMinimosConfigurados: 90);
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public void RegistrarHorizonteCalendarioDiasUteis_QuandoHorizonteEstaFolgado_NaoDisparaAlertaAlgum()
+    {
+        var logger = new FakeLogger<BusinessMetrics>();
+        var metrics = new BusinessMetrics(logger);
+
+        metrics.RegistrarHorizonteCalendarioDiasUteis(diasRestantes: 1500, diasMinimosConfigurados: 90);
+
+        Assert.Empty(logger.Entries);
     }
 }

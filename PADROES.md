@@ -1657,3 +1657,116 @@ divergem: no mesmo incidente, a **outra** linha construída ali (a perna de caix
 **Corolário sobre relatório de revisão:** "mutei e a suíte passou" prova que **falta proteção**, não
 que o código está errado. Confira a direção antes de reescrever: ali o código estava certo e o que
 faltava era impedir que ficasse errado. Ref.: `custodia`, F4, `CriarAjusteDeReversao`.
+
+### 10.47. Porte de motor de tributos: a tabela de alíquotas é a parte visível, a COMPOSIÇÃO é a que muda o número
+
+**Medido na `custodia`, F5 (2026-09-12), ao portar o motor fiscal do simulador da TD API.**
+
+O roadmap dizia "base = o GANHO da alienação" para **os dois** tributos, IR e IOF. O código-fonte do
+motor portado diz outra coisa, e diz em três lugares que só se encontram lendo o arquivo inteiro em
+vez de procurar as faixas: o IOF é declarado `ordem: 1, cumulativo: true`, o IR é `ordem: 2,
+cumulativo: false`, e o laço que aplica os tributos itera `OrderBy(t => t.Ordem)`, toma a base do
+`rendimentoAjustado` e faz `rendimentoAjustado -= valor` quando o tributo é cumulativo. Portanto
+**base do IOF = ganho; base do IR = ganho MENOS o IOF.**
+
+Portar só as faixas e a tabela regressiva recolhe **IR a maior em todo lote com menos de 30 dias** —
+número gravado em tabela append-only, sem UPDATE.
+
+**Regra: ao portar um motor de tributos, porte a ORDEM e a CUMULATIVIDADE junto com as alíquotas.**
+Alíquota é o que se procura e o que se confere; composição é o que se esquece, porque não está na
+tabela — está no laço que a consome. Se o motor de origem tem campo de ordem ou de cumulatividade, ele
+tem composição, e a base de cada tributo é uma pergunta por tributo, não uma por motor.
+
+**E a regra sobre o TESTE, que é o motivo de isto valer uma seção:** a conferência contra o motor de
+origem **só pega este defeito se o caso conferido estiver na faixa em que os dois tributos coexistem**.
+Com 30 dias ou mais o IOF não existe, a base do IR volta a ser o ganho puro, e a implementação errada
+dá **o mesmo número** da certa — o teste fica verde sendo cego exatamente para o defeito que existe
+para pegar. O caso de conferência tem de ter **menos de 30 dias**, e o nome do teste tem de dizer por
+quê, senão alguém "simplifica" o fixture e a cegueira volta sem deixar rastro.
+
+**Corolário que generaliza para fora de tributo:** sempre que N regras se aplicam em cadeia e uma
+altera a entrada da seguinte, a especificação que descreve "a base" no singular está comprimindo N
+bases em uma. Procure o campo de ordem antes de acreditar no singular.
+
+### 10.48. Exceção determinística num consumidor com `requeue: true` é poison message em laço, e a métrica a chama de transitória
+
+**Medido na `custodia`, F4 — descoberto no F5 (2026-09-13), investigando outro defeito.**
+
+O consumidor tem um `catch` final que registra `LogCritical` e chama `BasicNackAsync(..., requeue: true)`,
+contabilizando o desfecho como `nack_requeue_transitorio`. Para falha **transitória** isso é correto: a
+mensagem volta e a próxima tentativa passa. Para falha **determinística** — um bug que lança sempre
+para aquele payload — o mesmo caminho produz **requeue infinito**: a mensagem nunca é processada,
+**nunca chega à fila de parking**, e o painel a exibe como problema transitório enquanto o laço gira.
+
+O gatilho concreto foi um `.First(...)` sobre faixas de alíquota que não cobriam a entrada produzida
+por um defeito de outro lugar. Qualquer exceção determinística serve.
+
+**Regra: `requeue: true` é resposta para falha transitória, e um `catch (Exception)` não sabe se a
+falha é transitória.** Quem captura tudo tem de **classificar** antes de decidir o desfecho (§10.31
+aplicada a consumo, não a laço de coleta): exceção reconhecidamente transitória volta para a fila;
+**exceção não classificada é parking com motivo próprio**, ou requeue **com teto de tentativas** e
+parking ao estourar. Rotular de "transitório" o que não se sabe ser transitório é a mesma falha da
+parada de laço que não distingue completude de limite — o rótulo afirma mais do que o código sabe.
+
+**E o efeito sobre o diagnóstico, que é o que custa tempo:** o operador procura instabilidade de
+infraestrutura, porque foi isso que a métrica disse. O defeito é de código, e a evidência dele está
+no `LogCritical` que ninguém lê enquanto o contador de "transitório" sobe.
+
+### 10.49. Cópia idêntica em COMPORTAMENTO pode já estar divergente em ESTRUTURA — o ramo que falta está morto hoje
+
+**Medido na `custodia`, F5 (2026-09-13).** Um executor duplicou a orquestração que aplica um
+movimento na projeção de posição — ler o watermark da chave, ler a posição, decidir entre caminho
+incremental e redobra — para um segundo handler, e registrou a duplicação honestamente, justificando
+que não queria mexer no handler já em produção. Exigida a extração para um ponto só, a pergunta que
+eu fiz junto foi *"as duas cópias já divergiam?"*.
+
+**A resposta foi: em comportamento, não; em estrutura, sim.** O texto do método copiado era idêntico,
+mas a cópia nova **não tinha o dispatcher** que decide "é linha de `ajuste`? então redobra somando
+também o que já foi adicionado neste mesmo lote" — ela chamava o caminho simples direto. Isso não
+produzia resultado errado, porque naquele contexto o segundo handler nunca gravava `ajuste` e as duas
+linhas que ele grava nunca colidem na mesma chave dentro do mesmo lote. **O ramo estava morto.**
+
+**Regra: duplicação não se mede por diff de comportamento nem por teste — ela se mede pela
+ESTRUTURA.** Um teste não distingue as duas cópias enquanto o ramo ausente for inalcançável no
+contexto novo, e é justamente essa inalcançabilidade que faz a cópia parecer inofensiva na revisão.
+Quando uma fase futura mudar o contexto — o handler passa a gravar um tipo a mais, ou dois itens do
+mesmo lote passam a tocar a mesma chave —, a cópia fica **muda exatamente no caso que o ramo existia
+para cobrir**, e o sintoma aparece longe dali, numa reconciliação que alerta em operação normal.
+
+**Como usar isto numa revisão:** quando encontrar caminho duplicado, não pergunte "os dois dão o mesmo
+resultado?" — pergunte **"quais ramos o original tem que a cópia não tem, e o que tornaria cada um
+alcançável?"**. Se a resposta a "o que tornaria alcançável" for uma mudança plausível de fase
+seguinte, a duplicação é dívida com data marcada, não conveniência.
+
+**E o corolário de despacho:** peça ao executor que responda essa pergunta ao desfazer a duplicação.
+A extração sozinha remove o risco futuro em silêncio; a pergunta transforma o que estava latente em
+achado escrito, e é ela que diz se algo já estava errado em produção.
+
+### 10.50. Varredura de confirmação de rename roda SEM o filtro de ruído — alvo e ruído coabitam a linha
+
+**Medido na `custodia`, F5 (2026-09-13), padronizando a grafia de um conceito.**
+
+Renomeei um tipo de `X` para `Y` e precisei reverter parte do rename. Para achar o que reverter,
+varri por `Y` **excluindo** as linhas que continham o tipo legitimamente renomeado — um filtro de
+ruído, para não reler dezenas de ocorrências corretas. A varredura devolveu uma lista, eu reverti a
+lista inteira, e o compilador acusou **18 erros** em um arquivo que a varredura **não mostrou**.
+
+O motivo é banal e por isso escapa: as chamadas eram `Resultado.Y(TipoRenomeado.Valor)` — o **alvo**
+e o **ruído** na **mesma linha**. `grep -v` opera por linha, não por ocorrência, então excluir o
+ruído excluiu o alvo junto.
+
+**Regra: a varredura que CONFIRMA um rename roda sem filtro nenhum.** Filtro serve para *explorar*
+(reduzir o que você lê enquanto entende o problema); a confirmação é uma pergunta de completude, e
+completude não se afirma sobre um conjunto que você mesmo reduziu. Se a saída sem filtro for grande,
+restrinja por **caminho** (`src/` e `tests/` separados, um diretório por vez) — nunca por conteúdo da
+linha.
+
+**Corolário que vale além de rename:** toda vez que você usar `grep -v` para tirar ruído, pergunte se
+existe uma linha onde o ruído e o alvo coabitam. Se existir, o filtro não é conservador — ele é
+**cego naquele caso exato**, e o caso exato costuma ser o mais interessante, porque é onde os dois
+conceitos se encontram.
+
+**E o que salvou aqui foi o compilador, não a disciplina:** num rename de símbolo C# o erro aparece
+em segundos. Numa varredura de string (SQL embutido, nome de métrica, chave de configuração,
+documento) **não há compilador**, o filtro cego passa despercebido, e o que sobrevive é uma ocorrência
+órfã que ninguém procura de novo.

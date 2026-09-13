@@ -134,14 +134,44 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
         {
             await ProcessarEntregaAsync(ea);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException && ClassificadorDeFalhaTransitoria.EhTransitoria(ex))
         {
-            _logger.LogCritical(
+            _logger.LogError(
                 ex,
-                "Falha inesperada ao processar mensagem da {Fila} (routingKey {RoutingKey}); nack com requeue.",
+                "Falha transitória conhecida ao processar mensagem da {Fila} (routingKey {RoutingKey}); nack com requeue.",
                 RabbitMqTopologia.FilaPrincipal, ea.RoutingKey);
             await NackRequeueAsync(ea);
             _metrics.RegistrarDesfecho("nack_requeue_transitorio");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await TratarFalhaNaoClassificadaAsync(ea, ex);
+        }
+    }
+
+    private async Task TratarFalhaNaoClassificadaAsync(BasicDeliverEventArgs ea, Exception excecaoNaoClassificada)
+    {
+        _logger.LogCritical(
+            excecaoNaoClassificada,
+            "Falha não classificada ao processar mensagem da {Fila} (routingKey {RoutingKey}); estacionando com motivo " +
+            "{Motivo} em vez de requeue indefinido.",
+            RabbitMqTopologia.FilaPrincipal, ea.RoutingKey, MotivoParking.FalhaInesperadaNoProcessamento.Name);
+
+        var corpo = ea.Body.ToArray();
+        var cabecalhosOriginais = RabbitMqCabecalhos.Copiar(ea.BasicProperties.Headers);
+
+        try
+        {
+            await EstacionarAsync(ea, cabecalhosOriginais, MotivoParking.FalhaInesperadaNoProcessamento, corpo);
+        }
+        catch (Exception excecaoAoEstacionar) when (excecaoAoEstacionar is not OperationCanceledException)
+        {
+            _logger.LogCritical(
+                excecaoAoEstacionar,
+                "Falha ao tentar estacionar mensagem da {Fila} (routingKey {RoutingKey}) após falha não classificada; " +
+                "nack com requeue.",
+                RabbitMqTopologia.FilaPrincipal, ea.RoutingKey);
+            await NackRequeueComFalhaDeParkingAsync(ea);
         }
     }
 
@@ -158,7 +188,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
         }
         catch (JsonException)
         {
-            desfecho = DesfechoRoteamento.Estacionar(MotivoEstacionamento.PayloadInvalido);
+            desfecho = DesfechoRoteamento.Estacionar(MotivoParking.PayloadInvalido);
         }
 
         switch (desfecho.Tipo)
@@ -190,12 +220,12 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
 
         if (resultado.IsFailure)
         {
-            _logger.LogError(
-                "Falha não classificada ao processar TradeRegistered {TradeId} (cliente {ClienteId}): {Codigo} - {Mensagem}. " +
-                "Tratada como transitória: nack com requeue.",
-                evento.TradeId, evento.ClienteId, resultado.Error.Code, resultado.Error.Description);
-            await NackRequeueAsync(ea);
-            _metrics.RegistrarDesfecho("nack_requeue_transitorio");
+            _logger.LogCritical(
+                "Falha reconhecida e determinística ao processar TradeRegistered {TradeId} (cliente {ClienteId}): " +
+                "{Codigo} - {Mensagem}. Estacionando com motivo {Motivo} em vez de requeue indefinido.",
+                evento.TradeId, evento.ClienteId, resultado.Error.Code, resultado.Error.Description,
+                MotivoParking.FalhaInesperadaNoProcessamento.Name);
+            await EstacionarAsync(ea, cabecalhosOriginais, MotivoParking.FalhaInesperadaNoProcessamento, corpo);
             return;
         }
 
@@ -226,7 +256,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
 
         if (voltasJaFeitas >= _orfaoTetoVoltas)
         {
-            await EstacionarAsync(ea, cabecalhosOriginais, MotivoEstacionamento.EstornoOrfaoExpirado, corpo);
+            await EstacionarAsync(ea, cabecalhosOriginais, MotivoParking.EstornoOrfaoExpirado, corpo);
             return;
         }
 
@@ -234,7 +264,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
 
         if (tentativasDeEntregaNestaFila >= _retryTetoTentativas)
         {
-            await EstacionarAsync(ea, cabecalhosOriginais, MotivoEstacionamento.RetryIndisponivel, corpo);
+            await EstacionarAsync(ea, cabecalhosOriginais, MotivoParking.RetryIndisponivel, corpo);
             return;
         }
 
@@ -248,10 +278,10 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
         {
             _logger.LogWarning(
                 "Publisher confirm negado ao republicar estorno órfão em {Exchange} (tentativa {Tentativa} nesta " +
-                "entrega); nack com requeue.",
+                "entrega); custodia.retry indisponível, nack com requeue — limitado pelo teto de tentativas.",
                 RabbitMqTopologia.ExchangeRetryIn, tentativasDeEntregaNestaFila + 1);
             await NackRequeueAsync(ea);
-            _metrics.RegistrarDesfecho("nack_requeue_transitorio");
+            _metrics.RegistrarDesfecho("nack_requeue_falha_ao_publicar_retry");
             return;
         }
 
@@ -260,7 +290,7 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
     }
 
     private async Task EstacionarAsync(
-        BasicDeliverEventArgs ea, Dictionary<string, object?> cabecalhosOriginais, MotivoEstacionamento motivo, byte[] corpo)
+        BasicDeliverEventArgs ea, Dictionary<string, object?> cabecalhosOriginais, MotivoParking motivo, byte[] corpo)
     {
         var cabecalhosParaRepublicar = new Dictionary<string, object?>(cabecalhosOriginais);
         RabbitMqCabecalhos.DefinirMotivo(cabecalhosParaRepublicar, motivo.Name);
@@ -271,16 +301,22 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
         if (!confirmado)
         {
             _logger.LogCritical(
-                "Publisher confirm negado ao republicar mensagem com motivo {Motivo} em {Exchange}; nack com requeue.",
+                "Publisher confirm negado ao republicar mensagem com motivo {Motivo} em {Exchange}; parking " +
+                "indisponível, nack com requeue.",
                 motivo.Name, RabbitMqTopologia.ExchangeParking);
-            await NackRequeueAsync(ea);
-            _metrics.RegistrarDesfecho("nack_requeue_transitorio");
+            await NackRequeueComFalhaDeParkingAsync(ea);
             return;
         }
 
         await AckAsync(ea);
         _metrics.RegistrarDesfecho("park_publicado");
         _metrics.RegistrarEstacionamento(motivo.Name);
+    }
+
+    private async Task NackRequeueComFalhaDeParkingAsync(BasicDeliverEventArgs ea)
+    {
+        await NackRequeueAsync(ea);
+        _metrics.RegistrarDesfecho("nack_requeue_falha_ao_estacionar");
     }
 
     private ValueTask AckAsync(BasicDeliverEventArgs ea) =>

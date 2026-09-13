@@ -11,7 +11,7 @@ public enum ResultadoTradeRegisteredTipo
 
 public sealed record ResultadoTradeRegistered
 {
-    private ResultadoTradeRegistered(ResultadoTradeRegisteredTipo tipo, MotivoEstacionamento? motivo, bool replay)
+    private ResultadoTradeRegistered(ResultadoTradeRegisteredTipo tipo, MotivoParking? motivo, bool replay)
     {
         Tipo = tipo;
         Motivo = motivo;
@@ -20,14 +20,14 @@ public sealed record ResultadoTradeRegistered
 
     public ResultadoTradeRegisteredTipo Tipo { get; }
 
-    public MotivoEstacionamento? Motivo { get; }
+    public MotivoParking? Motivo { get; }
 
     public bool Replay { get; }
 
     public static ResultadoTradeRegistered Escriturado(bool replay = false) =>
         new(ResultadoTradeRegisteredTipo.Escriturado, null, replay);
 
-    public static ResultadoTradeRegistered Estacionar(MotivoEstacionamento motivo) =>
+    public static ResultadoTradeRegistered Estacionar(MotivoParking motivo) =>
         new(ResultadoTradeRegisteredTipo.Estacionar, motivo, false);
 
     public static ResultadoTradeRegistered EnviarParaRetry() =>

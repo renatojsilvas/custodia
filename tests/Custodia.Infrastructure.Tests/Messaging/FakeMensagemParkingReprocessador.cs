@@ -3,9 +3,9 @@ using Custodia.Infrastructure.Messaging;
 
 namespace Custodia.Infrastructure.Tests.Messaging;
 
-internal sealed class FakeMensagemParkeadaReprocessador(
+internal sealed class FakeMensagemParkingReprocessador(
     Func<string, ReadOnlyMemory<byte>, ResultadoReprocessamento>? reprocessar = null)
-    : IMensagemParkeadaReprocessador
+    : IMensagemParkingReprocessador
 {
     private readonly Func<string, ReadOnlyMemory<byte>, ResultadoReprocessamento> _reprocessar =
         reprocessar ?? ((_, _) => ResultadoReprocessamento.Sucesso());
@@ -13,7 +13,7 @@ internal sealed class FakeMensagemParkeadaReprocessador(
     public List<string> RoutingKeysReprocessadas { get; } = [];
 
     public Task<ResultadoReprocessamento> ReprocessarAsync(
-        string routingKey, ReadOnlyMemory<byte> corpo, MotivoEstacionamento motivoOriginal, CancellationToken ct)
+        string routingKey, ReadOnlyMemory<byte> corpo, MotivoParking motivoOriginal, CancellationToken ct)
     {
         RoutingKeysReprocessadas.Add(routingKey);
         return Task.FromResult(_reprocessar(routingKey, corpo));

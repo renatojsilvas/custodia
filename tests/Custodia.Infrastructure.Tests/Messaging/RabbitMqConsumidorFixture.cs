@@ -82,7 +82,8 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
         return new ConfigurationBuilder().AddInMemoryCollection(valores).Build();
     }
 
-    public ServiceProvider CriarServiceProvider(IConfiguration configuration)
+    public ServiceProvider CriarServiceProvider(
+        IConfiguration configuration, Action<IServiceCollection>? configurarServicosExtras = null)
     {
         var servicos = new ServiceCollection();
         servicos.AddSingleton(configuration);
@@ -93,6 +94,7 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
         });
         servicos.AddApplication();
         servicos.AddInfrastructure(configuration);
+        configurarServicosExtras?.Invoke(servicos);
         return servicos.BuildServiceProvider();
     }
 

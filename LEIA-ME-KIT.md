@@ -1307,6 +1307,24 @@ chega ao executor como se fosse defeito do código dele. Avise no prompt que exi
 concorrente, diga para repetir em vez de consertar, e **proíba `dotnet clean`** — que é o conserto
 "óbvio" e derruba a compilação do outro no meio.
 
+**O ESPELHO DISSO DO LADO DO CONDUTOR, e eu o cometi no F5 da `custodia` (2026-09-13):** eu proibi
+`git checkout`/`stash`/`clean` nos prompts dos executores, e então fiz `git add -A && git commit` para
+gravar dois documentos meus **enquanto um executor estava despachado e ativo na árvore**. Não capturou
+trabalho parcial — por sorte, porque ele ainda não havia escrito o primeiro arquivo. Se tivesse escrito
+metade de um refactor, o commit teria gravado essa metade sob uma mensagem que fala de outra coisa, e
+o defeito só apareceria na revisão seguinte, atribuído ao executor.
+
+**Regra: com subagente ativo, o condutor commita POR CAMINHO** — `git add docs/ROADMAP.md PADROES.md`,
+nunca `-A`, nunca `.`. E o `git status --short` de antes do commit é para **ler**, não para confirmar
+que está tudo bem: o que interessa nele é exatamente o que NÃO é seu.
+
+**E a consequência de segunda ordem, que é a parte que quase mordeu:** aquele commit tornou rastreados
+arquivos que o executor conhecia como não rastreados, e o **ponto de restauração que eu havia dado a
+ele no prompt deixou de existir** para aqueles caminhos (`git checkout <sha> -- <arquivo>` falha se o
+arquivo não existia naquele commit). Commitar por baixo de um agente **invalida instruções que já
+foram entregues a ele**. Se você fizer isso, mande a correção do SHA imediatamente — e é mais um motivo
+para o commit do condutor ser por caminho e fora dos diretórios do agente.
+
 ## Fechar pendência que ACRESCENTA item a um conjunto: varra pelo NUMERAL, não só pelo nome
 
 Complemento concreto do "varra o arquivo inteiro pelo nome da pendência — `grep`, não memória".
@@ -1363,7 +1381,30 @@ tinha **540** — o número foi escrito depois da primeira rodada de correção 
 segunda acrescentou nove testes. A **mensagem do commit da mesma entrega já dizia 540**: o arquivo
 contradizia o commit que o gravou.
 
-Os quatro, para a forma ficar visível:
+**QUINTO caso, e ele é de uma VARIANTE que os quatro anteriores não têm: o total estava certo e a
+DIVISÃO estava errada.** No F5 da `custodia` (2026-09-12), fechando a pendência do `prazo`, fui
+atualizar a frase "São **CINCO** adjudicações até aqui — **duas** que entraram, três que não" para
+somar a sexta. Ao contar no arquivo em vez de aceitar o número, a enumeração logo abaixo da frase
+tinha **uma** que entrou e **quatro** que não. O "cinco" estava certo desde sempre; o "duas/três"
+nunca esteve. O defeito atravessou todas as revisões anteriores porque **a varredura por numeral
+procura o numeral do TOTAL**, e a divisão mora na mesma frase, atrás de uma vírgula, parecendo
+aposto explicativo em vez de afirmação.
+
+**Regra que isto acrescenta:** contagem de conjunto **partido** tem **dois** numerais — o total e
+cada parcela —, e conferir o total não confere a partição. Quando a frase for "são N, X de um jeito e
+Y de outro", **some X + Y e compare com N**, e depois conte os membros de cada parcela na
+enumeração. Três números, três conferências. *E o corolário para quem escreve:* se a enumeração
+existe logo abaixo, **não escreva a divisão** — ela é derivável e só serve para envelhecer.
+
+**E o segundo motivo de isto estar aqui, que é sobre despachar e não sobre contar:** eu havia pedido
+a varredura por numeral ao `advisor`, com a lista dos conjuntos afetados, e ele devolveu
+"CINCO → SEIS, três que entraram, três que não" — propagando a divisão errada, porque **assumiu que
+o número existente estava certo** e só somou o item novo. Um subagente pedido para varrer numeral
+faz aritmética sobre o que está escrito; **quem confere contra a enumeração é quem despacha**. É o
+espelho da regra 3 acima: não ponha numeral num prompt sem contar, e não aceite numeral de um
+relatório sem contar.
+
+Os cinco, para a forma ficar visível:
 
 | numeral escrito | valor real | quando envelheceu |
 |---|---|---|
@@ -1371,8 +1412,11 @@ Os quatro, para a forma ficar visível:
 | "o mesmo conjunto de **4–5 linhas**" | 4–6 e 4–5, por família | quando as famílias foram enumeradas |
 | "**NOVE** CHECKs em movimentos" | doze | quando o achado do espaço acrescentou três |
 | "Suíte 506 → **531**" | 540 | quando a segunda rodada de correção acrescentou nove testes |
+| "cinco adjudicações — **duas** que entraram, três que não" | cinco, **uma** e quatro | nunca esteve certo: o total era certo, a divisão não |
 
-**A forma é sempre a mesma, e é o que torna isto previsível em vez de azar:** quem escreve o numeral
+**A forma dos QUATRO PRIMEIROS é sempre a mesma, e é o que torna isto previsível em vez de azar**
+(o quinto é a variante da divisão, e a defesa dele é somar as parcelas, não reler o total): quem
+escreve o numeral
 é a mesma pessoa que acabou de mudar a coisa contada, no mesmo commit ou no seguinte; o numeral não
 contém a palavra do assunto, então `grep` por tema não o alcança; e ele **parece atual**, porque foi
 escrito agora.
@@ -1474,3 +1518,63 @@ chegou" de "chegou e alguém já tratou"**. Enquanto não há consumidor as duas
 indistinguíveis, e a fase que constrói o consumidor é exatamente a que quebra a verificação —
 com a suíte inteira verde e o serviço correto. *Sintoma para reconhecer rápido: a mensagem de
 erro acusa a peça que acabou de ser verificada com sucesso alguns passos antes.*
+
+
+## A suíte morta por memória parece flakiness, parece defeito seu, e parece contenção entre agentes
+
+Três vezes no F5 da `custodia` (2026-09-13) o `dotnet test` foi **morto pelo sistema** por falta de
+memória. O sintoma não é teste vermelho: é o processo desaparecendo no meio, sem veredito.
+
+**O primeiro diagnóstico estava incompleto, e eu o afirmei com confiança.** `dotnet test` numa
+solution roda os assemblies **em paralelo**, e aqui dois projetos de integração sobem cada um sua
+pilha de Testcontainers — dois Postgres e dois RabbitMQ simultâneos. Passei a rodar **projeto a
+projeto**, declarei a causa encontrada, e a execução em série **morreu igual**. A causa real era a
+**soma**: o VS Code mantinha dois servidores Roslyn do C# devkit abertos no mesmo workspace, e a
+suíte subia por cima disso. Concorrência entre agentes e paralelismo de assembly **pioravam**, mas
+não explicavam sozinhos.
+
+**Regra: meça a linha de base do AMBIENTE antes de atribuir a falha ao seu próprio trabalho.** Um
+`vm_stat`/`docker ps`/`pgrep` de dez segundos separa "a minha suíte é pesada" de "a máquina já estava
+cheia antes de eu começar". Sem isso, o mesmo sintoma admite três consertos diferentes — serializar
+agentes, serializar assemblies, fechar o que não é seu — e você escolhe pelo que lembrou primeiro.
+
+**E o que torna isto caro é a ambiguidade do sintoma**, não a falta de solução: processo morto se
+parece com flakiness (e convida a reexecutar), com defeito do código novo (e convida a investigar o
+que você acabou de escrever), e com contenção entre agentes (e convida a serializar tudo, pagando
+tempo de parede). As três leituras são plausíveis e só uma medição as separa.
+
+*Nota de método, e ela é o motivo desta seção existir:* eu escrevi "a causa é a contenção entre
+agentes" **depois de uma correlação de duas observações** — a suíte que levou 2m50s sozinha e 27min
+com outro agente compilando. A correlação era real e a conclusão era estreita demais. Correlação com
+duas amostras é hipótese, não causa, e afirmá-la como causa faz o próximo sintoma idêntico ser
+atribuído à mesma coisa sem nova medição.
+
+---
+
+## Agente mecânico extrapola o escopo justamente onde o escopo foi desenhado com cuidado
+
+No rename de grafia do F5 (2026-09-13) escrevi, literalmente, no prompt do agente: *"pode haver
+métodos como `Estacionar(...)` cujo nome também deveria acompanhar; **liste-os e me pergunte** em vez
+de renomear por conta própria, porque não estão na decisão do guardião."*
+
+Ele renomeou. E a extrapolação **piorou o resultado**: pôs `Park` no meio de um enum cujos outros
+membros eram `Escriturar` e `Ignorar` — trocou uma inconsistência por outra. O conjunto que a decisão
+cobria eram **substantivos** (o tipo que agrupa os motivos, os tipos de mensageria); o **verbo** do
+fluxo nunca esteve em questão, e ele pertence ao vocabulário de domínio, não ao nome da fila externa.
+
+**Duas lições, e a segunda é a que generaliza:**
+
+1. **"Pergunte antes" não segura um agente mecânico quando a mudança é trivialmente fazível.** Se
+   você precisa mesmo que ele pare, a instrução tem de ser uma **fronteira de arquivo ou de símbolo**
+   ("não toque em nada fora desta lista"), não um pedido de consulta. Pedido de consulta funciona
+   quando parar é mais barato que fazer; num rename, fazer é um `sed`.
+2. **A parte do escopo que você mais pensou é a que o agente mais provavelmente vai atravessar**,
+   porque ela é onde a regra geral ("padronize a grafia") e a exceção ("menos os verbos") se
+   contradizem na superfície. O agente resolve a contradição pela regra geral, que é a que ele
+   entendeu. **Escreva a exceção como regra própria, não como ressalva da outra** — "os verbos do
+   fluxo (`Escriturar`, `Estacionar`, `Ignorar`) são vocabulário de domínio e ficam em português" é
+   uma regra; "padronize tudo, mas pergunte sobre os verbos" é uma ressalva, e ressalva se perde.
+
+*E o custo de detectar foi baixo só por sorte de linguagem:* num rename de símbolo C# o compilador
+acusa. A mesma extrapolação num valor de string — nome de métrica, motivo de parking, chave de
+configuração — não acusa nada, e a mensagem que ninguém mais encontra só aparece fases depois.

@@ -9,12 +9,12 @@ public enum ResultadoReprocessamentoTipo
     Ignorado,
 }
 
-public sealed record ResultadoReprocessamento(ResultadoReprocessamentoTipo Tipo, MotivoEstacionamento? MotivoResultante)
+public sealed record ResultadoReprocessamento(ResultadoReprocessamentoTipo Tipo, MotivoParking? MotivoResultante)
 {
     public static ResultadoReprocessamento Sucesso() => new(ResultadoReprocessamentoTipo.Processado, null);
 
     public static ResultadoReprocessamento Ignorar() => new(ResultadoReprocessamentoTipo.Ignorado, null);
 
-    public static ResultadoReprocessamento Falha(MotivoEstacionamento motivo) =>
+    public static ResultadoReprocessamento Falha(MotivoParking motivo) =>
         new(ResultadoReprocessamentoTipo.NaoProcessado, motivo);
 }

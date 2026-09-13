@@ -23,7 +23,7 @@ public sealed class RoteadorDeEventos
 
         if (routingKey == RoutingKeyEodReady)
         {
-            return DesfechoRoteamento.Estacionar(MotivoEstacionamento.TipoNaoTratadoEod);
+            return DesfechoRoteamento.Estacionar(MotivoParking.TipoNaoTratadoEod);
         }
 
         if (routingKey == RoutingKeySmoke && EhSondaDeDeploy(corpo))
@@ -33,15 +33,15 @@ public sealed class RoteadorDeEventos
 
         if (routingKey.StartsWith(PrefixoPrices, StringComparison.Ordinal))
         {
-            return DesfechoRoteamento.Estacionar(MotivoEstacionamento.TipoNaoTratadoPrices);
+            return DesfechoRoteamento.Estacionar(MotivoParking.TipoNaoTratadoPrices);
         }
 
         if (routingKey.StartsWith(PrefixoCorpactions, StringComparison.Ordinal))
         {
-            return DesfechoRoteamento.Estacionar(MotivoEstacionamento.TipoNaoTratadoCorpactions);
+            return DesfechoRoteamento.Estacionar(MotivoParking.TipoNaoTratadoCorpactions);
         }
 
-        return DesfechoRoteamento.Estacionar(MotivoEstacionamento.PayloadInvalido);
+        return DesfechoRoteamento.Estacionar(MotivoParking.PayloadInvalido);
     }
 
     private static DesfechoRoteamento RotearTradeRegistered(string corpo)
@@ -54,8 +54,8 @@ public sealed class RoteadorDeEventos
         }
 
         var motivo = resultado.Error == TradeRegisteredErrors.VersaoNaoSuportada
-            ? MotivoEstacionamento.VersaoNaoSuportada
-            : MotivoEstacionamento.PayloadInvalido;
+            ? MotivoParking.VersaoNaoSuportada
+            : MotivoParking.PayloadInvalido;
 
         return DesfechoRoteamento.Estacionar(motivo);
     }

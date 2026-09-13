@@ -4,20 +4,26 @@ using Custodia.API;
 using Custodia.API.Extensions;
 using Custodia.API.Middleware;
 using Custodia.Application;
+using Custodia.Application.Reparo;
 using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
 using Custodia.Domain.Eventos;
 using Custodia.Infrastructure;
+using Custodia.Infrastructure.Calendario;
+using Custodia.Infrastructure.Conciliacao;
+using Custodia.Infrastructure.Liquidacao;
 using Custodia.Infrastructure.Messaging;
 using MediatR;
 using IResult = Microsoft.AspNetCore.Http.IResult;
 
 const string VerboReconstruirPosicoes = "--reconstruir-posicoes";
 const string VerboDrenarParking = "--drenar-parking";
+const string VerboRepararResgatesAntigos = "--reparar-resgates-antigos";
 const string ArgumentoPassagemId = "--passagem-id";
 const int CodigoDeSaidaUso = 64;
 
-if (args.Length > 0 && (args[0] == VerboReconstruirPosicoes || args[0] == VerboDrenarParking))
+if (args.Length > 0
+    && (args[0] == VerboReconstruirPosicoes || args[0] == VerboDrenarParking || args[0] == VerboRepararResgatesAntigos))
 {
     var codigoDeSaidaAdmin = await ExecutarComandoAdministrativoAsync(args);
     Environment.Exit(codigoDeSaidaAdmin);
@@ -30,10 +36,19 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddApiServices();
 builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
+const string ChaveConfiguracaoLiquidacaoJobHabilitado = "Decisao:LiquidacaoJobHabilitado";
+
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<RabbitMqTradeConsumidor>();
     builder.Services.AddHostedService<RabbitMqFilaProfundidadePoller>();
+    builder.Services.AddHostedService<CalendarioDiasUteisHorizonteGuard>();
+    builder.Services.AddHostedService<ConciliacaoDeResgatesJob>();
+
+    if (builder.Configuration.GetValue(ChaveConfiguracaoLiquidacaoJobHabilitado, defaultValue: true))
+    {
+        builder.Services.AddHostedService<LiquidacaoDeResgatesJob>();
+    }
 }
 var app = builder.Build();
 NormalizeApiKeyConfiguration(app.Configuration);
@@ -125,8 +140,30 @@ static async Task<int> ExecutarComandoAdministrativoAsync(string[] args)
     {
         VerboReconstruirPosicoes => await ExecutarReconstruirPosicoesAsync(adminHost.Services, args),
         VerboDrenarParking => await ExecutarDrenarParkingAsync(adminHost.Services, args),
+        VerboRepararResgatesAntigos => await ExecutarRepararResgatesAntigosAsync(adminHost.Services),
         _ => CodigoDeSaidaUso,
     };
+}
+
+static async Task<int> ExecutarRepararResgatesAntigosAsync(IServiceProvider servicos)
+{
+    using var escopo = servicos.CreateScope();
+    var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
+    var resultado = await mediator.Send(new RepararResgatesAntigosCommand());
+
+    if (resultado.IsFailure)
+    {
+        Console.WriteLine(
+            $"DESFECHO=FALHA CODIGO={resultado.Error.Code} MENSAGEM=\"{resultado.Error.Description}\"");
+        return 1;
+    }
+
+    Console.WriteLine(
+        $"DESFECHO=SUCESSO RESGATES_CANDIDATOS={resultado.Value.ResgatesCandidatos} " +
+        $"RESGATES_BACKFILLED={resultado.Value.ResgatesBackfilled} " +
+        $"AJUSTES_CANDIDATOS={resultado.Value.AjustesCandidatos} " +
+        $"AJUSTES_BACKFILLED={resultado.Value.AjustesBackfilled}");
+    return 0;
 }
 
 static async Task<int> ExecutarReconstruirPosicoesAsync(IServiceProvider servicos, string[] args)
@@ -159,7 +196,7 @@ static async Task<int> ExecutarDrenarParkingAsync(IServiceProvider servicos, str
         return CodigoDeSaidaUso;
     }
 
-    var motivoResult = MotivoEstacionamento.FromName(args[1]);
+    var motivoResult = MotivoParking.FromName(args[1]);
     if (motivoResult.IsFailure)
     {
         Console.Error.WriteLine($"Motivo de estacionamento desconhecido: '{args[1]}'.");

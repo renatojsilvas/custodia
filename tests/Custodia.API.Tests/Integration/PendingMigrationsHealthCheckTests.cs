@@ -58,6 +58,20 @@ public sealed class PendingMigrationsHealthCheckTests(ApiTestFactory factory)
         "ALTER TABLE movimentos RENAME CONSTRAINT ux_movimentos_id_cliente_instrumento_oculto " +
         "TO ux_movimentos_id_cliente_instrumento;";
 
+    private const string OcultaCalendarioDiasUteisSql =
+        "ALTER TABLE IF EXISTS calendario_dias_uteis RENAME TO calendario_dias_uteis_ausente_para_teste;";
+
+    private const string RestauraCalendarioDiasUteisSql =
+        "ALTER TABLE IF EXISTS calendario_dias_uteis_ausente_para_teste RENAME TO calendario_dias_uteis;";
+
+    private const string OcultaChavePrimariaCalendarioDiasUteisSql =
+        "ALTER TABLE calendario_dias_uteis RENAME CONSTRAINT \"PK_calendario_dias_uteis\" " +
+        "TO \"PK_calendario_dias_uteis_oculta\";";
+
+    private const string RestauraChavePrimariaCalendarioDiasUteisSql =
+        "ALTER TABLE calendario_dias_uteis RENAME CONSTRAINT \"PK_calendario_dias_uteis_oculta\" " +
+        "TO \"PK_calendario_dias_uteis\";";
+
     private readonly HttpClient _client = factory.CreateClient();
 
     [Fact]
@@ -188,6 +202,48 @@ public sealed class PendingMigrationsHealthCheckTests(ApiTestFactory factory)
         finally
         {
             await ExecuteSqlAsync(RestauraChaveAlternadaSql);
+        }
+
+        var restauradoResponse = await _client.GetAsync("/health/ready", CancellationToken.None);
+        Assert.Equal(HttpStatusCode.OK, restauradoResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task HealthReady_ComCalendarioDiasUteisDropadaPorFora_RespondeUnhealthy_ERecriarRestauraHealthy()
+    {
+        await ExecuteSqlAsync(OcultaCalendarioDiasUteisSql);
+        try
+        {
+            var driftResponse = await _client.GetAsync("/health/ready", CancellationToken.None);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, driftResponse.StatusCode);
+
+            var liveDuranteDrift = await _client.GetAsync("/health/live", CancellationToken.None);
+            Assert.Equal(HttpStatusCode.OK, liveDuranteDrift.StatusCode);
+        }
+        finally
+        {
+            await ExecuteSqlAsync(RestauraCalendarioDiasUteisSql);
+        }
+
+        var restauradoResponse = await _client.GetAsync("/health/ready", CancellationToken.None);
+        Assert.Equal(HttpStatusCode.OK, restauradoResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task HealthReady_ComChavePrimariaDoCalendarioDiasUteisOcultaPorFora_RespondeUnhealthy_ERestaurarDevolveHealthy()
+    {
+        await ExecuteSqlAsync(OcultaChavePrimariaCalendarioDiasUteisSql);
+        try
+        {
+            var driftResponse = await _client.GetAsync("/health/ready", CancellationToken.None);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, driftResponse.StatusCode);
+
+            var liveDuranteDrift = await _client.GetAsync("/health/live", CancellationToken.None);
+            Assert.Equal(HttpStatusCode.OK, liveDuranteDrift.StatusCode);
+        }
+        finally
+        {
+            await ExecuteSqlAsync(RestauraChavePrimariaCalendarioDiasUteisSql);
         }
 
         var restauradoResponse = await _client.GetAsync("/health/ready", CancellationToken.None);

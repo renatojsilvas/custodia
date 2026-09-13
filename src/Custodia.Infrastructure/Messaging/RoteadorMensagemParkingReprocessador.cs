@@ -7,11 +7,11 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Custodia.Infrastructure.Messaging;
 
-public sealed class RoteadorMensagemParkeadaReprocessador(
-    IServiceScopeFactory scopeFactory, RoteadorDeEventos roteador) : IMensagemParkeadaReprocessador
+public sealed class RoteadorMensagemParkingReprocessador(
+    IServiceScopeFactory scopeFactory, RoteadorDeEventos roteador) : IMensagemParkingReprocessador
 {
     public async Task<ResultadoReprocessamento> ReprocessarAsync(
-        string routingKey, ReadOnlyMemory<byte> corpo, MotivoEstacionamento motivoOriginal, CancellationToken ct)
+        string routingKey, ReadOnlyMemory<byte> corpo, MotivoParking motivoOriginal, CancellationToken ct)
     {
         var corpoTexto = Encoding.UTF8.GetString(corpo.Span);
 
@@ -22,7 +22,7 @@ public sealed class RoteadorMensagemParkeadaReprocessador(
         }
         catch (JsonException)
         {
-            return ResultadoReprocessamento.Falha(MotivoEstacionamento.PayloadInvalido);
+            return ResultadoReprocessamento.Falha(MotivoParking.PayloadInvalido);
         }
 
         switch (desfecho.Tipo)
@@ -42,7 +42,7 @@ public sealed class RoteadorMensagemParkeadaReprocessador(
     }
 
     private async Task<ResultadoReprocessamento> EscriturarAsync(
-        TradeRegisteredEvento evento, MotivoEstacionamento motivoOriginal, CancellationToken ct)
+        TradeRegisteredEvento evento, MotivoParking motivoOriginal, CancellationToken ct)
     {
         using var escopo = scopeFactory.CreateScope();
         var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
