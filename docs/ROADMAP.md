@@ -3298,8 +3298,8 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   antes de despachar executores lá, e prefira `psql -f` sobre o SQL do `Up()` para inspecionar
   schema.
 
-- [ ] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
-  de ordem. **Dependência externa nova: o `operacoes` aceitando E publicando `valorOrigemSaldo`
+- [x] **F4** — consumidor de `trades.registered`: o livro, e a política para o evento fora
+  de ordem. **FECHADA em 2026-09-12, PRs #7 e #8** — ver a nota de fecho no fim desta fase. **Dependência externa nova: o `operacoes` aceitando E publicando `valorOrigemSaldo`
   (V6) — e ela está SATISFEITA desde 2026-09-11.** *Conferido no código do `../operacoes`: o commit
   `4bed7c1` ("F6 — valorOrigemSaldo: aceitar no POST e publicar no TradeRegistered", PR #18) fez as
   **duas** mudanças que esta alínea exigia — `RegistrarOperacaoCommand` passou a ter
@@ -4424,6 +4424,70 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   três colunas** ao valor do livro;
   (f) `docker stats` medido **durante** o dreno. Limpeza (`TRUNCATE`) decidida **antes**
   do POST, com as tabelas conferidas em 0/0.
+
+  ### Nota de fecho do F4 — 2026-09-12, PRs #7 e #8
+
+  **Entregue:** o `BackgroundService` consumindo a `custodia.prices` com ack manual e prefetch 1, a
+  redeclaração da topologia no boot, o handler de `TradeRegistered` (mapeamento V2 + perna de caixa
+  da V6 + lookup de estorno em dois passos com a conferência dos três campos), a dobra das três
+  colunas da V1 aplicada na mesma transação, a Decisão A inteira (retry, teto, parking), os **dois**
+  comandos administrativos, as cinco listas de configuração e **nove** regras de alerta publicadas na
+  nuvem. **584 testes, 0 falhas, 0 skip.**
+
+  **PROVADO EM PRODUÇÃO, não só em teste:** um `POST /v1/operacoes` real gravou **duas** linhas no
+  livro — `compra` +10/1000 no título e a perna `caixa:BRL` com `qtd_delta = −400`, que é o caso
+  **misto** (`−valorOrigemSaldo`, nunca `−valorFinanceiro`) —, a projeção fechou em 10/1000/100 e
+  **−400/−400/1,000000**, e o estorno gravou os **dois** ajustes simétricos zerando as três colunas.
+  O primeiro boot drenou o backlog do F2 (**870** mensagens: 867 `tipo_nao_tratado_prices`, 3
+  `tipo_nao_tratado_eod`), com DLQ e retry em zero. Recurso medido **durante** um dreno de 600:
+  pico de **79,7 MiB / 192 MiB (41,5%)**, sem OOM e sem restart — o teto tem folga.
+
+  **CINCO defeitos silenciosos, e nenhum apareceria lendo a suíte.** Três foram achados **medindo
+  contra o broker real** em vez de acreditar no texto:
+
+  1. **o `x-death` não conta as voltas deste desenho** — e a Decisão A mandava contar por ali, isto
+     é, **a cura prescrita era o laço infinito que ela existia para impedir**. Revogada nos quatro
+     lugares que diziam a regra; virou `PADROES` §10.44;
+  2. **o republish perdia a routing key**, e o sintoma imitava defeito de payload (§10.45);
+  3. **a dobra explodia com dois ajustes no mesmo alvo**, transformando `estorno_duplicado` em
+     mensagem-veneno → DLQ sem dreno. A definição normativa é **existencial** ("não existe ajuste
+     efetivo apontando para ela"); o código a implementou como **funcional** (`ToDictionary`);
+  4. o prefixo da sonda do F2 com duas cópias em C# e **nenhuma sendo a origem** (ela é o
+     `declare-topology.sh`) — fechado com guarda que confronta as duas;
+  5. o `tipo` do envelope aceito **sem conferir o valor** — e a auditoria de completude era **cega à
+     fase de parsing**, porque olhava as propriedades do *record*.
+
+  **E um sexto, achado pelo deploy:** a prova de fumaça do F2 morre no dia em que o consumidor passa
+  a funcionar — ele come a sonda e `messages_ready` nunca cresce. O deploy reprovou acusando **o
+  binding que tinha acabado de passar** na comparação de conjunto. A guarda que existia perguntava
+  *"há backlog?"* quando a pergunta certa passara a ser *"há quem consuma?"*: **uma condição pode
+  deixar de selecionar o caso que existe para cobrir sem nunca ficar falsa** — só deixa de ser
+  alcançada.
+
+  **O padrão que vale nomear, porque é o resumo da fase:** *o texto normativo envelhece contra o
+  mundo, e a prescrição errada é mais cara que a ausência dela.* Três dos seis defeitos estavam
+  **escritos como cura** neste arquivo. Contra isso não há revisão de conformidade que ajude — só
+  medir. **Antes de implementar prescrição que dependa de comportamento de infraestrutura, meça-a.**
+
+  **O achado que mudou a forma de corrigir:** o revisor mutou o handler de estorno para montar o
+  ajuste a partir do **evento** e os 84 testes passaram — inclusive o escrito para provar aquilo. A
+  conferência **força** as duas fontes a coincidirem antes do ajuste nascer, então **nenhum teste
+  distingue a origem**. A saída não foi teste melhor: foi tirar `evento` do escopo da função, e a
+  mutação passou a não **compilar**. Virou `PADROES` §10.46.
+
+  **O que esta fase ensinou, e está onde o próximo repo lê** — `PADROES.md` §10.44, §10.45 e §10.46,
+  e no `LEIA-ME-KIT.md` **quatro** seções: o `guardiao-padroes` não tem `Bash` (audita estado final,
+  nunca diff), o condutor errou um numeral em prompt de subagente **de novo**, o limite declarado do
+  "sim parcial" do publisher confirm, e a prova de fumaça que morre quando o consumidor passa a
+  funcionar. *Este numeral nasceu errado — eu escrevi "três" e a varredura por numeral, que é a
+  guarda prescrita por uma das próprias seções, pegou a quarta. O defeito acontece dentro do
+  parágrafo que o descreve.* **Não repita a leitura aqui** — o valor daqueles arquivos é serem o
+  único lugar.
+
+  **Estado das pendências:** a dependência do `valorOrigemSaldo` fechou em `../operacoes` (`4bed7c1`).
+  Continuam abertas as **duas** de sempre: `prazo` (bloqueia F5 e, por herança, F9) e reversão de
+  corpaction (F9). **Herdado para o F6:** as **871** mensagens em `custodia.parked` com
+  `tipo_nao_tratado_prices`/`_eod` — são o Pronto do drenador daquelas fases, não dívida desta.
 
 - [ ] **F5** — consequências contábeis do resgate: IR, IOF e a liquidação D+1.
   **Dependência externa nova: nenhuma.**
