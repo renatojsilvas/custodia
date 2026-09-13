@@ -1651,8 +1651,9 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
     linha, `venda sem compra` de 10 seguida de `compra 4 @ 100` daria `custo_total = 400`,
     `quantidade = −6` e `preco_medio = −66,67`, e o F5 tributaria sobre preço médio negativo.
     *("Base = preço médio **do livro**", §7.3, é **elipse**: o preço médio é o **insumo** da
-    base, e a base é o **ganho** (`valorFinanceiro − pm × quantidade`). A fórmula está fechada
-    na decisão da base do F5 — não a deduza desta frase.)* Enquanto a quantidade for negativa as
+    base, e a base é o **ganho**. A fórmula está fechada
+    na decisão da base do F5 — não a deduza desta frase, e **não é `pm × quantidade`**: desde
+    2026-09-12 o custo de aquisição é o dos **lotes FIFO** consumidos, apurado lote a lote.)* Enquanto a quantidade for negativa as
     três colunas são **provisórias**: é o estado que a camada 3 do F4 já sinaliza (métrica +
     log + alerta) como "falta lançar a compra antiga", e lançá-la refaz as três pela mesma
     dobra. **"Provisórias" vale para `posicao_corrente` e NÃO vale para o livro** — a
@@ -1820,7 +1821,8 @@ Duas consequências dela que são escopo deste roadmap, e não doutrina:
   **As linhas DERIVADAS — uma linha por movimento, com instrumento, sinal e valor
   fechados.** Um resgate produz **até seis** linhas, e sem esta tabela `ir_retido` e `iof` não
   têm instrumento nem sinal, e `a_liquidar` não tem valor definido. *"Até": são seis com IOF e
-  base positiva; **cinco** sem IOF (prazo ≥ 30 dias) e **quatro** quando a base do IR é zero
+  base positiva; **cinco** sem IOF (nenhum lote consumido com prazo < 30 dias) e **quatro**
+  quando a soma das bases positivas é zero
   ou negativa — as duas condições são do F5, e quem contar linhas num teste declara qual dos
   três casos o fixture monta.* Para um resgate de `q`
   unidades do instrumento `X` por `Y` bruto, com IR `t` e IOF `f` (`f` pode não existir):
@@ -2666,8 +2668,9 @@ para ela.
             NUNCA NEGATIVO; custo_total acumula pela regra do tipo. Sem isso, venda sem
             compra de 10 seguida de compra 4 @ 100 da custo 400, quantidade -6 e
             preco_medio -66,67 — e o F5 tributa sobre ele. ("Base = preco medio DO LIVRO"
-            (7.3) e ELIPSE: o preco medio e o INSUMO da base, e a base e o GANHO
-            (valorFinanceiro - pm x quantidade). A formula esta fechada no F5.) Com quantidade negativa as tres colunas sao PROVISORIAS em
+            (7.3) e ELIPSE: o preco medio e o INSUMO da base, e a base e o GANHO. A formula
+            esta fechada no F5, e NAO e pm x quantidade: desde 2026-09-12 o custo de aquisicao
+            e o dos LOTES FIFO consumidos, lote a lote.) Com quantidade negativa as tres colunas sao PROVISORIAS em
             posicao_corrente E NAO NO LIVRO: a projecao se refaz por dobra, mas o
             ir_retido/iof que o F5 gravar a partir de um pm provisorio esta em tabela
             append-only e SO SAI POR ESTORNO (o F5 tem decisao propria sobre isso).
@@ -3285,7 +3288,7 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
   **Estado das pendências:** a do `caixa:BRL` fechou no F3 (V6); a **pendência de confirmação**
   dela resolveu em 2026-09-11, e a pergunta **estava mal posta** — Operações não tem o número
   (zero ocorrência de `saldo|caixa|posicao|patrimonio` no `src` dela, e nenhum campo de origem na
-  entrada), então ela é **pass-through** e o decimal fica. Continuam abertas as **duas** de sempre:
+  entrada), então ela é **pass-through** e o decimal fica. Continuam abertas as **duas** de sempre *(à data desta nota; `prazo` fechou em 2026-09-12)*:
   `prazo` (bloqueia F5 e, por herança, F9) e reversão de corpaction (F9).
 
   **O que o F4 precisa antes de abrir, e não é desta casa:** `../operacoes` tem de **(1) aceitar
@@ -3675,8 +3678,10 @@ NAO AFIRME a igualdade "soma dos instrumentos + caixa = patrimonio diario" (7.5)
     primeira: I4 falava só de `qtd_delta`, o Pronto conferia só quantidade, e ninguém
     dizia quem mantém as outras duas. Não é detalhe adiável — o F5 calcula o imposto **a
     partir** do `preco_medio` (a §7.3 escreve "base = preço médio do livro", que é **elipse**:
-    a base é o **ganho**, `valorFinanceiro − pm × quantidade`; a fórmula está fechada na
-    decisão da base do F5, e não se deduz desta frase) e o F7 grava `preco_medio` e `custo`
+    a base é o **ganho**; a fórmula está fechada na
+    decisão da base do F5, e não se deduz desta frase — e o insumo dela **deixou de ser o
+    `preco_medio`** em 2026-09-12: o custo de aquisição vem dos lotes FIFO derivados do livro,
+    que é o desvio (11)) e o F7 grava `preco_medio` e `custo`
     em cada snapshot (§7.4). **A regra de dobra NÃO se escreve aqui: ela está fechada na segunda metade da
     V1 do F3, POR TIPO, PARA OS DEZ — copie-a, não a reescreva.** O que esta fase faz é
     aplicá-la na mesma transação que a quantidade: os **nove** tipos que não são `ajuste`
@@ -4485,21 +4490,23 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   único lugar.
 
   **Estado das pendências:** a dependência do `valorOrigemSaldo` fechou em `../operacoes` (`4bed7c1`).
-  Continuam abertas as **duas** de sempre: `prazo` (bloqueia F5 e, por herança, F9) e reversão de
+  Continuam abertas as **duas** de sempre *(à data desta nota; `prazo` fechou em 2026-09-12,
+  na opção (b))*: `prazo` (bloqueava F5 e, por herança, F9) e reversão de
   corpaction (F9). **Herdado para o F6:** as **871** mensagens em `custodia.parked` com
   `tipo_nao_tratado_prices`/`_eod` — são o Pronto do drenador daquelas fases, não dívida desta.
 
 - [ ] **F5** — consequências contábeis do resgate: IR, IOF e a liquidação D+1.
   **Dependência externa nova: nenhuma.**
-  **PENDÊNCIA BLOQUEANTE ABERTA: a definição de `prazo` — leia a pendência nas decisões desta
-  fase ANTES de despachar; ela amarra modelagem por lotes contra custo médio, e sem ela dois
-  critérios de Pronto desta fase passam por vacuidade.**
+  **A PENDÊNCIA BLOQUEANTE do `prazo` FECHOU em 2026-09-12, na opção (b) — FIFO DERIVADO DO
+  LIVRO, sem materializar lotes. Leia a seção dela nas decisões desta fase ANTES de despachar:
+  a escolha ARRASTOU a base do imposto junto (ela passa a ser POR LOTE, e isso é o DESVIO
+  (11)), reescreveu o piso em zero, e trocou duas condições que já estavam escritas.**
 
   No mesmo handler de `TradeRegistered`, quando `operacao = resgate` (que no livro é
-  `tipo = venda`, V2 do F3): `ir_retido` e `iof` (**base = o GANHO da alienação**,
-  `valorFinanceiro − preco_medio × quantidade`, com piso em zero — ver a decisão da base,
-  abaixo; alíquota regressiva pelo `prazo`, cuja definição é **PENDÊNCIA BLOQUEANTE desta
-  fase**; IOF nos primeiros 30 dias), mais `a_liquidar` em D; e, em **D+1 útil**, a
+  `tipo = venda`, V2 do F3): `ir_retido` e `iof` (**base = o GANHO da alienação, apurado POR
+  LOTE FIFO derivado do livro**, com piso em zero **em cada lote** — ver a decisão da base,
+  abaixo, e a seção da pendência fechada; alíquota regressiva pelo `prazo` de **cada lote**;
+  IOF nos primeiros 30 dias **do lote**), mais `a_liquidar` em D; e, em **D+1 útil**, a
   `liquidacao` de **duas pernas** (`caixa:a_liquidar` −Z, `caixa:BRL` +Z, com
   `Z = Y − IR − IOF`, o **saldo** do fato em `caixa:a_liquidar`), gravada por um
   **job de liquidação** desta fase. Caixa como instrumento (`caixa:BRL`,
@@ -4531,8 +4538,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   - **A BASE DO IR É O GANHO DA ALIENAÇÃO, NÃO O PREÇO MÉDIO — e a frase da §7.3 é ELIPSE.**
     A §7.3 escreve "base = preço médio do livro"; lida literalmente, ela manda cobrar ~22,5%
     **do custo inteiro** em vez do lucro. O preço médio é o **insumo** da base. **Fórmula, e
-    ela é a decisão:** `base = valorFinanceiro_da_venda − preco_medio × quantidade`,
-    **com piso em zero**. **A evidência é do simulador que esta própria fase manda portar**
+    ela é a decisão:** `base = valorFinanceiro_da_venda − custo_de_aquisição`,
+    **com piso em zero**. **O `custo_de_aquisição` é o dos LOTES FIFO consumidos, apurado lote
+    a lote, e NÃO `preco_medio × quantidade`** — a pendência do `prazo` fechou na opção (b) em
+    2026-09-12 e arrastou a base junto; o piso em zero é **por lote**; a fórmula com
+    `preco_medio × quantidade` que esta linha trazia antes valia para custo médio e está
+    **revogada**. Leia a seção da pendência fechada antes de implementar. **A evidência do
+    "base é ganho, não preço" é do simulador que esta própria fase manda portar**
     (`../tesouro-direto-api`), e ela é literal — **conferida linha a linha no arquivo, não
     citada de memória**: `src/TesouroDireto.Application/Tributos/TributosPadrao.cs` linhas
     **46** e **71** declaram os dois tributos como `BaseCalculo.**Rendimento**` — não preço
@@ -4542,8 +4554,27 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     `(0,180) (181,360) (361,720) (721,999_999)`, e o IOF como `TabelaDiaria` sobre o vetor
     `IofAliquotas` de **29** alíquotas diárias (linha **8** em diante). *Esta fase manda "portar e conferir contra o
     simulador"; portar o motor com a base errada é conferir uma coisa contra outra.*
+
+    **SEGUNDA ELIPSE DA MESMA FRASE, achada em 2026-09-12 ao portar, e ela também é dinheiro:
+    os dois tributos NÃO têm a mesma base.** Este arquivo escrevia "base = o GANHO da
+    alienação" para **os dois**, e o simulador — conferido linha a linha, não de memória —
+    compõe os tributos em **ordem**, com **cumulatividade**:
+    `TributosPadrao.cs:46` declara o IOF como `ordem: 1, cumulativo: true` e `:71` declara o IR
+    como `ordem: 2, cumulativo: false`; `SimuladorService.cs:166` itera
+    `OrderBy(t => t.Ordem)`, `:170` toma a base do `rendimentoAjustado`, e `:186-189` faz
+    `rendimentoAjustado -= valor` quando o tributo é cumulativo. Portanto:
+    **base do IOF = ganho do lote; base do IR = ganho do lote − IOF.** Portar só as faixas e
+    ignorar `ordem`/`cumulativo` recolhe **IR a maior em todo lote com menos de 30 dias**, e o
+    número está gravado em tabela sem UPDATE. Porte a **ordem** e a **cumulatividade** também,
+    e também por lote. *E note a fronteira que cai de graça da mesma leitura:*
+    `SimuladorService.cs:210-213` casa a faixa diária por **igualdade exata** (`f.Dia ==
+    diasCorridos`, dias 1..29), então `diasCorridos = 0` ou `≥ 30` devolve `null` e o tributo é
+    **pulado** em `:177-181` — sem linha, que é exatamente a regra "não se grava zero".
     **Base negativa — venda com prejuízo — tem regra, e ela não estava escrita:** piso em
-    zero, `IR = 0` e `IOF = 0`, e as linhas `ir:` e `iof` **NÃO EXISTEM** (não se grava zero),
+    zero **POR LOTE**, e a condição de ausência das linhas é **`Σ das bases positivas = 0`**
+    (nenhum lote consumido com ganho > 0), não "a base agregada é ≤ 0" — sob FIFO um lote com
+    prejuízo **não** abate o imposto do lote com lucro, porque isso seria compensação de perdas
+    entrando pela porta dos fundos. Nesse caso `IR = 0` e `IOF = 0`, e as linhas `ir:` e `iof` **NÃO EXISTEM** (não se grava zero),
     exatamente como já vale para o IOF ausente. *Ausência decidida:* prejuízo **não** gera
     crédito, compensação nem linha de qualquer espécie nesta fase — compensação de perdas é
     regime que exige histórico fiscal próprio, e nada neste roadmap o modela; registrar a
@@ -4553,12 +4584,53 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     é estorno do resgate e relançamento; nunca UPDATE**, que a trigger barraria de qualquer
     modo. O sinal é o mesmo *"resgate tributado sobre preço médio provisório"*, com o motivo
     do sinal dizendo qual dos dois casos ocorreu.
+    **Sob FIFO esses casos ficam MAIS frequentes, e a DETECÇÃO passa a ser exigível — ela é a
+    QUARTA guarda permanente desta fase** (decidida em 2026-09-12; o arquivo contava três e
+    passou a contar quatro): para cada `resgate` efetivo, **re-derive** IR/IOF da fila de lotes
+    **como ela está hoje** e compare com as linhas `ir:`/`iof:` efetivas daquele fato —
+    divergência vira **métrica + alerta**, com o mesmo nome de sinal, inclusive nos dois casos
+    assimétricos ("linha ausente contra re-derivado > 0" e "linha existente contra re-derivado
+    0"). **Uma consulta só cobre as DUAS causas:** compra retroativa **e** estorno de uma compra
+    cujo lote uma venda já tributada havia consumido. Nenhuma coluna nova, nenhuma tabela nova,
+    nada materializado. O **gatilho** pega carona no caminho retroativo que a dobra já calcula
+    (`data_evento < MAX` da chave, a mesma condição que força redobra), e a **varredura** é a
+    entrega durável dele — pelo mesmo argumento que o F7 usa: um crash entre o commit e a
+    checagem perde para sempre um gatilho que só existe em memória.
+    **Disciplina anti-falso-positivo, sem a qual o alerta vira ruído permanente:** arredondamento
+    idêntico ao do caminho de escrita (§10.25, 2 casas), **só linhas efetivas** (resgate
+    estornado nunca alerta), e "base zero ⇒ ausência de linha" conta como **concordância**.
+    *Rejeitado* não detectar: `posicao_corrente` se cura sozinha por redobra e **esconde** a
+    divergência, enquanto o livro guarda o tributo errado para sempre — sobraria um caminho de
+    reparo definido e nunca disparado. *Rejeitado* consulta de varredura **sem** alerta: é
+    script de uma vez, forma já recusada para as outras três guardas.
 
-  ### PENDÊNCIA BLOQUEANTE DO F5 — a definição de `prazo`
+  ### A definição de `prazo` — pendência FECHADA em 2026-09-12
 
-  **Estado:** aberta. **Bloqueia:** o F5 (e o F9, que reusa o motor). **Quem decide:** o dono
-  — amarra **modelagem por lotes contra custo médio**, e o custo médio é o que a V1 do F3 já
-  fechou. **Não despache o F5 sem isto.**
+  **Estado: FECHADA em 2026-09-12.** Era pendência bloqueante; a decisão do dono foi a opção
+  **(b) FIFO DERIVADO DO LIVRO, sem materializar lotes**. **Bloqueava:** o F5 e, por herança,
+  o F9. O texto abaixo preserva a conta que mediu o tamanho e as quatro opções, agora como
+  **alternativas rejeitadas registradas** — não as reabra sem decisão nova do dono.
+
+  **O que a escolha decidiu, e o que ela ARRASTOU junto** (a consequência não estava escrita
+  quando a pendência foi redigida, e é maior que a pendência):
+
+  - **`prazo` = dias corridos entre a `data_evento` do LOTE consumido e a da venda**, com os
+    lotes derivados do livro por FIFO, **nada materializado**.
+  - **A base do IR deixa de ser `preco_medio × quantidade` e passa a ser POR LOTE.** A fórmula
+    anterior pressupunha custo médio; sob FIFO,
+    `Σ custo_dos_lotes_consumidos ≠ preco_medio × quantidade` sempre que os lotes tiverem
+    preços diferentes. **Isto é o DESVIO (11)** da lista canônica — não é interpretação da
+    elipse da §7.3, pelo critério que este arquivo fixou (mecanismo → desvio, resultado →
+    interpretação): a §7.3 **nomeia o insumo**, `preco_medio`, que é coluna da §7.1, e aqui o
+    tributo **para de ler `posicao_corrente`** e passa a derivar do livro. É a forma idêntica
+    ao desvio (9), que já está na lista.
+  - **`posicao_corrente.custo_total` e a base do imposto DIVERGEM POR DESENHO**, e a
+    divergência é decidida, não defeito: a projeção guarda **custo médio**, o imposto é
+    **FIFO**. Consequência para quem escreve teste: afirme
+    **`Σ quantidade dos lotes vivos = quantidade` da dobra**, sempre; **NUNCA**
+    `Σ custo dos lotes = custo_total` — sob FIFO as duas divergem por construção, e uma
+    implementação **correta** reprovaria esse critério. É a mesma família do critério vácuo
+    já corrigido no Pronto (e) desta fase.
 
   A alíquota do IR depende de **dias corridos desde a AQUISIÇÃO**. Uma posição construída por
   N compras em datas diferentes **não tem uma data de aquisição**, e a V1 do F3 escolheu
@@ -4570,7 +4642,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   novo mudam a alíquota entre **22,5% e 15%** — **50% de diferença no imposto**, gravado numa
   tabela **sem UPDATE**.
 
-  **As opções, com o custo de cada uma:**
+  **As quatro opções, com o custo de cada uma — a (b) é a ESCOLHIDA, as outras três ficam
+  registradas como alternativas rejeitadas:**
 
   - **(a) FIFO por LOTES materializados** — é o que a corretora faz, e é o único que bate com
     o extrato dela, que é o nosso único conferente externo. **Custo:** exige uma estrutura de
@@ -4593,15 +4666,53 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     que é a direção errada de errar; e uma compra retroativa anterior muda o `prazo` de vendas
     já tributadas.
 
-  **Por que bloqueia, e não é zelo:** sem `prazo` definido, **dois critérios de Pronto desta
-  fase passam por VACUIDADE**. O (c) exige "o dia exato da virada de faixa, o dia 30 do IOF" —
-  não se testa a fronteira de uma grandeza indefinida: o executor **define** `prazo` enquanto
-  escreve o teste, e o teste certifica o que ele acabou de decidir. E o (i), "alíquotas
-  conferidas contra o simulador", é **inexecutável**: o `SimulacaoInput`
+  **Por que bloqueava, e não era zelo** (preservado porque é o argumento que justifica ter
+  parado a fase, e o molde para a próxima grandeza indefinida): sem `prazo` definido, **dois
+  critérios de Pronto desta fase passavam por VACUIDADE**. O (c) exige "o dia exato da virada
+  de faixa, o dia 30 do IOF" — não se testa a fronteira de uma grandeza indefinida: o executor
+  **define** `prazo` enquanto escreve o teste, e o teste certifica o que ele acabou de decidir.
+  E o (i), "alíquotas conferidas contra o simulador", era **inexecutável**: o `SimulacaoInput`
   (`src/TesouroDireto.Domain/Simulador/SimulacaoInput.cs`, conferido) modela **uma
   aplicação** — um `DataCompra` e um `ValorInvestido`, campos escalares — e não sabe
-  responder sobre uma posição de custo médio com N compras — a conferência só existe depois de `prazo` ter uma
-  definição que se possa traduzir em `DataCompra`.
+  responder sobre uma posição de custo médio com N compras.
+
+  **E é aqui que a escolha (b) paga um dividendo que nenhuma das outras paga:** sob FIFO a
+  unidade de cálculo **é um lote**, e um lote tem exatamente **um** `DataCompra` e **um**
+  custo — que é precisamente a forma que o `SimulacaoInput` sabe responder. A conferência do
+  Pronto (i) deixa de precisar do "fixture de compra única" declarado como limite: ela passa a
+  ser **por lote**, e uma posição de N compras é conferível lote a lote. O limite declarado
+  naquela alínea **melhora** com esta decisão, e foi reescrito lá.
+
+  **As três decisões derivadas que a escolha exigiu**, adjudicadas pelo `advisor` em
+  2026-09-12 porque sem elas o executor as decidiria enquanto escrevia o teste — que é a
+  vacuidade voltando com outra roupa:
+
+  1. **A fila de lotes é FUNÇÃO AO LADO, não uma quarta saída de `DobraPosicao.Dobrar`.** O que
+     as três implementações têm de fazer concordar é a **sequência canônica** (corte por
+     `data_evento`, ordem `(data_evento, registrado_em, id)`, par revertido resolvido
+     recursivamente), não a saída: esse preparo vira passo compartilhado, com **dois
+     consumidores** — a dobra das três colunas, intacta, e a fila FIFO. *Rejeitado* pôr a fila
+     como quarta saída da dobra: `AplicarIncremental` carrega como estado apenas três decimais
+     e uma fila não cabe ali, então ou todo movimento passaria a exigir redobra (O(1)
+     degenerando em O(n) em silêncio) ou a fila só existiria no caminho em lote — e passariam a
+     existir **duas** implementações para divergirem, que é o que a V1 proíbe nominalmente. E a
+     quarta saída não teria contra o que reconciliar: a opção (b) decidiu não materializar nada.
+  2. **PISO EM ZERO POR LOTE:** `IR = Σ (max(ganho_i, 0) × aliquota_i)`. *Rejeitado* piso
+     agregado, por três motivos e o segundo é decisivo: uma base agregada **não tem uma
+     alíquota** sob FIFO, e escolher uma seria inventar regra; somar ganho e prejuízo antes do
+     piso deixa o lote com prejuízo **reduzir** o imposto do lote com lucro, o que é
+     **compensação de perdas entrando pela porta dos fundos** — ausência que esta fase declara
+     nominalmente; e o extrato da corretora apura lote a lote e soma. **Corolário que reescreve
+     uma condição já escrita:** "base zero ou negativa ⇒ não existem `ir:`/`iof:`" passa a ser
+     **"Σ das bases positivas = 0"**, isto é, nenhum lote consumido com ganho > 0.
+  3. **A quantidade DESCOBERTA (fila exaurida) herda o custo unitário e a data de aquisição do
+     ÚLTIMO lote da fila**; com a fila **vazia**, custo 0 e prazo 0 — o que dá IR de 22,5%
+     sobre o valor integral e **IOF inexistente**, porque o dia 0 não tem célula na tabela
+     diária portada. É o análogo FIFO de "`preco_medio` INALTERADO" da V1, e erra na direção
+     de recolher **a mais**, que é a direção reversível: o conserto é estorno e relançamento.
+     *Rejeitado* deixar isto ao executor: "fila exaurida" e "`quantidade` negativa" são **o
+     mesmo número** para a chave, então é a mesma condição no vocabulário do FIFO — mas o
+     custo e o prazo da parte descoberta não estavam definidos em lugar nenhum.
 
   - **Tributar a partir de um `preco_medio` PROVISÓRIO: grava, sinaliza, e o conserto é
     estorno — nunca UPDATE.** O `preco_medio` **do livro** é o insumo da base (decisão
@@ -4637,7 +4748,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     instante do resgate. Isto é um DESVIO POR CORREÇÃO do texto literal da §7.3 —
     registre-o e grave-o na memória ao fechar a fase**, na mesma convenção dos outros
     desvios rotulados deste arquivo. **Esta enumeração é a LISTA CANÔNICA de desvios do
-    roadmap — desvio que não estiver aqui não está rotulado —, e são DEZ, contando o
+    roadmap — desvio que não estiver aqui não está rotulado —, e são ONZE, contando o
     desta fase:**
     (1) a `liquidacao` em D+1 útil por job, aqui, contra a §7.3;
     (2) o `aporte` no enum, na V1 do F3, contra a §7.1;
@@ -4681,17 +4792,39 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     `D`" e o teto diz "materializa **MENOS** que `D`" — juntar duas divergências opostas numa
     linha faz a lista deixar de ser enumerável, e uma fase futura que revisitasse o intervalo
     herdaria ou perderia o teto em silêncio.
+    (11) a **base e o `prazo` do IR/IOF derivados por FIFO do LIVRO, por lote**, nesta fase,
+    contra a §7.3 — acrescentado em **2026-09-12**, quando a pendência do `prazo` fechou na
+    opção (b), e **apendado ao fim da lista, nunca inserido no meio**, para que as citações
+    "desvio (N)" espalhadas por este arquivo continuem apontando para o mesmo item. **Por que é
+    desvio e não interpretação da elipse:** a rubrica da elipse cobre "o preço médio é insumo, a
+    base é o ganho"; ela **não** cobre "o tributo para de ler o preço médio", que é afirmação
+    diferente. A §7.3 não prescreve só o resultado — ela **nomeia o insumo**, `preco_medio`, que
+    é coluna da §7.1 —, e pelo critério que esta própria lista fixa (mecanismo → desvio,
+    resultado → interpretação) nomear qual insumo alimenta o tributo é mecanismo. A forma é
+    **idêntica à do item (9)** ("a posição na data derivada do **livro** e não de
+    `posicao_corrente`"), que já está aqui. **A garantia que sobra, e é ela que torna o desvio
+    aceitável:** a fila vem da **mesma sequência canônica** da dobra da V1 — mesmas chaves de
+    ordem, mesma regra do par revertido —, nada é materializado, **nenhum inventário cresce**
+    (continuam **duas** as tabelas fora da §7.1: crescer para três era o custo da opção (a),
+    que foi rejeitada), e a conferência contra o simulador passa a ser **por lote**, que é
+    exatamente o que o `SimulacaoInput` sabe responder. **A gravar na memória ao fechar a
+    fase**, na mesma convenção dos desvios (1), (6), (8) e (10).
     *A lista não é "tudo que diverge da `ARQUITETURA`": é a dos desvios que este roadmap
     **decidiu e rotulou**. Fase que criar outro acrescenta **duas** coisas, e uma sem a outra
     é defeito: o rótulo dentro da própria fase (senão o executor lê a `ARQUITETURA` e encontra
     a contradição sem explicação) e a linha aqui (senão a lista deixa de ser canônica e vira
     lista com default informal, o mesmo defeito que a lista de motivos do F4 já nomeia).
-    Contraexemplo tentado contra o "dez": varri as ocorrências de "DESVIO/desvio" no arquivo
-    e todas as marcações de desvio adotado caem numa destas dez — as demais ocorrências são
-    alternativas **rejeitadas** ou citações destas mesmas dez. Esse método só acha o que já
+    Contraexemplo tentado contra o "onze": varri as ocorrências de "DESVIO/desvio" no arquivo
+    e todas as marcações de desvio adotado caem numa destas onze — as demais ocorrências são
+    alternativas **rejeitadas** ou citações destas mesmas onze. Esse método só acha o que já
     está rotulado, então os candidatos são procurados **por fora** dele e adjudicados por
-    escrito, para a lista não crescer por descuido nem encolher por omissão. **São CINCO
-    adjudicações até aqui — duas que entraram, três que não:** a **ordem do
+    escrito, para a lista não crescer por descuido nem encolher por omissão. **São SEIS
+    adjudicações até aqui — DUAS que entraram, QUATRO que não** *(a versão anterior desta frase
+    dizia "CINCO — duas que entraram, três que não": o TOTAL estava certo e a DIVISÃO estava
+    errada, porque a enumeração abaixo sempre teve **uma** que entrou, o teto do F7, e quatro
+    que não. Corrigido em 2026-09-12, ao acrescentar a sexta. **A divisão de uma contagem é um
+    segundo numeral escondido dentro da mesma frase**, e a varredura por numeral que este
+    arquivo prescreve tinha de olhar os dois — está no `LEIA-ME-KIT`)*: a **ordem do
     extrato de movimentação** do F8 **não** é item novo — ele ordena e pagina pela tripla
     `(data_evento, registrado_em, id)`, que respeita literalmente as duas chaves da §7.5 e só
     acrescenta o desempate que ela deixa em aberto; o **alerta das 12:00 medido em
@@ -4706,10 +4839,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     a varredura não é um quarto gatilho (chama o mesmo `recalcular`, com o mesmo recorte
     `[desde, U]`, e sobre `revisao > 0`), é a entrega **durável** dos gatilhos 1 e 2. *Se ela
     materializasse dia que o `eod.ready` não fechou, seria desvio da ADR-9 e não caberia numa
-    linha de lista — não materializa, e é por isso que o recorte dela está escrito.* *A quarta
-    adjudicação está escrita aqui porque a decisão de não entrar é tão adjudicação quanto a de
-    entrar: candidato examinado e recusado em silêncio é indistinguível de candidato não
-    examinado.*
+    linha de lista — não materializa, e é por isso que o recorte dela está escrito.* E a
+    **sexta**: a **base e o `prazo` por FIFO derivado do livro** (F5, 2026-09-12) **É** desvio e
+    virou o item (11) acima. *As adjudicações que NÃO entraram estão escritas aqui — a da
+    extensão do job de reconciliação e a da varredura de defasagem, nomeadamente — porque a
+    decisão de não entrar é tão adjudicação quanto a de entrar: candidato examinado e recusado
+    em silêncio é indistinguível de candidato não examinado. (Esta frase dizia "a quarta
+    adjudicação"; um ORDINAL apontando para membro de lista que cresce é a forma frágil que este
+    próprio arquivo condena — trocado pelo NOME dos itens em 2026-09-12.)*
     **O critério que separa uma coisa da outra, e ele vale para as próximas fases:** quando a
     fonte prescreve o **MECANISMO** — colunas, chaves de ordenação, forma do contrato —,
     trocá-lo é **desvio** e entra nesta lista; quando ela prescreve o **RESULTADO** — um
@@ -4717,8 +4854,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     alerta da §12 é do segundo tipo: `processado_em` é o único campo que responde *"chegou
     evento hoje?"*, e a leitura literal (`data_ref`) deixaria o alerta disparando todo dia
     útil, para sempre — satisfazer o resultado prescrito não é divergir dele. **A lista
-    passou a DEZ**, recontados contra este arquivo — o item novo é o teto do F7, adjudicado
-    acima. A §7.3 põe "`+ a_liquidar → liquidacao` (D+1 útil)" **dentro do handler**; esta
+    passou a ONZE**, recontados contra este arquivo — os dois itens mais novos são o teto do F7
+    e a base/`prazo` por FIFO do F5, adjudicados acima. A §7.3 põe "`+ a_liquidar → liquidacao` (D+1 útil)" **dentro do handler**; esta
     fase move a segunda metade para um `IHostedService`. O apoio é a **§8.4**, que põe a
     liquidação em outro momento com todas as letras ("Note over C: dia D+1 útil") — a §7.3 é
     a linha do tempo comprimida, o Fluxo 3 é ela esticada. **Sem o rótulo**, o executor que
@@ -4867,6 +5004,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   terceira, que é do job: `a_liquidar` vencida sem `liq:<fato>:brl`. O backfill é `INSERT`
   (append), nunca `UPDATE`, e é idempotente pela `ref_externa` própria de cada derivado.
 
+  **São QUATRO as guardas permanentes desta fase, não três** — a quarta entrou em 2026-09-12,
+  com a decisão do `prazo`: **(iv) tributo divergente do re-derivado da fila FIFO**, que é a
+  detecção de compra retroativa e de estorno de compra já consumida (escrita por inteiro na
+  decisão da base, acima). Ela é a **única das quatro que não é uma consulta de ausência**: as
+  três primeiras perguntam "falta linha?", e esta pergunta "a linha que existe ainda é a que o
+  livro produziria hoje?". Quem contar guardas num teste declara qual das quatro está afirmando.
+
   **TRÊS CONDIÇÕES DE EXECUÇÃO DO BACKFILL, e nenhuma é opcional — porque sem elas o reparo
   credita dinheiro de operações que não existem mais.** O cenário é real e nasce do desenho:
   um estorno chegado **na janela F4→F5** gravou `ajuste` sobre o movimento **principal** e
@@ -4884,8 +5028,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      outra: o job é `IHostedService` de **ciclo curto** (decisão (c)) e **sobe no mesmo
      deploy** do backfill, então sem o parar ele varre a janela do item 2 enquanto ela existe;
      e sem o filtro robusto ele voltaria a errar na primeira reentrega depois de religado.
-     *O Pronto (h) sozinho não pega nada disso: ele confere idempotência e "três consultas de
-     guarda devolvendo 0" **ao final**, e passa verde depois de o dano estar gravado.*
+     *O Pronto (h) sozinho não pega nada disso: ele confere idempotência e "as consultas de
+     guarda devolvendo 0" (QUATRO, desde 2026-09-12) **ao final**, e passa verde depois de o dano estar gravado.*
 
   **NÃO ENTRA:** cupom e vencimento (F9 — mesmo motor de tributação, gatilho diferente);
   snapshot e o worker de recálculo da §7.4 (F7 — o job de liquidação desta fase **não é**
@@ -4935,8 +5079,14 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (colunas: ref_externa · tipo · instrumento_id · qtd_delta · valor_financeiro · data)
   qtd_delta CARREGA O SINAL; valor_financeiro e MAGNITUDE BRUTA nao negativa.
 
-  A BASE DO IR E O GANHO DA ALIENACAO, NAO O PRECO MEDIO:
-      base = valorFinanceiro_da_venda - preco_medio x quantidade,  com PISO EM ZERO.
+  A BASE DO IR E O GANHO DA ALIENACAO, NAO O PRECO MEDIO — E ELA E POR LOTE FIFO:
+      base_i = valor_da_venda_rateado_no_lote_i - custo_do_lote_i,  com PISO EM ZERO NO LOTE.
+      IR  = SOMA sobre os lotes consumidos de ( max(base_i, 0) x aliquota_ir(prazo_i) )
+      IOF = SOMA sobre os lotes consumidos de ( max(base_i, 0) x aliquota_iof(prazo_i) )
+  (A FORMULA `base = valorFinanceiro - preco_medio x quantidade` ESTAVA NESTA LINHA E FOI
+   REVOGADA em 2026-09-12: ela pressupunha custo medio. A pendencia do `prazo` fechou na
+   opcao (b) — FIFO DERIVADO DO LIVRO, nada materializado — e isso e o DESVIO (11) da lista
+   canonica. NAO USE preco_medio no calculo do tributo.)
   "Base = preco medio DO LIVRO" (7.3) e ELIPSE — o preco medio e o INSUMO da base. Lida
   literalmente, ela manda cobrar ~22,5% DO CUSTO INTEIRO em vez do lucro, numa tabela sem
   UPDATE. A EVIDENCIA ESTA NO SIMULADOR QUE ESTE PROMPT MANDA PORTAR (../tesouro-direto-api),
@@ -4949,24 +5099,69 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (181,360) (361,720) (721,999_999), e o IOF como TabelaDiaria sobre o vetor IofAliquotas
   de 29 aliquotas diarias (linha 8 em diante). Portar o motor com a base errada e conferir
   uma coisa contra outra.
-  BASE NEGATIVA (venda com PREJUIZO): piso em zero, IR = 0 e IOF = 0, e as linhas ir: e
+  BASE NEGATIVA (venda com PREJUIZO): piso em zero POR LOTE, e a condicao de ausencia das
+  linhas e SOMA DAS BASES POSITIVAS = 0 (nenhum lote consumido com ganho > 0) — NAO "a base
+  agregada e <= 0". Nesse caso IR = 0 e IOF = 0, e as linhas ir: e
   iof: NAO EXISTEM — nao grave zero, exatamente como ja vale para o IOF ausente. E
   PREJUIZO NAO GERA CREDITO NEM COMPENSACAO nesta fase: e ausencia DECIDIDA, porque
   compensacao de perdas exige historico fiscal proprio que nada neste roadmap modela. NAO
-  a improvise dentro do calculo.
+  a improvise dentro do calculo — e note que PISO AGREGADO A IMPROVISARIA: somar ganho e
+  prejuizo antes do piso deixa o lote com prejuizo ABATER o imposto do lote com lucro, que e
+  compensacao de perdas entrando pela porta dos fundos.
   COMPRA RETROATIVA que muda a base (ou o prazo) de uma venda ja tributada: mesma familia
   do preco_medio provisorio da decisao 0 — GRAVA, SINALIZA, e o conserto e ESTORNO do
-  resgate e relancamento. NUNCA UPDATE (a trigger barra).
+  resgate e relancamento. NUNCA UPDATE (a trigger barra). SOB FIFO ISSO FICA MAIS FREQUENTE
+  (a compra entra no MEIO da fila) E A DETECCAO E EXIGIVEL: e a QUARTA GUARDA PERMANENTE
+  desta fase — re-derive IR/IOF da fila COMO ELA ESTA HOJE e compare com as linhas ir:/iof:
+  EFETIVAS daquele fato; divergencia vira metrica + alerta, nos DOIS sentidos assimetricos
+  ("linha ausente contra re-derivado > 0" e "linha existente contra re-derivado 0"). UMA
+  consulta cobre as DUAS causas: compra retroativa E estorno de uma compra cujo lote uma
+  venda ja tributada consumiu. Arredondamento IDENTICO ao da escrita (10.25, 2 casas), so
+  linhas EFETIVAS, e "base zero => ausencia de linha" conta como CONCORDANCIA — sem isso o
+  alerta vira ruido permanente.
 
-  PARE AQUI SE A PENDENCIA DO `prazo` AINDA ESTIVER ABERTA. A aliquota depende de DIAS
-  CORRIDOS DESDE A AQUISICAO, e uma posicao construida por N compras em datas diferentes
-  NAO TEM UMA data de aquisicao — a V1 do F3 guardou CUSTO MEDIO, nao lotes. FIFO, data
-  media, lote mais antigo ou mais novo mudam a aliquota entre 22,5% e 15%: 50% DE
-  DIFERENCA NO IMPOSTO, gravado numa tabela sem UPDATE. A decisao e do DONO (amarra
-  modelagem por lotes contra custo medio) e esta escrita na prosa desta fase como
-  PENDENCIA BLOQUEANTE, com as quatro opcoes e o custo de cada uma. NAO ESCOLHA VOCE
-  ENQUANTO ESCREVE O TESTE: e assim que o Pronto (c) — "o dia exato da virada de faixa" —
-  passa por vacuidade, certificando o que voce acabou de decidir.
+  `prazo` = DIAS CORRIDOS ENTRE A data_evento DO LOTE CONSUMIDO E A DA VENDA. A pendencia
+  bloqueante fechou em 2026-09-12 na opcao (b): LOTES FIFO DERIVADOS DO LIVRO, NADA
+  MATERIALIZADO. Nao reabra, nao escolha outra, e nao invente regra onde as quatro decisoes
+  abaixo respondem — cada uma delas existe porque, sem ela, VOCE a decidiria enquanto escreve
+  o teste, e o teste certificaria a sua escolha (foi assim que o Pronto (c) passava por
+  vacuidade).
+  (i) A FILA DE LOTES E FUNCAO AO LADO, NAO UMA QUARTA SAIDA DA DOBRA. O que as tres
+      implementacoes fazem concordar e a SEQUENCIA CANONICA (corte por data_evento, ordem
+      (data_evento, registrado_em, id), par revertido resolvido recursivamente) — extraia esse
+      preparo de DobraPosicao.Dobrar para um passo COMPARTILHADO com DOIS consumidores: a dobra
+      das tres colunas, INTACTA, e a fila FIFO. NAO ponha a fila como quarta saida da dobra:
+      AplicarIncremental carrega tres decimais como estado e uma fila nao cabe ali — ou todo
+      movimento passaria a exigir redobra (O(1) virando O(n) em silencio) ou a fila so existiria
+      no caminho em lote, e passariam a existir DUAS implementacoes para divergirem.
+ (ii) CONCORDANCIA ENTRE AS DUAS DOBRAS — e ela tem uma METADE PROIBIDA. Afirme
+      SOMA(quantidade dos lotes vivos) = quantidade da dobra, sempre. NUNCA afirme
+      SOMA(custo dos lotes) = custo_total: sob FIFO os dois DIVERGEM POR CONSTRUCAO assim que os
+      lotes tiverem precos diferentes, e uma implementacao CORRETA reprovaria esse criterio.
+      posicao_corrente.custo_total continua sendo CUSTO MEDIO (projecao); o imposto e FIFO
+      (livro). A divergencia entre os dois numeros e DECIDIDA, nao defeito.
+(iii) O `ajuste` NAO AGE SOBRE A FILA: a fila e RE-DERIVADA do livro efetivo, e nos dois
+      sentidos o resultado sai de graca. Estorno de COMPRA: o par (compra, ajuste) sai da
+      sequencia, entao o lote NUNCA EXISTIU na re-derivacao. Estorno de VENDA: nao ha nada a
+      "restaurar" — a venda sai da sequencia, os lotes simplesmente nao sao consumidos, COM AS
+      DATAS ORIGINAIS, porque as datas vem das linhas de compra, que nunca se moveram. NAO
+      escreva devolucao explicita de lote em ordem inversa de consumo: e a regra que a opcao (a)
+      exigiria e que ninguem escreveu.
+ (iv) QUANTIDADE DESCOBERTA (fila exaurida) herda o CUSTO UNITARIO E A DATA DE AQUISICAO DO
+      ULTIMO LOTE da fila; com a fila VAZIA, custo 0 e prazo 0 — o que da IR de 22,5% sobre o
+      valor integral e IOF INEXISTENTE, porque o dia 0 nao tem celula na tabela diaria (veja a
+      igualdade exata em SimuladorService.cs:210-213). E o analogo FIFO de "preco_medio
+      INALTERADO" da V1, e erra na direcao de recolher A MAIS, que e a direcao reversivel.
+      "Fila exaurida" e "quantidade negativa" sao O MESMO NUMERO para a chave — mesma condicao,
+      vocabulario do FIFO.
+  OS DOIS TRIBUTOS NAO TEM A MESMA BASE, E ISSO E A SEGUNDA ELIPSE DESTA FASE — porte a ORDEM
+  e a CUMULATIVIDADE, nao so as faixas. Conferido no arquivo, nao de memoria: TributosPadrao.cs
+  linha 46 declara o IOF como ordem: 1, cumulativo: true e a linha 71 declara o IR como
+  ordem: 2, cumulativo: false; SimuladorService.cs:166 itera OrderBy(t => t.Ordem), :170 toma a
+  base do rendimentoAjustado, e :186-189 faz rendimentoAjustado -= valor quando o tributo e
+  cumulativo. LOGO: base do IOF = ganho do lote; BASE DO IR = GANHO DO LOTE MENOS O IOF.
+  Portar so as faixas recolhe IR A MAIOR em todo lote com menos de 30 dias, em tabela sem
+  UPDATE. Vale por lote, como tudo o resto.
   a_liquidar E BRUTO e os TRIBUTOS DEBITAM caixa:a_liquidar: IR e IOF sao retidos NA
   FONTE, entao o direito a receber nasce cheio e e reduzido pelas proprias linhas de
   tributo. O saldo a receber e uma SOMA DE LINHAS DO LIVRO (+Y -t -f) — nao um numero
@@ -5118,8 +5313,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      NOT NULL do F3 garante que cada linha e revertida no maximo uma vez.
      COBRIR OS TRES CASOS, porque o conjunto varia: estorno ANTES da liquidacao (nao ha
      liq a reverter, e o a_liquidar revertido sai do escopo do job); estorno DEPOIS da
-     liquidacao (as duas pernas sao revertidas); resgate SEM IOF (prazo >= 30 dias — nao
-     existe iof: a reverter, e o handler nao pode tentar).
+     liquidacao (as duas pernas sao revertidas); resgate SEM IOF (NENHUM lote consumido com
+     prazo < 30 dias — nao existe iof: a reverter, e o handler nao pode tentar). E o quarto
+     caso, que a decisao do FIFO acrescenta: resgate SEM ir: E SEM iof: (soma das bases
+     positivas = 0, venda com prejuizo em todos os lotes) — o handler nao pode tentar reverter
+     nenhum dos dois.
 
   BACKFILL da janela F4->F5, e ele tem DUAS metades: (i) resgates ja gravados sem
   tributo/a_liquidar recebem as linhas faltantes; (ii) estornos ja gravados sem o
@@ -5141,11 +5339,17 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
         metades da mesma protecao: sem parar o job ele varre a janela do item (2) enquanto
         ela existe; sem o filtro robusto ele volta a errar na primeira reentrega depois de
         religado.
-  O PRONTO (h) SOZINHO NAO PEGA NADA DISSO: ele confere idempotencia e "tres consultas de
-  guarda devolvendo 0" AO FINAL, e passa verde depois de o dano estar gravado. E as consultas que os encontram
-  ("resgate sem linha ir:<tradeId>" e "ajuste sobre resgate sem conjunto est:") viram
-  GUARDA PERMANENTE com metrica e alerta — nao script de uma vez: o que elas detectam
-  pode reaparecer por bug do handler depois.
+  O PRONTO (h) SOZINHO NAO PEGA NADA DISSO: ele confere idempotencia e as consultas de
+  guarda devolvendo 0 AO FINAL, e passa verde depois de o dano estar gravado. E as consultas
+  que os encontram viram GUARDA PERMANENTE com metrica e alerta — nao script de uma vez: o que
+  elas detectam pode reaparecer por bug do handler depois.
+  SAO QUATRO GUARDAS PERMANENTES, e elas ficam enumeradas aqui porque contar guarda e o que o
+  teste faz: (1) "resgate sem linha ir:<tradeId>"; (2) "ajuste sobre resgate sem conjunto
+  est:"; (3) "a_liquidar vencida sem liq:<fato>:brl" (a MESMA consulta do job, decisao 2);
+  (4) "tributo divergente do re-derivado da fila FIFO" (acrescentada em 2026-09-12 com a
+  decisao do prazo — veja COMPRA RETROATIVA acima). A (4) e a UNICA que nao e consulta de
+  ausencia: as tres primeiras perguntam "falta linha?", ela pergunta "a linha que existe ainda
+  e a que o livro produziria hoje?".
 
   NAO ENTRA: cupom e vencimento (F9), snapshot e o worker da 7.4 (F7), extrato (F8).
 
@@ -5157,8 +5361,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   <br>**Pronto:** (**permissiva**) um resgate produzindo o conjunto **completo** de
   movimentos — venda, `ir_retido` **quando cabe**, `iof` **quando cabe**, `a_liquidar` em D
   e, depois de o job rodar, **as duas pernas** da `liquidacao` em D+1 útil —, *e "quando
-  cabe" tem duas condições, não uma: `iof:` só existe com prazo < 30 dias, e **`ir:` e `iof:`
-  não existem quando a base é zero ou negativa** (venda com prejuízo, decisão da base). O
+  cabe" tem duas condições, não uma, e as duas são POR LOTE desde 2026-09-12: `iof:` só existe
+  se **algum lote consumido** tem prazo < 30 dias, e **`ir:` e `iof:` não existem quando a soma
+  das bases positivas é zero** (nenhum lote consumido com ganho > 0 — venda com prejuízo,
+  decisão da base). O
   fixture da permissiva fixa o caso de **base positiva e prazo < 30 dias**, que é o conjunto
   máximo; os outros dois são asserções próprias, com contagem menor,* cada um com `ref_externa`
   própria e **nenhuma colisão**; `posicao_corrente` mostrando `caixa:a_liquidar` em D e
@@ -5184,12 +5390,16 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   (c) D+1 cai em dia útil, provado contra **sexta-feira, sábado e véspera de feriado**, não
   contra uma terça; **e a data fora do horizonte do calendário FALHA ALTO**, com alerta —
   nunca "+1 dia corrido", que é o erro que só aparece meses depois, já gravado. **E as
-  fronteiras fiscais — o dia exato da virada de faixa e o dia 30 do IOF — só são
-  exercitáveis DEPOIS de a PENDÊNCIA BLOQUEANTE do `prazo` estar decidida:** enquanto ela
-  estiver aberta, este critério passa por vacuidade, porque o executor define `prazo`
-  enquanto escreve o teste e o teste certifica a definição que ele acabou de escolher. O
-  fixture da fronteira nomeia, no próprio nome do teste, **qual** definição de `prazo` está
-  em vigor;
+  fronteiras fiscais — o dia exato da virada de faixa e o dia 30 do IOF — são exercitáveis
+  desde que a pendência do `prazo` fechou (2026-09-12, opção (b)), e o `prazo` que o fixture
+  varia é o do LOTE:** o nome do teste diz que a definição em vigor é "dias corridos entre a
+  `data_evento` do lote consumido e a da venda". **As quatro fronteiras, e nenhuma é o caso do
+  meio:** dia 180 contra 181 (22,5% → 20%), dia 360 contra 361, dia 720 contra 721, e dia 29
+  contra 30 do IOF — que é a fronteira em que o tributo **deixa de existir**, não em que muda
+  de valor, porque a tabela diária casa por igualdade exata. **E a fronteira que só o FIFO
+  tem:** uma venda que consome DOIS lotes em faixas diferentes produz **uma** linha `ir:` cujo
+  valor é a soma de duas alíquotas — um teste com lotes na mesma faixa não distingue essa
+  implementação de uma que aplique alíquota única à venda inteira;
   (c2) **o catch-up é retroativo e se declara como tal:** um `a_liquidar` vencido há três
   dias, liquidado agora, grava `data_evento` **na data de liquidação** (passado) e
   **enfileira `recalcular(cliente, instrumento, desde=data_liquidacao)`** — provado por
@@ -5205,11 +5415,20 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   alínea, e é o F7 que o executa — não se apaga o critério, declara-se onde ele roda.*
   (d) não existe movimento de tributo ou de liquidação **sem** o resgate que o originou
   (varredura do livro);
-  (d2) **um resgate sobre posição com `preco_medio` provisório (`quantidade` negativa) grava
-  o conjunto completo E emite o sinal** *"resgate tributado sobre preço médio provisório"* —
+  (d2) **um resgate sobre posição com `preco_medio` provisório — sob FIFO, a FILA DE LOTES
+  INSUFICIENTE, que é o MESMO número que `quantidade` negativa — grava
+  o conjunto completo E emite o sinal** *"resgate tributado sobre preço médio provisório"* (é o
+  **mesmo** sinal, com a condição reescrita no vocabulário do FIFO: o fato sinalizado e o
+  caminho de reparo são idênticos, e partir em dois um alerta com um só reparo daria dois
+  painéis para uma coisa) —
   as duas metades: a linha de tributo **existe** (não foi recusada nem estacionada) e o
-  alerta **disparou**. **Com controle negativo:** o mesmo resgate sobre posição positiva
-  **não** dispara o sinal. E o reparo conferido pelo caminho desta fase — estorno do resgate
+  alerta **disparou**. **A parte descoberta é tributada pela regra (iv) da pendência fechada**
+  (custo e data do último lote; fila vazia ⇒ custo 0, prazo 0). **E o fixture é construído para
+  que uma alíquota única reprove:** a parte coberta vem de um lote antigo (15%) e a descoberta
+  cai em 22,5%, então a asserção é sobre **as alíquotas por lote**, não sobre um total que
+  qualquer regra produziria. **Com controle negativo:** o mesmo resgate sobre uma fila que
+  **cobre** a venda, **com lotes de datas diferentes**, **não** dispara o sinal — fila que cobre
+  e lote único não serve de controle, porque não distingue as duas implementações. E o reparo conferido pelo caminho desta fase — estorno do resgate
   revertendo `est:ir:…`/`est:iof:…` —, **nunca** por `UPDATE` na linha de tributo;
   (e) **estorno de um resgate nos três cenários** — antes da liquidação, depois da
   liquidação, e sem IOF: depois do estorno, **AS TRÊS COLUNAS de `posicao_corrente` voltam
@@ -5237,7 +5456,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   `aliq:<fato>` que se está provando, e sem ele os dois casos gravam linha eterna;
   (g) a parada do job por **limite** devolve falha, não sucesso com conjunto parcial;
   (h) o backfill rodado duas vezes com resultado idêntico, **nas duas metades** (resgate
-  sem derivados e estorno sem reversão), e as três consultas de guarda devolvendo 0
+  sem derivados e estorno sem reversão), e as QUATRO consultas de guarda devolvendo 0
   pendências. **E as TRÊS condições de execução, cada uma com sua asserção, porque este
   critério sozinho passa verde depois de o dano estar gravado:** (h1) um resgate da janela
   F4→F5 **com o principal revertido** não recebe `ir:`, `iof:` nem `aliq:` da metade (i) —
@@ -5251,16 +5470,22 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   nascesse, o job não a liquidaria;
   (i) as alíquotas conferidas contra o simulador da TD API nos casos de fronteira —
   **e a conferência é sobre a BASE também, não só sobre a alíquota**: o caso conferido tem
-  `valorFinanceiro`, `preco_medio` e `quantidade` tais que `base = valorFinanceiro − pm ×
-  quantidade` seja **diferente** de `pm × quantidade`, senão as duas fórmulas dão o mesmo
-  número e o teste não distingue a implementação certa da que cobra imposto sobre o custo.
-  *Limite declarado, e ele decorre da PENDÊNCIA do `prazo`:* o `SimulacaoInput`
-  (`src/TesouroDireto.Domain/Simulador/SimulacaoInput.cs`) modela **uma aplicação** — um
-  `DataCompra` e um `ValorInvestido` escalares — e **não sabe responder**
-  sobre uma posição de custo médio com N compras — a conferência só é executável com um
-  fixture de **compra única**, e é assim que ela tem de estar escrita. Estender a conferência
-  a posições de N compras depende de a pendência do `prazo` ter sido decidida, e o critério
-  diz isso em vez de fingir cobertura.
+  valor de venda e custo do lote tais que a base (o **ganho**) seja **diferente** do custo,
+  senão as duas fórmulas dão o mesmo número e o teste não distingue a implementação certa da
+  que cobra imposto sobre o custo. **E a conferência inclui a ORDEM e a CUMULATIVIDADE**, que
+  são a segunda elipse desta fase: um lote com menos de 30 dias tem `base do IR = ganho − IOF`,
+  e um motor que ignore `ordem`/`cumulativo` bate com o simulador em todo lote de 30 dias ou
+  mais e divirja em todos os outros — então o caso conferido tem de ter **menos de 30 dias**,
+  senão o teste é cego exatamente para o defeito que ele existe para pegar.
+  *O limite que esta alínea declarava CAIU com a decisão do `prazo`, e é o dividendo da opção
+  (b):* o `SimulacaoInput` (`src/TesouroDireto.Domain/Simulador/SimulacaoInput.cs`) modela **uma
+  aplicação** — um `DataCompra` e um `ValorInvestido` escalares —, e sob FIFO a unidade de
+  cálculo **é um lote**, que tem exatamente um custo e uma data de aquisição. **A conferência
+  passa a ser POR LOTE**, e uma posição de N compras é conferível lote a lote: cada lote
+  consumido vira um `SimulacaoInput`, e o total é a soma. *A versão anterior desta alínea dizia
+  que a conferência "só é executável com um fixture de compra única" — verdade sob custo médio,
+  falsa sob FIFO. O fixture de N compras é agora **obrigatório**, não opcional, porque é ele que
+  distingue o motor por lote de um motor que aplique alíquota única.*
 
 - [ ] **F6** — `prices.*` e o bootstrap REST do Hub: a primeira projeção inteiramente
   descartável. **Dependência externa nova: o Hub publicando `prices.*` e respondendo
@@ -6141,7 +6366,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     posição ≠ 0: snapshot(D) = …`); esta fase põe o handler percorrendo um **intervalo**.
     *Sem o rótulo, o executor que ler a §7.3 — como o próprio prompt manda — encontra a
     contradição sem explicação e tende a seguir a `ARQUITETURA`, que é a mesma regra que
-    vale para os outros nove desvios deste arquivo.*
+    vale para os outros dez desvios deste arquivo.*
     **Por que o desvio:** como o Hub só emite quando `fechado > ultimoEmitido`, `D` **pula**
     datas (ingestor fora do ar, instrumento atrasado): os dias pulados são dias úteis com
     posição ≠ 0 e **nenhum** evento futuro os anuncia. O handler percorre o intervalo com
@@ -7176,7 +7401,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     empatado em `(data_evento, registrado_em)` inclui também a **`venda`**, que está no
     instrumento do título: são **`venda`, `ir_retido`, `iof` e `a_liquidar`** — as quatro com
     `data_evento = dataEvento` e o mesmo `registrado_em`, porque `now()` é hora de transação.
-    *Quantas são exatamente depende do fato: **quatro** com IOF, **três** sem IOF (prazo ≥ 30
+    *Quantas são exatamente depende do fato: **quatro** com IOF, **três** sem IOF (nenhum lote
+    consumido com prazo < 30
     dias) e **duas** quando a base do IR é zero ou negativa (F5), porque aí `ir:` e `iof:` não
     existem. O fixture do Pronto (e2) fixa o caso de **quatro**, de propósito, porque é o
     maior — e um `pageSize` escolhido para cortar um grupo de três não corta o de quatro.*
@@ -7321,7 +7547,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      (clienteId e o unico parametro obrigatorio), entao o grupo inclui tambem a VENDA, que
      esta no instrumento do titulo — venda, ir_retido, iof e a_liquidar, as quatro com
      data_evento = dataEvento e o mesmo registrado_em (now() e hora de TRANSACAO). Sao
-     QUATRO com IOF, TRES sem IOF (prazo >= 30 dias) e DUAS quando a base do IR e zero ou
+     QUATRO com IOF, TRES sem IOF (nenhum lote consumido com prazo < 30 dias) e DUAS quando a
+     soma das bases positivas e zero ou
      negativa (F5). O fixture do Pronto (e2) fixa o caso de QUATRO, de proposito: um
      pageSize escolhido para cortar um grupo de tres NAO corta o de quatro.
      ISTO E UM DESVIO DA SECAO 2 DO PADROES, NAO UMA APLICACAO DELA. A secao 2 preve
@@ -7429,10 +7656,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   **Dependência externa nova: o Hub publicando `corpactions.*` — e isso exige código no
   `../hub-precos`, OUTRO REPO.**
 
-  **PENDÊNCIAS QUE ESTA FASE HERDA OU ABRE, e as duas estão escritas nas decisões abaixo:**
-  ela **herda a PENDÊNCIA BLOQUEANTE do `prazo`** (F5 — a alíquota do cupom depende dela do
-  mesmo jeito) e **abre a pendência da reversão de corpaction**, que hoje não é
-  representável. Nenhuma das duas se resolve dentro desta fase.
+  **PENDÊNCIAS QUE ESTA FASE HERDA OU ABRE — era UMA herdada e uma aberta, e a herdada
+  FECHOU:** a **pendência do `prazo` fechou em 2026-09-12** (opção (b), FIFO derivado do livro),
+  e esta fase passa a **herdar a DECISÃO** em vez do bloqueio: a alíquota do cupom se apura
+  **por lote**, com a mesma fila FIFO que o F5 constrói, e o motor recebe a **decomposição por
+  lote** — não só a base como escalar, que é o que o texto desta fase dizia quando o `prazo`
+  ainda era indefinido. Continua **aberta** a **pendência da reversão de corpaction**, que hoje
+  não é representável, e ela **não** se resolve dentro desta fase.
 
   **AVISO DE BLOQUEIO, leia antes de despachar:** a §9 item 5 põe **o gerador determinístico
   de cupom/vencimento no Hub**, não aqui — "gerador determinístico no Hub (cupom/vencimento)
@@ -7449,11 +7679,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   do F5 — **inclusive o job de liquidação**, que grava as duas pernas em D+1 útil.
   **MAS A BASE DO CUPOM É O VALOR INTEGRAL, e reusar o motor do F5 sem esta qualificação
   SUBTRIBUTA TODO CUPOM.** O motor do F5 calcula sobre o **ganho de alienação**
-  (`valorFinanceiro − preco_medio × quantidade`); um cupom **não tem custo de aquisição** —
+  apurado **por lote FIFO** (não sobre `preco_medio × quantidade` — veja o desvio (11)); um cupom
+  **não tem custo de aquisição** —
   ele é renda, é o que a V1 do F3 já diz ao mandar `cupom` não tocar `custo_total` nem
   `preco_medio` —, então subtrair um preço médio dele daria base zero ou negativa e
   **nenhuma** linha de `ir_retido`. A `ARQUITETURA` §11 trata "IR de **cupom na fonte**" como
-  caso próprio. **Regra: o motor recebe a BASE como parâmetro**, e quem a calcula é o
+  caso próprio. **Regra: o motor recebe a BASE como parâmetro — e, desde a decisão do `prazo`
+  (2026-09-12), a base vem DECOMPOSTA POR LOTE**, porque sob FIFO a alíquota é do lote e não da
+  venda; para o cupom a decomposição é trivial (um "lote" só, prazo do título, custo zero), e é
+  exatamente por isso que a assinatura do motor tem de ser a mesma nas duas fases. Quem a calcula é o
   chamador — `ganho de alienação` na venda e no vencimento (F5), **valor integral** no cupom
   (aqui). *O que se reusa é a tabela regressiva, as faixas, o IOF e o arredondamento; o que
   NÃO se reusa é a fórmula da base, e é por isso que ela tem nome nas duas pontas.* **
@@ -7580,8 +7814,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   calcula e o chamador — ganho de alienacao na venda e no vencimento (F5), VALOR INTEGRAL
   no cupom. Reuse a tabela regressiva, as faixas, o IOF e o arredondamento; NAO reuse a
   formula da base.
-  E ESTA FASE HERDA A PENDENCIA BLOQUEANTE DO `prazo` (F5): a aliquota do cupom depende
-  dela do mesmo jeito. Se a pendencia estiver aberta, PARE — vale o mesmo aviso do F5.
+  E ESTA FASE HERDA A DECISAO DO `prazo` (F5, fechada em 2026-09-12 na opcao (b)): a aliquota
+  do cupom se apura POR LOTE, com a MESMA fila FIFO derivada do livro que o F5 constroi. NAO
+  reimplemente a fila e NAO passe a base como escalar — o motor recebe a DECOMPOSICAO POR LOTE,
+  porque um cupom incide sobre posicao de N lotes com aliquotas diferentes. Porte tambem a ORDEM
+  e a CUMULATIVIDADE (base do IR = ganho - IOF), que e a segunda elipse rotulada no F5.
   VENCIMENTO: `resgate` (o tipo do LIVRO, que E vencimento — V2 do F3) com
   qtd_delta = -qtd e valor = qtd x PU final + tributacao da ponta + liquidacao em D+1
   util.
@@ -7711,10 +7948,11 @@ Quatro coisas que este roadmap pede em toda fase, e que não são cerimônia:
    rastreado.
 
 4. **Antes de despachar uma fase, releia as PENDÊNCIAS dela — elas estão no cabeçalho da
-   fase e nas decisões, com o nome, o estado, quem decide e as opções.** Há **duas** abertas
-   neste arquivo: a definição de `prazo` (**bloqueia o F5 e, por herança, o F9**) e a
-   reversão de corpaction (**aberta no F9**, não bloqueante até o Hub publicar
-   `corpactions.td`).
+   fase e nas decisões, com o nome, o estado, quem decide e as opções.** Há **UMA** aberta
+   neste arquivo: a reversão de corpaction (**aberta no F9**, não bloqueante até o Hub publicar
+   `corpactions.td`). *A definição de `prazo` — que bloqueava o F5 e, por herança, o F9 —
+   **FECHOU em 2026-09-12**, na opção (b) (FIFO derivado do livro), e a decisão arrastou junto a
+   base do imposto, que passou a ser por lote: é o **desvio (11)** da lista canônica. Eram duas.*
 
    *A **pendência de confirmação** que a V6 deixou — "Operações consegue publicar o rateio, não só
    o booleano?" — **resolveu em 2026-09-11**, e como ela resolveu vale mais que o resultado: a
