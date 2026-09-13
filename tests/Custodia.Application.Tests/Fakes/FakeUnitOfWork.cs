@@ -11,10 +11,18 @@ internal sealed class FakeUnitOfWork(Func<int, Result>? saveChanges = null) : IU
 
     public int ChamadasDeLimparRastreamento { get; private set; }
 
+    public int ChamadasDeDescartarTransacao { get; private set; }
+
     public Task<Result> SaveChangesAsync(CancellationToken ct)
     {
         ChamadasDeSaveChanges++;
         return Task.FromResult(_saveChanges(ChamadasDeSaveChanges));
+    }
+
+    public Task DescartarTransacaoAsync(CancellationToken ct)
+    {
+        ChamadasDeDescartarTransacao++;
+        return Task.CompletedTask;
     }
 
     public void LimparRastreamento() => ChamadasDeLimparRastreamento++;

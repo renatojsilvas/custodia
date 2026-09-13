@@ -1,8 +1,11 @@
 using Custodia.Application.Calendario;
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Eventos;
+using Custodia.Application.Liquidacao;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
+using Custodia.Infrastructure.Common;
+using Custodia.Infrastructure.Liquidacao;
 using Custodia.Infrastructure.Messaging;
 using Custodia.Infrastructure.Observability;
 using Custodia.Infrastructure.Persistence;
@@ -40,6 +43,10 @@ public static class DependencyInjection
         services.AddScoped<IPosicaoCorrenteWriteRepository, PosicaoCorrenteWriteRepository>();
         services.AddScoped<ICalendarioDiasUteisReadRepository, CalendarioDiasUteisReadRepository>();
         services.AddScoped<IProximoDiaUtilService, ProximoDiaUtilService>();
+        services.AddScoped<IMovimentoTravamentoRepository, MovimentoTravamentoRepository>();
+        services.AddScoped<ILiquidacaoCandidataReadRepository, LiquidacaoCandidataReadRepository>();
+        services.AddSingleton<IRecalculoEnfileiradorPort, RecalculoEnfileiradorNuloPort>();
+        services.AddSingleton<IPontoDeSuspensaoAposTravamento, PontoDeSuspensaoAposTravamentoInerte>();
         services.AddSingleton<RoteadorDeEventos>();
         services.AddSingleton<RabbitMqConnectionProvider>();
         services.AddSingleton<IPublicadorComConfirmacao, RabbitMqPublicadorComConfirmacao>();

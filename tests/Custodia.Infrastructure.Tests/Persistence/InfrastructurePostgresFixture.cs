@@ -1,5 +1,6 @@
 using Custodia.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Custodia.Infrastructure.Tests.Persistence;
@@ -10,10 +11,13 @@ public sealed class InfrastructurePostgresFixture : IAsyncLifetime
 
     public string ConnectionString { get; private set; } = string.Empty;
 
+    public NpgsqlDataSource DataSource { get; private set; } = null!;
+
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
         ConnectionString = _postgres.GetConnectionString();
+        DataSource = NpgsqlDataSource.Create(ConnectionString);
 
         await using var db = CriarDbContext();
         await db.Database.MigrateAsync();
@@ -21,6 +25,7 @@ public sealed class InfrastructurePostgresFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        await DataSource.DisposeAsync();
         await _postgres.DisposeAsync();
     }
 

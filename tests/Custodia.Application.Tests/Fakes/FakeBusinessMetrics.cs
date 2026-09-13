@@ -9,6 +9,10 @@ internal sealed record RegistroDeHorizonteCalendario(int DiasRestantes, int Dias
 internal sealed record SinalizacaoDeResgateSobrePrecoMedioProvisorio(
     string ClienteId, string InstrumentoId, decimal QuantidadeDescoberta);
 
+internal sealed record LimitePorTetoDeLiquidacao(long CandidatasEncontradas, long Teto);
+
+internal sealed record CalendarioExauridoNaLiquidacao(string ClienteId, string TradeId);
+
 internal sealed class FakeBusinessMetrics : IBusinessMetrics
 {
     public List<SinalizacaoDePosicaoNegativa> Sinalizacoes { get; } = [];
@@ -16,6 +20,10 @@ internal sealed class FakeBusinessMetrics : IBusinessMetrics
     public List<RegistroDeHorizonteCalendario> RegistrosDeHorizonteCalendario { get; } = [];
 
     public List<SinalizacaoDeResgateSobrePrecoMedioProvisorio> SinalizacoesDeResgateSobrePrecoMedioProvisorio { get; } = [];
+
+    public List<LimitePorTetoDeLiquidacao> LimitesPorTetoDeLiquidacao { get; } = [];
+
+    public List<CalendarioExauridoNaLiquidacao> CalendariosExauridosNaLiquidacao { get; } = [];
 
     public void RegistrarPosicaoNegativaSinalizada(string clienteId, string instrumentoId, decimal quantidadeResultante) =>
         Sinalizacoes.Add(new SinalizacaoDePosicaoNegativa(clienteId, instrumentoId, quantidadeResultante));
@@ -27,4 +35,10 @@ internal sealed class FakeBusinessMetrics : IBusinessMetrics
         string clienteId, string instrumentoId, decimal quantidadeDescoberta) =>
         SinalizacoesDeResgateSobrePrecoMedioProvisorio.Add(
             new SinalizacaoDeResgateSobrePrecoMedioProvisorio(clienteId, instrumentoId, quantidadeDescoberta));
+
+    public void RegistrarLiquidacaoLimitePorTeto(long candidatasEncontradas, long teto) =>
+        LimitesPorTetoDeLiquidacao.Add(new LimitePorTetoDeLiquidacao(candidatasEncontradas, teto));
+
+    public void RegistrarLiquidacaoCalendarioExaurido(string clienteId, string tradeId) =>
+        CalendariosExauridosNaLiquidacao.Add(new CalendarioExauridoNaLiquidacao(clienteId, tradeId));
 }

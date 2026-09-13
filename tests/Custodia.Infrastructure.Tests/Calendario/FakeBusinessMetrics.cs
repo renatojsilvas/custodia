@@ -19,4 +19,12 @@ internal sealed class FakeBusinessMetrics : IBusinessMetrics
         string clienteId, string instrumentoId, decimal quantidadeDescoberta)
     {
     }
+
+    public void RegistrarLiquidacaoLimitePorTeto(long candidatasEncontradas, long teto)
+    {
+    }
+
+    public void RegistrarLiquidacaoCalendarioExaurido(string clienteId, string tradeId)
+    {
+    }
 }

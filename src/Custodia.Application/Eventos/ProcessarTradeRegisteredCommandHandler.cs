@@ -13,10 +13,12 @@ namespace Custodia.Application.Eventos;
 public sealed class ProcessarTradeRegisteredCommandHandler(
     IMovimentoReadRepository movimentoReadRepository,
     IMovimentoWriteRepository movimentoWriteRepository,
+    IMovimentoTravamentoRepository movimentoTravamentoRepository,
     IPosicaoCorrenteReadRepository posicaoCorrenteReadRepository,
     IPosicaoCorrenteWriteRepository posicaoCorrenteWriteRepository,
     IUnitOfWork unitOfWork,
-    IBusinessMetrics businessMetrics)
+    IBusinessMetrics businessMetrics,
+    IPontoDeSuspensaoAposTravamento pontoDeSuspensaoAposTravamento)
     : IRequestHandler<ProcessarTradeRegisteredCommand, Result<ResultadoTradeRegistered>>
 {
     public async Task<Result<ResultadoTradeRegistered>> Handle(
@@ -269,7 +271,98 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             pendencias.Add(ajustePernaResult.Value);
         }
 
+        if (titulo.Tipo == TipoMovimento.Venda)
+        {
+            var derivadosResult = await ReverterDerivadosDoResgateAsync(evento, estornaTradeId, pendencias, ct);
+
+            if (derivadosResult.IsFailure)
+            {
+                return derivadosResult.Error;
+            }
+
+            if (derivadosResult.Value.DeveInterromper)
+            {
+                return derivadosResult.Value.ResultadoDeInterrupcao!;
+            }
+        }
+
         return await GravarTudoAsync(pendencias, ct);
+    }
+
+    private readonly record struct ResultadoReversaoDeDerivados(bool DeveInterromper, ResultadoTradeRegistered? ResultadoDeInterrupcao)
+    {
+        public static readonly ResultadoReversaoDeDerivados Continuar = new(false, null);
+
+        public static ResultadoReversaoDeDerivados Interromper(ResultadoTradeRegistered resultado) => new(true, resultado);
+    }
+
+    private async Task<Result<ResultadoReversaoDeDerivados>> ReverterDerivadosDoResgateAsync(
+        TradeRegisteredEvento evento, string estornaTradeId, List<Movimento> pendencias, CancellationToken ct)
+    {
+        var travamentoResult = await movimentoTravamentoRepository.TravarPorClienteERefExternaAsync(
+            evento.ClienteId, $"aliq:{estornaTradeId}", ct);
+
+        if (travamentoResult.IsFailure)
+        {
+            return travamentoResult.Error;
+        }
+
+        if (!travamentoResult.Value.Encontrado)
+        {
+            return ResultadoReversaoDeDerivados.Continuar;
+        }
+
+        var aliq = travamentoResult.Value.Linha!;
+
+        await pontoDeSuspensaoAposTravamento.AposTravarAsync(aliq.ClienteId, aliq.RefExterna, ct);
+
+        var ajusteAliqResult = CriarAjusteDeReversao(
+            aliq, evento.ClienteId, evento.RegistradoEm, $"est:aliq:{evento.TradeId}");
+
+        if (ajusteAliqResult.IsFailure)
+        {
+            return ResultadoReversaoDeDerivados.Interromper(
+                ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido));
+        }
+
+        pendencias.Add(ajusteAliqResult.Value);
+
+        var derivadasParaReverter = new (string RefExternaOriginal, string RefExternaEstorno)[]
+        {
+            ($"ir:{estornaTradeId}", $"est:ir:{evento.TradeId}"),
+            ($"iof:{estornaTradeId}", $"est:iof:{evento.TradeId}"),
+            ($"liq:{estornaTradeId}:aliq", $"est:liq:{evento.TradeId}:aliq"),
+            ($"liq:{estornaTradeId}:brl", $"est:liq:{evento.TradeId}:brl"),
+        };
+
+        foreach (var (refExternaOriginal, refExternaEstorno) in derivadasParaReverter)
+        {
+            var derivadaResult = await movimentoReadRepository.ObterPorClienteERefExternaAsync(
+                evento.ClienteId, refExternaOriginal, ct);
+
+            if (derivadaResult.IsFailure)
+            {
+                return derivadaResult.Error;
+            }
+
+            if (!derivadaResult.Value.Encontrado)
+            {
+                continue;
+            }
+
+            var ajusteDerivadaResult = CriarAjusteDeReversao(
+                derivadaResult.Value.Linha!, evento.ClienteId, evento.RegistradoEm, refExternaEstorno);
+
+            if (ajusteDerivadaResult.IsFailure)
+            {
+                return ResultadoReversaoDeDerivados.Interromper(
+                    ResultadoTradeRegistered.Estacionar(MotivoEstacionamento.PayloadInvalido));
+            }
+
+            pendencias.Add(ajusteDerivadaResult.Value);
+        }
+
+        return ResultadoReversaoDeDerivados.Continuar;
     }
 
     private static bool ConferenciaBate(TradeRegisteredEvento evento, Movimento titulo) =>
@@ -297,15 +390,14 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         IReadOnlyList<Movimento> movimentos, CancellationToken ct)
     {
         var estadosJaAplicadosNesteLote = new Dictionary<(string ClienteId, string InstrumentoId), PosicaoTresColunas>();
+        var movimentosJaAdicionadosNesteLotePorChave = new Dictionary<(string ClienteId, string InstrumentoId), List<Movimento>>();
 
         foreach (var movimento in movimentos)
         {
             var chaveNoLote = (movimento.ClienteId, movimento.InstrumentoId);
 
-            var posicaoResult = estadosJaAplicadosNesteLote.TryGetValue(chaveNoLote, out var estadoAnteriorNoLote)
-                ? Result<PosicaoTresColunas>.Success(
-                    DobraPosicao.AplicarIncremental(estadoAnteriorNoLote, movimento, movimento.DataEvento).Estado!)
-                : await AplicarNaPosicaoAsync(movimento.ClienteId, movimento.InstrumentoId, movimento, ct);
+            var posicaoResult = await ObterPosicaoAposAplicarNoLoteAsync(
+                chaveNoLote, movimento, estadosJaAplicadosNesteLote, movimentosJaAdicionadosNesteLotePorChave, ct);
 
             if (posicaoResult.IsFailure)
             {
@@ -313,6 +405,14 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
             }
 
             estadosJaAplicadosNesteLote[chaveNoLote] = posicaoResult.Value;
+
+            if (!movimentosJaAdicionadosNesteLotePorChave.TryGetValue(chaveNoLote, out var movimentosDaChaveNoLote))
+            {
+                movimentosDaChaveNoLote = [];
+                movimentosJaAdicionadosNesteLotePorChave[chaveNoLote] = movimentosDaChaveNoLote;
+            }
+
+            movimentosDaChaveNoLote.Add(movimento);
 
             var adicionarResult = await movimentoWriteRepository.AdicionarAsync(movimento, ct);
             if (adicionarResult.IsFailure)
@@ -342,6 +442,48 @@ public sealed class ProcessarTradeRegisteredCommandHandler(
         return saveResult.IsFailure
             ? ClassificarFalhaDeGravacao(saveResult.Error)
             : ResultadoTradeRegistered.Escriturado();
+    }
+
+    private async Task<Result<PosicaoTresColunas>> ObterPosicaoAposAplicarNoLoteAsync(
+        (string ClienteId, string InstrumentoId) chaveNoLote,
+        Movimento movimento,
+        Dictionary<(string ClienteId, string InstrumentoId), PosicaoTresColunas> estadosJaAplicadosNesteLote,
+        Dictionary<(string ClienteId, string InstrumentoId), List<Movimento>> movimentosJaAdicionadosNesteLotePorChave,
+        CancellationToken ct)
+    {
+        if (movimento.Tipo == TipoMovimento.Ajuste)
+        {
+            return await RedobrarComNovosDoLoteAsync(chaveNoLote, movimento, movimentosJaAdicionadosNesteLotePorChave, ct);
+        }
+
+        if (estadosJaAplicadosNesteLote.TryGetValue(chaveNoLote, out var estadoAnteriorNoLote))
+        {
+            return DobraPosicao.AplicarIncremental(estadoAnteriorNoLote, movimento, movimento.DataEvento).Estado!;
+        }
+
+        return await AplicarNaPosicaoAsync(movimento.ClienteId, movimento.InstrumentoId, movimento, ct);
+    }
+
+    private async Task<Result<PosicaoTresColunas>> RedobrarComNovosDoLoteAsync(
+        (string ClienteId, string InstrumentoId) chaveNoLote,
+        Movimento movimento,
+        Dictionary<(string ClienteId, string InstrumentoId), List<Movimento>> movimentosJaAdicionadosNesteLotePorChave,
+        CancellationToken ct)
+    {
+        var movimentosDaChaveResult = await movimentoReadRepository.ObterMovimentosDaChaveAsync(
+            chaveNoLote.ClienteId, chaveNoLote.InstrumentoId, ct);
+
+        if (movimentosDaChaveResult.IsFailure)
+        {
+            return movimentosDaChaveResult.Error;
+        }
+
+        var jaAdicionadosNesteLote = movimentosJaAdicionadosNesteLotePorChave.TryGetValue(chaveNoLote, out var lista)
+            ? lista
+            : [];
+
+        var todos = movimentosDaChaveResult.Value.Concat(jaAdicionadosNesteLote).Append(movimento).ToList();
+        return DobraPosicao.Dobrar(todos);
     }
 
     private async Task<Result<PosicaoTresColunas>> AplicarNaPosicaoAsync(

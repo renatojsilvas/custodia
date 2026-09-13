@@ -6,5 +6,7 @@ public interface IUnitOfWork
 {
     Task<Result> SaveChangesAsync(CancellationToken ct);
 
+    Task DescartarTransacaoAsync(CancellationToken ct);
+
     void LimparRastreamento();
 }

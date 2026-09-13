@@ -72,6 +72,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         }
     }
 
+    Task IUnitOfWork.DescartarTransacaoAsync(CancellationToken ct) => DesfazerTransacaoAmbienteAsync(ct);
+
     private void DetacharAlteracoes()
     {
         foreach (var entry in ChangeTracker.Entries().Where(e => e.State != EntityState.Unchanged).ToList())

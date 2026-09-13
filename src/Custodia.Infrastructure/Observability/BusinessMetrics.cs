@@ -32,6 +32,16 @@ public sealed class BusinessMetrics(ILogger<BusinessMetrics> logger) : IBusiness
             LabelNames = ["instrumento_id"]
         });
 
+    private static readonly Counter LiquidacaoLimitePorTetoTotal = Metrics.CreateCounter(
+        "custodia_liquidacao_limite_por_teto_total",
+        "Total de ciclos do job de liquidação abortados por excederem o teto de candidatas por ciclo " +
+        "(PADROES 10.31 — parada por LIMITE, nunca sucesso parcial).");
+
+    private static readonly Counter LiquidacaoCalendarioExauridoTotal = Metrics.CreateCounter(
+        "custodia_liquidacao_calendario_exaurido_total",
+        "Total de vezes em que o job de liquidação encontrou o horizonte do calendário de dias úteis esgotado " +
+        "ao tentar calcular D+1 útil de uma linha a_liquidar vencida. Falha alta, nunca modo degradado.");
+
     public void RegistrarPosicaoNegativaSinalizada(string clienteId, string instrumentoId, decimal quantidadeResultante)
     {
         PosicaoNegativaSinalizadaTotal.WithLabels(instrumentoId).Inc();
@@ -70,5 +80,28 @@ public sealed class BusinessMetrics(ILogger<BusinessMetrics> logger) : IBusiness
             clienteId,
             instrumentoId,
             quantidadeDescoberta);
+    }
+
+    public void RegistrarLiquidacaoLimitePorTeto(long candidatasEncontradas, long teto)
+    {
+        LiquidacaoLimitePorTetoTotal.Inc();
+
+        logger.LogError(
+            "Job de liquidação abortado: {CandidatasEncontradas} candidatas vencidas encontradas, acima do teto " +
+            "configurado {Teto}. Nenhuma linha foi inserida neste ciclo — falha, não sucesso parcial.",
+            candidatasEncontradas,
+            teto);
+    }
+
+    public void RegistrarLiquidacaoCalendarioExaurido(string clienteId, string tradeId)
+    {
+        LiquidacaoCalendarioExauridoTotal.Inc();
+
+        logger.LogCritical(
+            "Job de liquidação encontrou o horizonte do calendário de dias úteis esgotado ao calcular D+1 útil: " +
+            "cliente {ClienteId}, trade {TradeId}. Falha alta e proposital — semeie mais datas em " +
+            "calendario_dias_uteis antes que o processamento dependente pare de vez.",
+            clienteId,
+            tradeId);
     }
 }
