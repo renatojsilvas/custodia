@@ -12,6 +12,14 @@ public sealed class CalendarioDiasUteisReadRepositoryTests(InfrastructurePostgre
     private CalendarioDiasUteisReadRepository CriarRepositorio() =>
         new(NpgsqlDataSource.Create(fixture.ConnectionString));
 
+    private static (CalendarioDiasUteisReadRepository Repositorio, NpgsqlDataSource DataSource) CriarRepositorioComFusoDeSessao(
+        string connectionString, string fuso)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(connectionString) { Timezone = fuso };
+        var dataSource = NpgsqlDataSource.Create(builder.ConnectionString);
+        return (new CalendarioDiasUteisReadRepository(dataSource), dataSource);
+    }
+
     private static DateOnly CalcularPascoaPorAlgoritmoGregorianoIndependenteDaMigration(int ano)
     {
         var a = ano % 19;
@@ -140,6 +148,62 @@ public sealed class CalendarioDiasUteisReadRepositoryTests(InfrastructurePostgre
             "SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date");
 
         Assert.Equal(DateOnly.FromDateTime(hojeEsperado), resultado.Value.Hoje);
+    }
+
+    [Fact]
+    public async Task ObterHorizonteAsync_HojeUsaOFusoDeSaoPauloENaoOFusoDaSessaoDeConexao_DiscriminaAsDuasDirecoes()
+    {
+        _ = CriarRepositorio();
+
+        await using var referencia = new NpgsqlConnection(fixture.ConnectionString);
+        await referencia.OpenAsync();
+        var brt = await referencia.ExecuteScalarAsync<DateOnly>(
+            "SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date");
+
+        var exercitouAlgumaDirecao = false;
+
+        var (repositorioAFrente, dataSourceAFrente) = CriarRepositorioComFusoDeSessao(
+            fixture.ConnectionString, "Pacific/Kiritimati");
+        await using (dataSourceAFrente)
+        {
+            await using var sessaoAFrente = await dataSourceAFrente.OpenConnectionAsync();
+            var currentDateNaSessao = await sessaoAFrente.ExecuteScalarAsync<DateOnly>("SELECT current_date");
+
+            if (currentDateNaSessao > brt)
+            {
+                exercitouAlgumaDirecao = true;
+
+                var resultado = await repositorioAFrente.ObterHorizonteAsync(CancellationToken.None);
+
+                Assert.True(resultado.IsSuccess);
+                Assert.Equal(brt, resultado.Value.Hoje);
+                Assert.NotEqual(currentDateNaSessao, resultado.Value.Hoje);
+            }
+        }
+
+        var (repositorioAtras, dataSourceAtras) = CriarRepositorioComFusoDeSessao(
+            fixture.ConnectionString, "Etc/GMT+12");
+        await using (dataSourceAtras)
+        {
+            await using var sessaoAtras = await dataSourceAtras.OpenConnectionAsync();
+            var currentDateNaSessao = await sessaoAtras.ExecuteScalarAsync<DateOnly>("SELECT current_date");
+
+            if (currentDateNaSessao < brt)
+            {
+                exercitouAlgumaDirecao = true;
+
+                var resultado = await repositorioAtras.ObterHorizonteAsync(CancellationToken.None);
+
+                Assert.True(resultado.IsSuccess);
+                Assert.Equal(brt, resultado.Value.Hoje);
+                Assert.NotEqual(currentDateNaSessao, resultado.Value.Hoje);
+            }
+        }
+
+        Assert.True(
+            exercitouAlgumaDirecao,
+            "Nenhuma das duas janelas horárias valeu (07:00-24:00 BRT para a sessão à frente, " +
+            "00:00-09:00 BRT para a sessão atrás) — o teste não discriminou a implementação nesta hora.");
     }
 
     [Fact]

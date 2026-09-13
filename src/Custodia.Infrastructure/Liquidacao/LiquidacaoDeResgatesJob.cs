@@ -49,6 +49,21 @@ public sealed class LiquidacaoDeResgatesJob(
                 return;
             }
 
+            if (resultado.Value.Desfecho == DesfechoLiquidacaoDeResgates.ParcialPorInconsistencia)
+            {
+                logger.LogWarning(
+                    "Ciclo do job de liquidação de resgates concluído por PARCIAL_POR_INCONSISTENCIA: " +
+                    "{CandidatasExaminadas} candidatas examinadas, {FatosLiquidados} liquidados, " +
+                    "{FatosNaoVencidos} ainda não vencidos, {FatosJaTratados} já tratados (revertidos ou " +
+                    "liquidados por outra execução), {FatosInconsistentes} inconsistentes.",
+                    resultado.Value.CandidatasExaminadas,
+                    resultado.Value.FatosLiquidados,
+                    resultado.Value.FatosNaoVencidos,
+                    resultado.Value.FatosJaTratados,
+                    resultado.Value.FatosInconsistentes);
+                return;
+            }
+
             logger.LogInformation(
                 "Ciclo do job de liquidação de resgates concluído por COMPLETUDE: {CandidatasExaminadas} " +
                 "candidatas examinadas, {FatosLiquidados} liquidados, {FatosNaoVencidos} ainda não vencidos, " +
