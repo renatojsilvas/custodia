@@ -5091,13 +5091,23 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
      já vencido e não revertido.
   2. **A ORDEM é (i) e DEPOIS (ii), e fica escrita.** A metade (ii) só pode rodar depois da
      (i), porque o `ref_estorno` de cada `est:` precisa da linha alvo já gravada. A janela
-     entre as duas é aberta **pelo desenho**, não por acidente: é nela que existem `aliq:`
-     recém-criados ainda sem o `est:aliq:` correspondente.
-  3. **O backfill roda com o JOB DE LIQUIDAÇÃO PARADO**, e o filtro do job olha o **fato
-     principal** (regra acima). São as duas metades da mesma proteção e nenhuma substitui a
-     outra: o job é `IHostedService` de **ciclo curto** (decisão (c)) e **sobe no mesmo
-     deploy** do backfill, então sem o parar ele varre a janela do item 2 enquanto ela existe;
-     e sem o filtro robusto ele voltaria a errar na primeira reentrega depois de religado.
+     entre as duas é real e é nela que existem `aliq:` recém-criados ainda sem o `est:aliq:`
+     correspondente — *mas a origem dela não é a que este texto supunha: não é a metade (i)
+     criando `aliq:` para fatos revertidos (a condição 1 proíbe isso na consulta), e sim o
+     **estorno ao vivo commitando dentro da janela da metade (i)**, quando `aliq:` ainda não
+     existe e portanto **não serializa nada**. Confirmado no código em 2026-09-13.*
+  3. **O backfill roda com o JOB DE LIQUIDAÇÃO PARADO** — e isto é **condição OPERACIONAL**,
+     não a outra metade da proteção do item 1. *A frase anterior dizia "são as duas metades da
+     mesma proteção"; ela foi revogada em 2026-09-13, porque o filtro do job — que olha o `aliq:`
+     **e** o movimento principal, e reconfere as duas coisas **dentro** da transação do
+     `FOR UPDATE` — já cobre sozinho o resíduo que o item 1 deixa: no cenário da corrida o
+     `ajuste` do principal commita **antes** de o `aliq:` nascer, então o job sempre o enxerga.*
+     **O motivo real de parar o job, e ele é de operação:** a metade (i) grava `a_liquidar` com
+     `data_evento` **no passado, em lote**, e o job de **ciclo curto** (decisão (c)), que **sobe
+     no mesmo deploy**, dispararia uma **avalanche de liquidações retroativas** — cada uma
+     enfileirando recálculo — podendo **estourar o teto** no meio do reparo e devolver LIMITE. A
+     robustez do filtro continua sendo exigida, mas ela é prova **independente**, e é o
+     Pronto **(h3)** — não a outra metade desta condição.
      *O Pronto (h) sozinho não pega nada disso: ele confere idempotência e "as consultas de
      guarda devolvendo 0" (QUATRO, desde 2026-09-12) **ao final**, e passa verde depois de o dano estar gravado.*
 
@@ -5413,11 +5423,28 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     (2) A ORDEM E (i) E DEPOIS (ii), e ela fica escrita: o ref_estorno de cada `est:`
         precisa da linha alvo ja gravada. A janela entre as duas metades e aberta PELO
         DESENHO — e nela que existem aliq: recem-criados ainda sem est:aliq:.
-    (3) RODE O BACKFILL COM O JOB DE LIQUIDACAO PARADO, e o filtro do job olha o FATO
-        PRINCIPAL (nem a linha aliq: nem o movimento principal revertidos). Sao as duas
-        metades da mesma protecao: sem parar o job ele varre a janela do item (2) enquanto
-        ela existe; sem o filtro robusto ele volta a errar na primeira reentrega depois de
-        religado.
+    (3) RODE O BACKFILL COM O JOB DE LIQUIDACAO PARADO — e isto e CONDICAO OPERACIONAL, nao a
+        outra metade da protecao do item (1). O filtro do job (olha o aliq: E o movimento
+        principal, e reconfere DENTRO da transacao do FOR UPDATE) ja cobre sozinho o residuo:
+        na corrida, o ajuste do principal commita ANTES de o aliq: nascer, entao o job sempre o
+        enxerga. O motivo real de parar o job e de OPERACAO: a metade (i) grava a_liquidar com
+        data NO PASSADO EM LOTE, e o job de ciclo curto, que sobe no mesmo deploy, dispararia
+        uma AVALANCHE de liquidacoes retroativas — cada uma enfileirando recalculo — podendo
+        estourar o teto no meio do reparo. O filtro robusto continua exigido, mas como prova
+        INDEPENDENTE: e o Pronto (h3).
+    ATENCAO — A CONDICAO (1) VALE NA CONSULTA DE CANDIDATOS, NAO NO MOMENTO DA ESCRITA, e a
+    diferenca entre as duas e uma JANELA REAL: um estorno ao vivo que commite entre a listagem
+    e o INSERT faz a metade (i) gravar ir:, iof: e aliq: para um resgate que NAO EXISTE MAIS.
+    O FOR UPDATE nao socorre, porque enquanto aliq: nao existe o fato NAO TEM PONTO DE
+    SERIALIZACAO — travar linha que ainda nao nasceu nao serializa nada. Reconferir a reversao
+    no momento da escrita, com os movimentos JA CARREGADOS, ESTREITA a janela e NAO A FECHA —
+    escreva isso como estreitamento, nao finja garantia. QUEM FECHA E A METADE (ii), na mesma
+    execucao; se a execucao abortar entre as metades, a GUARDA 2 detecta permanentemente e um
+    RERUN cura (a reentrega do estorno nao cura: o dedupe torna o retry no-op). DECIDIDO em
+    2026-09-13: NAO se para o consumidor durante o backfill (represar a fila por um comando de
+    uma vez so custa mais do que resolve) e NAO se move o ponto de serializacao para a linha
+    principal (mecanismo novo no caminho do job e do estorno, que ja estao provados, para uma
+    janela que ja tem cura e deteccao).
   O PRONTO (h) SOZINHO NAO PEGA NADA DISSO: ele confere idempotencia e as consultas de
   guarda devolvendo 0 AO FINAL, e passa verde depois de o dano estar gravado. E as consultas
   que os encontram viram GUARDA PERMANENTE com metrica e alerta — nao script de uma vez: o que
@@ -5552,9 +5579,24 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   critério sozinho passa verde depois de o dano estar gravado:** (h1) um resgate da janela
   F4→F5 **com o principal revertido** não recebe `ir:`, `iof:` nem `aliq:` da metade (i) —
   **com controle positivo**: um resgate igual, **não** revertido, recebe as três; (h2) a
-  ordem (i)→(ii) afirmada por asserção sobre o resultado, não por leitura do código — depois
-  da passagem completa, **todo** `aliq:` criado pela metade (i) sobre fato revertido não
-  existe, e todo `est:aliq:` da metade (ii) aponta para uma linha que a (i) gravou; (h3) o
+  ordem (i)→(ii) afirmada por asserção sobre o resultado, não por leitura do código, **e o
+  fixture é a CORRIDA REAL, não um estorno inserido à mão entre duas invocações**: com um
+  estorno commitado **DENTRO da janela da metade (i)**, a passagem **única** termina com o
+  `aliq:` gravado por (i) e o `est:aliq:` de (ii) com `ref_estorno` **nessa exata linha**;
+  invertida a ordem das metades, o `est:aliq:` **não existe**; e ao final **nenhum** fato com o
+  principal revertido tem `aliq:` sem `est:aliq:`.
+  *A redação anterior — "todo `aliq:` criado pela metade (i) sobre fato revertido **não
+  existe**" — era literalmente **FALSA**, e foi corrigida em 2026-09-13, depois de a
+  implementação revelar por quê: a condição (1) é aplicada na **consulta de candidatos**, não no
+  momento da escrita, então um estorno que commite entre as duas faz a metade (i) gravar `aliq:`
+  para um fato revertido. Ele **existe**, e é a metade (ii) que o reverte — na mesma execução.
+  **Reconferir a reversão no momento da escrita ESTREITA a janela e não a fecha**, e é preciso
+  dizer isso em vez de fingir garantia: quem fecha é a (ii). A prova disso é por falsificação —
+  desligada a metade (ii), este critério reprova.*
+  **E é por isso que a metade (ii) NÃO é código morto:** essa corrida é a **única** origem
+  alcançável do estado que ela repara, e a reentrega do estorno **não** o conserta, porque o
+  dedupe por `(cliente_id, ref_externa)` torna o retry um no-op. Se a execução abortar entre as
+  metades, a **guarda 2** detecta permanentemente e um **rerun** do backfill cura; (h3) o
   job de liquidação **religado depois do backfill** não credita `caixa:BRL` de nenhum fato
   cujo movimento principal esteja revertido — é a prova do filtro robusto, e ela é
   independente de (h1), porque (h1) prova que a linha não nasceu e (h3) prova que, se

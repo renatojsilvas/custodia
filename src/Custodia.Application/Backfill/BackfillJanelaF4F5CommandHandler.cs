@@ -17,6 +17,7 @@ public sealed class BackfillJanelaF4F5CommandHandler(
     IAplicadorIncrementalDePosicao aplicadorIncrementalDePosicao,
     IUnitOfWork unitOfWork,
     IBusinessMetrics businessMetrics,
+    IPontoDeSuspensaoAposTravamento pontoDeSuspensaoAposTravamento,
     TimeProvider timeProvider)
     : IRequestHandler<BackfillJanelaF4F5Command, Result<BackfillJanelaF4F5Resultado>>
 {
@@ -93,6 +94,11 @@ public sealed class BackfillJanelaF4F5CommandHandler(
             return false;
         }
 
+        if (EstaRevertidaSegundoLeituraJaCarregada(movimentosDaChave, resgate))
+        {
+            return false;
+        }
+
         var refAliq = $"aliq:{candidato.TradeId}";
 
         var existenteResult = await movimentoReadRepository.ObterPorClienteERefExternaAsync(
@@ -162,6 +168,8 @@ public sealed class BackfillJanelaF4F5CommandHandler(
                 candidato.ClienteId, candidato.InstrumentoId, consumo.QuantidadeDescoberta);
         }
 
+        await pontoDeSuspensaoAposTravamento.AposTravarAsync(candidato.ClienteId, refAliq, ct);
+
         var gravarResult = await GravarDerivadosAsync(pendencias, ct);
 
         if (gravarResult.IsFailure)
@@ -171,6 +179,9 @@ public sealed class BackfillJanelaF4F5CommandHandler(
 
         return true;
     }
+
+    private static bool EstaRevertidaSegundoLeituraJaCarregada(IReadOnlyList<Movimento> movimentosDaChave, Movimento resgate) =>
+        movimentosDaChave.Any(m => m.Tipo == TipoMovimento.Ajuste && m.RefEstorno == resgate.Id);
 
     private async Task<Result<(int Candidatos, int Processados)>> BackfillarAjustesDeResgateSemReversaoAsync(
         CancellationToken ct)

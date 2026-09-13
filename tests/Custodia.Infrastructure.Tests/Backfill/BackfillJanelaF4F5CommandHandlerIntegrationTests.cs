@@ -1,6 +1,7 @@
 using Custodia.Application.Backfill;
 using Custodia.Application.Calendario;
 using Custodia.Application.Common.Interfaces;
+using Custodia.Application.Eventos;
 using Custodia.Application.Liquidacao;
 using Custodia.Application.Posicoes;
 using Custodia.Domain.Common;
@@ -30,7 +31,9 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
     private NpgsqlDataSource CriarDataSource() => fixture.DataSource;
 
     private BackfillJanelaF4F5CommandHandler CriarHandlerDeBackfill(
-        AppDbContext dbContext, IBusinessMetrics? metrics = null) =>
+        AppDbContext dbContext,
+        IBusinessMetrics? metrics = null,
+        IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null) =>
         new(
             new BackfillJanelaF4F5ReadRepository(CriarDataSource()),
             new MovimentoReadRepository(CriarDataSource()),
@@ -40,7 +43,20 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
             new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
             dbContext,
             metrics ?? new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
+            pontoDeSuspensao ?? new PontoDeSuspensaoAposTravamentoInerte(),
             TimeProvider.System);
+
+    private ProcessarTradeRegisteredCommandHandler CriarHandlerDeEventos(AppDbContext dbContext) =>
+        new(
+            new MovimentoReadRepository(CriarDataSource()),
+            new MovimentoWriteRepository(dbContext),
+            new MovimentoTravamentoRepository(dbContext),
+            new PosicaoCorrenteReadRepository(CriarDataSource()),
+            new PosicaoCorrenteWriteRepository(dbContext),
+            new AplicadorIncrementalDePosicao(new MovimentoReadRepository(CriarDataSource()), new PosicaoCorrenteReadRepository(CriarDataSource())),
+            dbContext,
+            new Custodia.Infrastructure.Tests.Calendario.FakeBusinessMetrics(),
+            new PontoDeSuspensaoAposTravamentoInerte());
 
     private LiquidarResgatesVencidosCommandHandler CriarHandlerDeLiquidacao(AppDbContext dbContext) =>
         new(
@@ -59,11 +75,18 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
             new ConfigurationBuilder().Build(),
             TimeProvider.System);
 
-    private async Task<Result<BackfillJanelaF4F5Resultado>> RodarBackfillAsync(IBusinessMetrics? metrics = null)
+    private async Task<Result<BackfillJanelaF4F5Resultado>> RodarBackfillAsync(
+        IBusinessMetrics? metrics = null, IPontoDeSuspensaoAposTravamento? pontoDeSuspensao = null)
     {
         await using var db = fixture.CriarDbContext();
-        return await CriarHandlerDeBackfill(db, metrics).Handle(new BackfillJanelaF4F5Command(), CancellationToken.None);
+        return await CriarHandlerDeBackfill(db, metrics, pontoDeSuspensao)
+            .Handle(new BackfillJanelaF4F5Command(), CancellationToken.None);
     }
+
+    private static TradeRegisteredEvento CriarEventoDeEstorno(string tradeIdDoEstorno, Movimento titulo, DateOnly dataEvento) =>
+        new(
+            tradeIdDoEstorno, titulo.ClienteId, titulo.InstrumentoId, OperacaoTrade.Estorno,
+            Math.Abs(titulo.QtdDelta), titulo.ValorFinanceiro, dataEvento, RegistradoEm, titulo.RefExterna, null);
 
     private async Task<Movimento> InserirAsync(
         string clienteId, string instrumentoId, TipoMovimento tipo, DateOnly dataEvento, string refExterna,
@@ -203,51 +226,85 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
     }
 
     [Fact]
-    public async Task Handle_OrdemMetadeIDepoisMetadeII_ProvadaPeloResultado_EstFamiliaApontaParaLinhaGravadaPelaMetadeI()
+    public async Task Handle_EstornoCommitaDentroDaJanelaDaMetadeI_PassagemUnicaTerminaComAliqEEstAliqApontandoParaEla_EInvertidaAOrdemOEstAliqNaoExistiriaAinda()
     {
         var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
 
-        var instrumentoDoFatoRevertidoDepois = NovoInstrumentoId();
-        await InserirCompraAsync(clienteId, instrumentoDoFatoRevertidoDepois, "op-compra-b", new DateOnly(2026, 6, 1), 10m, 1000m);
-        await InserirVendaSemDerivadosAsync(
-            clienteId, instrumentoDoFatoRevertidoDepois, "op-resgate-b", new DateOnly(2026, 6, 11), 10m, 1200m);
+        await InserirCompraAsync(clienteId, instrumentoId, "op-compra-corrida", new DateOnly(2026, 6, 1), 10m, 1000m);
+        await InserirVendaSemDerivadosAsync(clienteId, instrumentoId, "op-resgate-corrida", new DateOnly(2026, 6, 11), 10m, 1200m);
 
-        var primeiraPassagem = await RodarBackfillAsync();
-        Assert.True(primeiraPassagem.IsSuccess);
-        Assert.Equal(1, primeiraPassagem.Value.ResgatesBackfilled);
-        Assert.Equal(0, primeiraPassagem.Value.AjustesBackfilled);
+        var candidatosDeReversaoNoInstanteDaSuspensao = new List<AjusteDeResgateSemReversao>();
+        var estornoFoiEscriturado = false;
 
-        var irB = await ObterMovimentoAsync(clienteId, "ir:op-resgate-b");
-        var iofB = await ObterMovimentoAsync(clienteId, "iof:op-resgate-b");
-        var aliqB = await ObterMovimentoAsync(clienteId, "aliq:op-resgate-b");
+        var pontoDeSuspensao = new FuncPontoDeSuspensaoAposTravamento(async (_, refExterna, ct) =>
+        {
+            if (refExterna != "aliq:op-resgate-corrida" || estornoFoiEscriturado)
+            {
+                return;
+            }
 
-        var vendaB = await ObterMovimentoAsync(clienteId, "op-resgate-b");
-        await InserirAjusteSobreAsync(vendaB, clienteId, "op-estorno-tardio-do-b");
+            var venda = await ObterMovimentoAsync(clienteId, "op-resgate-corrida");
 
-        var instrumentoDoFatoSaudavel = NovoInstrumentoId();
-        await InserirCompraAsync(clienteId, instrumentoDoFatoSaudavel, "op-compra-a", new DateOnly(2026, 6, 1), 10m, 1000m);
-        await InserirVendaSemDerivadosAsync(
-            clienteId, instrumentoDoFatoSaudavel, "op-resgate-a", new DateOnly(2026, 6, 11), 10m, 1200m);
+            await using var dbEstorno = fixture.CriarDbContext();
+            var resultadoEstorno = await CriarHandlerDeEventos(dbEstorno).Handle(
+                new ProcessarTradeRegisteredCommand(
+                    CriarEventoDeEstorno("op-estorno-corrida", venda, new DateOnly(2026, 6, 12))),
+                ct);
 
-        var segundaPassagem = await RodarBackfillAsync();
-        Assert.True(segundaPassagem.IsSuccess);
-        Assert.Equal(1, segundaPassagem.Value.ResgatesBackfilled);
-        Assert.Equal(1, segundaPassagem.Value.AjustesBackfilled);
+            Assert.True(resultadoEstorno.IsSuccess);
+            Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, resultadoEstorno.Value.Tipo);
+            estornoFoiEscriturado = true;
 
-        Assert.True(await ExisteMovimentoAsync(clienteId, "aliq:op-resgate-a"));
+            var candidatosComOEstornoJaCommitadoMasSemAliqAinda = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+                .ObterAjustesDeResgateSemReversaoAsync(ct);
+            candidatosDeReversaoNoInstanteDaSuspensao.AddRange(candidatosComOEstornoJaCommitadoMasSemAliqAinda.Value);
+        });
 
-        var estIr = await ObterMovimentoAsync(clienteId, "est:ir:op-estorno-tardio-do-b");
-        var estIof = await ObterMovimentoAsync(clienteId, "est:iof:op-estorno-tardio-do-b");
-        var estAliq = await ObterMovimentoAsync(clienteId, "est:aliq:op-estorno-tardio-do-b");
+        var resultado = await RodarBackfillAsync(pontoDeSuspensao: pontoDeSuspensao);
 
-        Assert.Equal(irB.Id, estIr.RefEstorno);
-        Assert.Equal(iofB.Id, estIof.RefEstorno);
-        Assert.Equal(aliqB.Id, estAliq.RefEstorno);
+        Assert.True(resultado.IsSuccess);
+        Assert.True(estornoFoiEscriturado, "o ponto de suspensão não disparou o estorno concorrente.");
 
-        var pendenciasResult = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+        Assert.DoesNotContain(
+            candidatosDeReversaoNoInstanteDaSuspensao, c => c.EstornoTradeId == "op-estorno-corrida");
+
+        var aliq = await ObterMovimentoAsync(clienteId, "aliq:op-resgate-corrida");
+        var ir = await ObterMovimentoAsync(clienteId, "ir:op-resgate-corrida");
+        var iof = await ObterMovimentoAsync(clienteId, "iof:op-resgate-corrida");
+
+        var estAliq = await ObterMovimentoAsync(clienteId, "est:aliq:op-estorno-corrida");
+        var estIr = await ObterMovimentoAsync(clienteId, "est:ir:op-estorno-corrida");
+        var estIof = await ObterMovimentoAsync(clienteId, "est:iof:op-estorno-corrida");
+
+        Assert.Equal(aliq.Id, estAliq.RefEstorno);
+        Assert.Equal(ir.Id, estIr.RefEstorno);
+        Assert.Equal(iof.Id, estIof.RefEstorno);
+
+        var pendenciasFinais = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
             .ObterAjustesDeResgateSemReversaoAsync(CancellationToken.None);
-        Assert.True(pendenciasResult.IsSuccess);
-        Assert.DoesNotContain(pendenciasResult.Value, p => p.EstornoTradeId == "op-estorno-tardio-do-b");
+        Assert.True(pendenciasFinais.IsSuccess);
+        Assert.DoesNotContain(pendenciasFinais.Value, p => p.EstornoTradeId == "op-estorno-corrida");
+
+        await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT COUNT(*)
+            FROM movimentos v
+            JOIN movimentos adj ON adj.ref_estorno = v.id
+            JOIN movimentos a ON a.cliente_id = v.cliente_id AND a.ref_externa = 'aliq:' || v.ref_externa
+            WHERE v.tipo = 'venda'
+              AND v.cliente_id = @clienteId
+              AND NOT EXISTS (
+                  SELECT 1 FROM movimentos estaliq
+                  WHERE estaliq.cliente_id = v.cliente_id AND estaliq.ref_externa = 'est:aliq:' || adj.ref_externa
+              )
+            """;
+        command.Parameters.AddWithValue("clienteId", clienteId);
+        var fatosComAliqOrfa = (long)(await command.ExecuteScalarAsync())!;
+        Assert.Equal(0, fatosComAliqOrfa);
     }
 
     [Fact]
