@@ -1307,6 +1307,24 @@ chega ao executor como se fosse defeito do código dele. Avise no prompt que exi
 concorrente, diga para repetir em vez de consertar, e **proíba `dotnet clean`** — que é o conserto
 "óbvio" e derruba a compilação do outro no meio.
 
+**O ESPELHO DISSO DO LADO DO CONDUTOR, e eu o cometi no F5 da `custodia` (2026-09-13):** eu proibi
+`git checkout`/`stash`/`clean` nos prompts dos executores, e então fiz `git add -A && git commit` para
+gravar dois documentos meus **enquanto um executor estava despachado e ativo na árvore**. Não capturou
+trabalho parcial — por sorte, porque ele ainda não havia escrito o primeiro arquivo. Se tivesse escrito
+metade de um refactor, o commit teria gravado essa metade sob uma mensagem que fala de outra coisa, e
+o defeito só apareceria na revisão seguinte, atribuído ao executor.
+
+**Regra: com subagente ativo, o condutor commita POR CAMINHO** — `git add docs/ROADMAP.md PADROES.md`,
+nunca `-A`, nunca `.`. E o `git status --short` de antes do commit é para **ler**, não para confirmar
+que está tudo bem: o que interessa nele é exatamente o que NÃO é seu.
+
+**E a consequência de segunda ordem, que é a parte que quase mordeu:** aquele commit tornou rastreados
+arquivos que o executor conhecia como não rastreados, e o **ponto de restauração que eu havia dado a
+ele no prompt deixou de existir** para aqueles caminhos (`git checkout <sha> -- <arquivo>` falha se o
+arquivo não existia naquele commit). Commitar por baixo de um agente **invalida instruções que já
+foram entregues a ele**. Se você fizer isso, mande a correção do SHA imediatamente — e é mais um motivo
+para o commit do condutor ser por caminho e fora dos diretórios do agente.
+
 ## Fechar pendência que ACRESCENTA item a um conjunto: varra pelo NUMERAL, não só pelo nome
 
 Complemento concreto do "varra o arquivo inteiro pelo nome da pendência — `grep`, não memória".
