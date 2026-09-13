@@ -4495,7 +4495,39 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   corpaction (F9). **Herdado para o F6:** as **871** mensagens em `custodia.parked` com
   `tipo_nao_tratado_prices`/`_eod` — são o Pronto do drenador daquelas fases, não dívida desta.
 
-- [ ] **F5** — consequências contábeis do resgate: IR, IOF e a liquidação D+1.
+- [x] **F5** — consequências contábeis do resgate: IR, IOF e a liquidação D+1.
+  **FECHADA em 2026-09-13** — 16 commits, 120 arquivos, suíte em **721** testes ao fechar, 0 falhas *(contado na última execução; o total de partida não foi medido e por isso não está escrito — numeral que não foi contado não entra)*.
+  Guardião e revisor passados **em série**; 21 mutações adversariais, 19 pegas, e **nenhuma revelou
+  código de produção errado**.
+
+  **O que esta fase ensinou, e está onde o próximo repo lê** — `PADROES.md` **§10.47** (porte de motor
+  de tributos: porte a ORDEM e a CUMULATIVIDADE, não só as faixas), **§10.48** (exceção determinística
+  com `requeue: true` é poison message em laço, e a métrica a chama de transitória — **defeito
+  anterior a esta fase**, achado aqui e **ainda não corrigido**), **§10.49** (duplicação se mede pela
+  ESTRUTURA: a cópia perde o ramo que hoje está morto) e **§10.50** (varredura que confirma rename
+  roda SEM filtro de ruído); e no `LEIA-ME-KIT.md` **quatro** seções: o total certo com a divisão
+  errada, o condutor commitando por baixo de subagente ativo, a suíte morta por memória que parece
+  três coisas diferentes, e o agente mecânico que extrapola justamente onde o escopo foi desenhado com
+  cuidado. **Não repita a leitura aqui** — o valor daqueles arquivos é serem o único lugar.
+
+  **O achado que atravessou a fase inteira, e é o que eu levaria para a próxima:** os defeitos
+  estavam **um nível adiante de onde a regra estava certa**. A base do IR estava certa e o `prazo` que
+  a alimentava não existia; a condição do backfill estava certa na **consulta** e ausente na
+  **escrita**; o handler marcava o desfecho certo e o **job que o consome** ignorava a marcação. Nos
+  três, a peça responsável estava conforme e o defeito morava no **consumidor** — que é exatamente
+  onde nenhum teste da peça olha. *Corolário de despacho: o prompt que descreve uma regra precisa
+  nomear também quem a consome; nos três casos o consumidor não estava no prompt.*
+
+  **E o que a revisão adversarial mostrou sobre a suíte:** ela tinha dentes em toda parte, menos onde
+  os **números do fixture nunca variaram** — ninguém havia construído lote de quantidade fracionária
+  nem dois movimentos no mesmo dia com `registrado_em` diferente, **e os dois são o caso NORMAL deste
+  domínio**, não o exótico.
+
+  **PENDÊNCIAS QUE SAEM DAQUI ABERTAS, e nenhuma é dívida silenciosa:** (1) a metade do **crash** do
+  Pronto **(c2)** — derrubar o processo entre o commit das pernas e o recálculo — roda no **F7**, com
+  a varredura de defasagem de snapshot, e está registrada lá, não apagada; (2) o defeito da **§10.48**
+  (poison message em requeue infinito) é do **F4** e continua aberto: o F5 removeu o gatilho
+  específico, não a classe; (3) a **reversão de corpaction**, do F9, segue como estava.
   **Dependência externa nova: nenhuma.**
   **A PENDÊNCIA BLOQUEANTE do `prazo` FECHOU em 2026-09-12, na opção (b) — FIFO DERIVADO DO
   LIVRO, sem materializar lotes. Leia a seção dela nas decisões desta fase ANTES de despachar:
