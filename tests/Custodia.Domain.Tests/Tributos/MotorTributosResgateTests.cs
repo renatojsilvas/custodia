@@ -139,6 +139,24 @@ public sealed class MotorTributosResgateTests
     }
 
     [Fact]
+    public void Ratear_ComDoisLotesDeQuantidadeFracionaria_RateiaPelaQuantidadeExataSemArredondarAQuantidade()
+    {
+        var loteMenor = new LoteConsumido(0.37m, 0m, Dia(0), 50);
+        var loteMaior = new LoteConsumido(1.63m, 0m, Dia(0), 50);
+        var lotes = new List<LoteConsumido> { loteMenor, loteMaior };
+        var metodoRatear = typeof(MotorTributosResgate).GetMethod(
+            "Ratear", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        var rateios = (IReadOnlyList<decimal>)metodoRatear.Invoke(null, [250.00m, lotes, 2.00m])!;
+
+        Assert.Equal(46.25m, rateios[0]);
+        Assert.Equal(203.75m, rateios[1]);
+        Assert.Equal(250.00m, rateios.Sum());
+        Assert.Equal(0.37m, loteMenor.Quantidade);
+        Assert.Equal(1.63m, loteMaior.Quantidade);
+    }
+
+    [Fact]
     public void Ratear_ComTresLotesDeQuantidadeQueNaoDivideRedondo_SomaDosRateiosEhExatamenteOValorDaVenda()
     {
         var lotes = new List<LoteConsumido>

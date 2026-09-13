@@ -90,13 +90,13 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
 
     private async Task<Movimento> InserirAsync(
         string clienteId, string instrumentoId, TipoMovimento tipo, DateOnly dataEvento, string refExterna,
-        decimal qtdDelta, decimal valorFinanceiro, long? refEstorno = null)
+        decimal qtdDelta, decimal valorFinanceiro, long? refEstorno = null, DateTimeOffset? registradoEm = null)
     {
         await using var db = fixture.CriarDbContext();
         var repo = new MovimentoWriteRepository(db);
 
         var movimento = Movimento.Create(
-            clienteId, instrumentoId, tipo, dataEvento, RegistradoEm, qtdDelta, valorFinanceiro, refExterna, refEstorno).Value;
+            clienteId, instrumentoId, tipo, dataEvento, registradoEm ?? RegistradoEm, qtdDelta, valorFinanceiro, refExterna, refEstorno).Value;
 
         await repo.AdicionarAsync(movimento, CancellationToken.None);
         var salvou = await ((IUnitOfWork)db).SaveChangesAsync(CancellationToken.None);
@@ -106,8 +106,9 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
     }
 
     private Task<Movimento> InserirCompraAsync(
-        string clienteId, string instrumentoId, string tradeId, DateOnly dataEvento, decimal quantidade, decimal valorFinanceiro) =>
-        InserirAsync(clienteId, instrumentoId, TipoMovimento.Compra, dataEvento, tradeId, quantidade, valorFinanceiro);
+        string clienteId, string instrumentoId, string tradeId, DateOnly dataEvento, decimal quantidade, decimal valorFinanceiro,
+        DateTimeOffset? registradoEm = null) =>
+        InserirAsync(clienteId, instrumentoId, TipoMovimento.Compra, dataEvento, tradeId, quantidade, valorFinanceiro, registradoEm: registradoEm);
 
     private Task<Movimento> InserirVendaSemDerivadosAsync(
         string clienteId, string instrumentoId, string tradeId, DateOnly dataEvento, decimal quantidade, decimal valorFinanceiro) =>
@@ -156,11 +157,17 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
         await InserirCompraAsync(clienteId, instrumentoId, "op-compra-1", new DateOnly(2026, 6, 1), 10m, 1000m);
         await InserirVendaSemDerivadosAsync(clienteId, instrumentoId, "op-resgate-1", new DateOnly(2026, 6, 11), 10m, 1200m);
 
+        var candidatosAntesEscopadosNoCliente = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+            .ObterResgatesSemAliqAsync(CancellationToken.None);
+        Assert.Contains(candidatosAntesEscopadosNoCliente.Value, c => c.ClienteId == clienteId && c.TradeId == "op-resgate-1");
+
         var resultado = await RodarBackfillAsync();
 
         Assert.True(resultado.IsSuccess);
-        Assert.Equal(1, resultado.Value.ResgatesCandidatos);
-        Assert.Equal(1, resultado.Value.ResgatesBackfilled);
+
+        var candidatosDepoisEscopadosNoCliente = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+            .ObterResgatesSemAliqAsync(CancellationToken.None);
+        Assert.DoesNotContain(candidatosDepoisEscopadosNoCliente.Value, c => c.ClienteId == clienteId);
 
         var ir = await ObterMovimentoAsync(clienteId, "ir:op-resgate-1");
         var iof = await ObterMovimentoAsync(clienteId, "iof:op-resgate-1");
@@ -194,6 +201,45 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
         Assert.False(await ExisteMovimentoAsync(clienteId, "ir:op-resgate-prejuizo"));
         Assert.False(await ExisteMovimentoAsync(clienteId, "iof:op-resgate-prejuizo"));
         Assert.True(await ExisteMovimentoAsync(clienteId, "aliq:op-resgate-prejuizo"));
+    }
+
+    [Fact]
+    public async Task Handle_ResgateComCompraRegistradaDepoisDeleNoMesmoDataEvento_RederivaComOCorteEIgnoraALoteTardia()
+    {
+        var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
+
+        await InserirCompraAsync(clienteId, instrumentoId, "op-compra-antiga-corte", new DateOnly(2024, 1, 1), 5m, 500m);
+        await InserirVendaSemDerivadosAsync(clienteId, instrumentoId, "op-resgate-corte", new DateOnly(2026, 6, 11), 10m, 1500m);
+        await InserirCompraAsync(
+            clienteId, instrumentoId, "op-compra-mesmo-dia-corte", new DateOnly(2026, 6, 11), 5m, 700m,
+            registradoEm: RegistradoEm.AddMinutes(1));
+
+        var resultado = await RodarBackfillAsync();
+
+        Assert.True(resultado.IsSuccess);
+
+        var ir = await ObterMovimentoAsync(clienteId, "ir:op-resgate-corte");
+        Assert.False(await ExisteMovimentoAsync(clienteId, "iof:op-resgate-corte"));
+        Assert.Equal(75.00m, ir.ValorFinanceiro);
+    }
+
+    [Fact]
+    public async Task ObterResgatesSemAliqAsync_ComResgateDePrincipalRevertido_NaoRetornaOResgateParaEsteCliente()
+    {
+        var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
+
+        await InserirCompraAsync(clienteId, instrumentoId, "op-compra-sql-revertido", new DateOnly(2026, 6, 1), 10m, 1000m);
+        var vendaRevertida = await InserirVendaSemDerivadosAsync(
+            clienteId, instrumentoId, "op-resgate-sql-revertido", new DateOnly(2026, 6, 11), 10m, 1200m);
+        await InserirAjusteSobreAsync(vendaRevertida, clienteId, "op-estorno-sql-revertido");
+
+        var candidatos = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
+            .ObterResgatesSemAliqAsync(CancellationToken.None);
+
+        Assert.True(candidatos.IsSuccess);
+        Assert.DoesNotContain(candidatos.Value, c => c.ClienteId == clienteId && c.TradeId == "op-resgate-sql-revertido");
     }
 
     [Fact]
@@ -328,14 +374,12 @@ public sealed class BackfillJanelaF4F5CommandHandlerIntegrationTests(Infrastruct
 
         var primeira = await RodarBackfillAsync();
         Assert.True(primeira.IsSuccess);
-        Assert.Equal(2, primeira.Value.ResgatesBackfilled);
+        Assert.True(await ExisteMovimentoAsync(clienteId, "aliq:op-resgate-idem-1"));
+        Assert.True(await ExisteMovimentoAsync(clienteId, "aliq:op-resgate-idem-2"));
+        Assert.False(await ExisteMovimentoAsync(clienteId, "aliq:op-resgate-idem-3"));
 
         var segunda = await RodarBackfillAsync();
         Assert.True(segunda.IsSuccess);
-        Assert.Equal(0, segunda.Value.ResgatesCandidatos);
-        Assert.Equal(0, segunda.Value.ResgatesBackfilled);
-        Assert.Equal(0, segunda.Value.AjustesCandidatos);
-        Assert.Equal(0, segunda.Value.AjustesBackfilled);
 
         var guardaResgates = await new BackfillJanelaF4F5ReadRepository(CriarDataSource())
             .ObterResgatesSemAliqAsync(CancellationToken.None);

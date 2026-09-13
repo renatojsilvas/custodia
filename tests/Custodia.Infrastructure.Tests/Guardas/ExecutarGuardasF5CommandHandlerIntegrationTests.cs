@@ -43,13 +43,13 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
 
     private async Task<Movimento> InserirAsync(
         string clienteId, string instrumentoId, TipoMovimento tipo, DateOnly dataEvento, string refExterna,
-        decimal qtdDelta, decimal valorFinanceiro, long? refEstorno = null)
+        decimal qtdDelta, decimal valorFinanceiro, long? refEstorno = null, DateTimeOffset? registradoEm = null)
     {
         await using var db = fixture.CriarDbContext();
         var repo = new MovimentoWriteRepository(db);
 
         var movimento = Movimento.Create(
-            clienteId, instrumentoId, tipo, dataEvento, RegistradoEm, qtdDelta, valorFinanceiro, refExterna, refEstorno).Value;
+            clienteId, instrumentoId, tipo, dataEvento, registradoEm ?? RegistradoEm, qtdDelta, valorFinanceiro, refExterna, refEstorno).Value;
 
         await repo.AdicionarAsync(movimento, CancellationToken.None);
         var salvou = await ((Custodia.Application.Common.Interfaces.IUnitOfWork)db).SaveChangesAsync(CancellationToken.None);
@@ -59,8 +59,9 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
     }
 
     private Task<Movimento> InserirCompraAsync(
-        string clienteId, string instrumentoId, string tradeId, DateOnly dataEvento, decimal quantidade, decimal valorFinanceiro) =>
-        InserirAsync(clienteId, instrumentoId, TipoMovimento.Compra, dataEvento, tradeId, quantidade, valorFinanceiro);
+        string clienteId, string instrumentoId, string tradeId, DateOnly dataEvento, decimal quantidade, decimal valorFinanceiro,
+        DateTimeOffset? registradoEm = null) =>
+        InserirAsync(clienteId, instrumentoId, TipoMovimento.Compra, dataEvento, tradeId, quantidade, valorFinanceiro, registradoEm: registradoEm);
 
     private Task<Movimento> InserirVendaAsync(
         string clienteId, string instrumentoId, string tradeId, DateOnly dataEvento, decimal quantidade, decimal valorFinanceiro) =>
@@ -198,5 +199,29 @@ public sealed class ExecutarGuardasF5CommandHandlerIntegrationTests(Infrastructu
 
         var depoisDoPositivo = await ExecutarGuardasAsync();
         Assert.Equal(depoisDoControleNegativo.TributosDivergentesDoRederivado + 1, depoisDoPositivo.TributosDivergentesDoRederivado);
+    }
+
+    [Fact]
+    public async Task Guarda4_ComCompraRegistradaDepoisDoResgateNoMesmoDataEvento_NaoAcusaPoisARederivacaoRespeitaOCortePorRegistradoEm()
+    {
+        var antes = await ExecutarGuardasAsync();
+
+        var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
+
+        await InserirCompraAsync(clienteId, instrumentoId, "g4-corte-compra-antiga", new DateOnly(2024, 1, 1), 5m, 500m);
+        await InserirVendaAsync(clienteId, instrumentoId, "g4-corte-resgate", new DateOnly(2026, 6, 11), 10m, 1500m);
+        await InserirAsync(
+            clienteId, InstrumentosCaixa.ALiquidar, TipoMovimento.IrRetido, new DateOnly(2026, 6, 11), "ir:g4-corte-resgate",
+            -75.00m, 75.00m);
+        await InserirAsync(
+            clienteId, InstrumentosCaixa.ALiquidar, TipoMovimento.ALiquidar, new DateOnly(2026, 6, 11), "aliq:g4-corte-resgate",
+            1500m, 1500m);
+        await InserirCompraAsync(
+            clienteId, instrumentoId, "g4-corte-compra-mesmo-dia", new DateOnly(2026, 6, 11), 5m, 700m,
+            registradoEm: RegistradoEm.AddMinutes(1));
+
+        var depois = await ExecutarGuardasAsync();
+        Assert.Equal(antes.TributosDivergentesDoRederivado, depois.TributosDivergentesDoRederivado);
     }
 }

@@ -143,6 +143,48 @@ public sealed class FilaDeLotesTests
     }
 
     [Fact]
+    public void Reconstruir_ComCompraNoMesmoDataEventoDoCorteRegistradaDepoisDoInstanteDoCorte_LoteNaoEntraNaFila()
+    {
+        var dataEventoDoCorte = Dia(5);
+        var corte = new CortePosicional(dataEventoDoCorte, Instante(5));
+        var compraRegistradaDepoisDoCorte = MovimentoTestExtensions.MovimentoValido(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, dataEventoDoCorte, Instante(6), 10m, 1000m, "trade-1");
+
+        var fila = FilaDeLotes.Reconstruir([compraRegistradaDepoisDoCorte], corte);
+
+        Assert.Empty(fila);
+    }
+
+    [Fact]
+    public void Reconstruir_ComCompraNoMesmoDataEventoDoCorteRegistradaNoMesmoInstanteDoCorte_LoteEntraNaFilaPoisOEmpateContaComoDentro()
+    {
+        var dataEventoDoCorte = Dia(5);
+        var instanteDoCorte = Instante(5);
+        var corte = new CortePosicional(dataEventoDoCorte, instanteDoCorte);
+        var compraRegistradaNoInstanteExatoDoCorte = MovimentoTestExtensions.MovimentoValido(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, dataEventoDoCorte, instanteDoCorte, 10m, 1000m, "trade-1");
+
+        var fila = FilaDeLotes.Reconstruir([compraRegistradaNoInstanteExatoDoCorte], corte);
+
+        var lote = Assert.Single(fila);
+        Assert.Equal(10m, lote.Quantidade);
+    }
+
+    [Fact]
+    public void Reconstruir_ComCompraNoMesmoDataEventoDoCorteRegistradaAntesDoInstanteDoCorte_LoteEntraNaFila()
+    {
+        var dataEventoDoCorte = Dia(5);
+        var corte = new CortePosicional(dataEventoDoCorte, Instante(5));
+        var compraRegistradaAntesDoCorte = MovimentoTestExtensions.MovimentoValido(
+            1, ClienteId, InstrumentoId, TipoMovimento.Compra, dataEventoDoCorte, Instante(4), 10m, 1000m, "trade-1");
+
+        var fila = FilaDeLotes.Reconstruir([compraRegistradaAntesDoCorte], corte);
+
+        var lote = Assert.Single(fila);
+        Assert.Equal(10m, lote.Quantidade);
+    }
+
+    [Fact]
     public void ConsumirParaResgate_ComFilaSuficienteEmUmUnicoLote_ConsomeApenasOSolicitado()
     {
         var fila = new List<Lote> { new(10m, 100m, Dia(1)) };

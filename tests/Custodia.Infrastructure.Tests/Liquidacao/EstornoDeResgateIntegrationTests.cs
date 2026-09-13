@@ -196,6 +196,39 @@ public sealed class EstornoDeResgateIntegrationTests(InfrastructurePostgresFixtu
     }
 
     [Fact]
+    public async Task Handle_EstornoDeResgateComIofExistente_ReverteExplicitamenteOConjuntoEstIncluindoEstIof()
+    {
+        var clienteId = NovoClienteId();
+        var instrumentoId = NovoInstrumentoId();
+
+        var compraResultado = await EnviarAsync(CriarEventoDeCompra(clienteId, instrumentoId, "op-compra-com-iof", new DateOnly(2026, 1, 1), 10m, 1000m));
+        Assert.True(compraResultado.IsSuccess);
+
+        var tradeId = "op-resgate-com-iof";
+        var resgateResultado = await EnviarAsync(CriarEventoDeResgate(clienteId, instrumentoId, tradeId, new DateOnly(2026, 1, 10), 10m, 1200m));
+        Assert.True(resgateResultado.IsSuccess);
+
+        Assert.True(await ExisteMovimentoAsync(clienteId, $"ir:{tradeId}"));
+        Assert.True(await ExisteMovimentoAsync(clienteId, $"iof:{tradeId}"));
+
+        var estornoTradeId = "op-estorno-com-iof";
+        var estornoResultado = await EnviarAsync(
+            CriarEventoDeEstorno(clienteId, instrumentoId, estornoTradeId, tradeId, new DateOnly(2026, 1, 12), 10m, 1200m));
+        Assert.True(estornoResultado.IsSuccess);
+        Assert.Equal(ResultadoTradeRegisteredTipo.Escriturado, estornoResultado.Value.Tipo);
+
+        Assert.Equal(new PosicaoTresColunas(10m, 1000m, 100m), await ObterPosicaoAsync(clienteId, instrumentoId));
+        Assert.Equal(PosicaoTresColunas.Zero, await ObterPosicaoAsync(clienteId, InstrumentosCaixa.Brl));
+        Assert.Equal(PosicaoTresColunas.Zero, await ObterPosicaoAsync(clienteId, InstrumentosCaixa.ALiquidar));
+
+        Assert.True(await ExisteMovimentoAsync(clienteId, $"est:ir:{estornoTradeId}"));
+        Assert.True(await ExisteMovimentoAsync(clienteId, $"est:iof:{estornoTradeId}"));
+        Assert.True(await ExisteMovimentoAsync(clienteId, $"est:aliq:{estornoTradeId}"));
+
+        await AssertNenhumaLinhaDerivadaSemContrapartidaAsync(clienteId, tradeId);
+    }
+
+    [Fact]
     public async Task Handle_EstornoDeResgateComPrejuizo_SemIrNemIof_TrasTituloECaixaAZero()
     {
         var clienteId = NovoClienteId();
