@@ -127,6 +127,55 @@ public sealed class BusinessMetrics(ILogger<BusinessMetrics> logger) : IBusiness
         }
     }
 
+    private static readonly Counter RevisaoDePrecoRecebidaTotal = Metrics.CreateCounter(
+        "custodia_preco_revisao_recebida_total",
+        "Total de revisões de preço (revisao > 0) recebidas via push ou drenagem — raras por definição " +
+        "(ARQUITETURA §12); cada uma é uma correção de valor já publicado no histórico.",
+        new CounterConfiguration { LabelNames = ["instrumento_id", "campo"] });
+
+    private static readonly Counter ValorDivergenteNoHistoricoDePrecosTotal = Metrics.CreateCounter(
+        "custodia_preco_valor_divergente_total",
+        "Total de PriceObserved cuja chave natural (instrumento, data, campo, fonte, revisão) já existia no " +
+        "histórico com um valor DIFERENTE — violação do contrato do Hub (mudança de valor exige revisao+1). " +
+        "Nada é sobrescrito em nenhuma das duas tabelas.",
+        new CounterConfiguration { LabelNames = ["instrumento_id", "campo"] });
+
+    public void RegistrarRevisaoDePrecoRecebida(
+        string instrumentoId, string campo, DateOnly dataRef, int revisao, string fonte, decimal valorNovo, decimal? valorAnterior)
+    {
+        RevisaoDePrecoRecebidaTotal.WithLabels(instrumentoId, campo).Inc();
+
+        logger.LogWarning(
+            "Revisão de preço recebida: instrumento {InstrumentoId}, campo {Campo}, data {DataRef}, revisão " +
+            "{Revisao}, fonte {Fonte}, valor novo {ValorNovo}, valor anterior {ValorAnterior}. Correções são " +
+            "raras (ARQUITETURA §12) e merecem visibilidade.",
+            instrumentoId,
+            campo,
+            dataRef,
+            revisao,
+            fonte,
+            valorNovo,
+            valorAnterior);
+    }
+
+    public void RegistrarValorDivergenteNoHistoricoDePrecos(
+        string instrumentoId, string campo, DateOnly dataRef, string fonte, int revisao, decimal valorAnterior, decimal valorNovo)
+    {
+        ValorDivergenteNoHistoricoDePrecosTotal.WithLabels(instrumentoId, campo).Inc();
+
+        logger.LogCritical(
+            "Valor divergente no histórico de preços: instrumento {InstrumentoId}, campo {Campo}, data {DataRef}, " +
+            "fonte {Fonte}, revisão {Revisao}, valor já gravado {ValorAnterior}, valor recebido {ValorNovo}. " +
+            "Mudança de valor exige revisao+1 (contrato do Hub) — nada foi sobrescrito.",
+            instrumentoId,
+            campo,
+            dataRef,
+            fonte,
+            revisao,
+            valorAnterior,
+            valorNovo);
+    }
+
     public void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora)
     {
         LiquidacaoCandidataInconsistenteTotal.Inc();

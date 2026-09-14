@@ -80,6 +80,59 @@ public sealed class RoteadorDeEventosTests
         Assert.Equal(MotivoParking.TipoNaoTratadoPrices, desfecho.Motivo);
     }
 
+    private const string PayloadPriceObservedValido = """
+        {
+          "v": 1, "tipo": "PriceObserved",
+          "instrumentoId": "td:tesouro-ipca-2035-05-15",
+          "dataRef": "2026-08-01", "campo": "pu_venda",
+          "valor": "3496.412345", "fonte": "td-api",
+          "revisao": 0, "observadoEm": "2026-08-01T20:00:00Z"
+        }
+        """;
+
+    [Fact]
+    public void Rotear_PricesComPriceObservedValido_DevolveObservarComOEventoParseado()
+    {
+        var desfecho = _roteador.Rotear("prices.td", PayloadPriceObservedValido);
+
+        Assert.Equal(DesfechoRoteamentoTipo.Observar, desfecho.Tipo);
+        Assert.NotNull(desfecho.EventoPreco);
+        Assert.Equal("td:tesouro-ipca-2035-05-15", desfecho.EventoPreco!.InstrumentoId);
+    }
+
+    [Fact]
+    public void Rotear_PricesComPriceObservedComVersaoNaoSuportada_DevolveEstacionarComVersaoNaoSuportada()
+    {
+        var payload = PayloadPriceObservedValido.Replace("\"v\": 1,", "\"v\": 2,");
+
+        var desfecho = _roteador.Rotear("prices.td", payload);
+
+        Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
+        Assert.Equal(MotivoParking.VersaoNaoSuportada, desfecho.Motivo);
+    }
+
+    [Fact]
+    public void Rotear_PricesComPriceObservedInvalido_DevolveEstacionarComPayloadInvalido()
+    {
+        var payload = PayloadPriceObservedValido.Replace("\"campo\": \"pu_venda\",", string.Empty);
+
+        var desfecho = _roteador.Rotear("prices.td", payload);
+
+        Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
+        Assert.Equal(MotivoParking.PayloadInvalido, desfecho.Motivo);
+    }
+
+    [Fact]
+    public void Rotear_PricesComOutroTipoDeclarado_ContinuaTipoNaoTratadoPrices()
+    {
+        var payload = PayloadPriceObservedValido.Replace("\"tipo\": \"PriceObserved\",", "\"tipo\": \"CorporateActionObserved\",");
+
+        var desfecho = _roteador.Rotear("prices.td", payload);
+
+        Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
+        Assert.Equal(MotivoParking.TipoNaoTratadoPrices, desfecho.Motivo);
+    }
+
     [Fact]
     public void Rotear_Corpactions_DevolveEstacionarComTipoNaoTratadoCorpactions()
     {

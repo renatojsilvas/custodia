@@ -15,8 +15,28 @@ internal sealed record CalendarioExauridoNaLiquidacao(string ClienteId, string T
 
 internal sealed record CandidataInconsistenteNaLiquidacao(string ClienteId, string TradeId, string RefExternaOfensora);
 
+internal sealed record RevisaoDePrecoRecebida(
+    string InstrumentoId, string Campo, DateOnly DataRef, int Revisao, string Fonte, decimal ValorNovo, decimal? ValorAnterior);
+
+internal sealed record ValorDivergenteNoHistoricoDePrecos(
+    string InstrumentoId, string Campo, DateOnly DataRef, string Fonte, int Revisao, decimal ValorAnterior, decimal ValorNovo);
+
 internal sealed class FakeBusinessMetrics : IBusinessMetrics
 {
+    public List<RevisaoDePrecoRecebida> RevisoesDePrecoRecebidas { get; } = [];
+
+    public List<ValorDivergenteNoHistoricoDePrecos> ValoresDivergentesNoHistoricoDePrecos { get; } = [];
+
+    public void RegistrarRevisaoDePrecoRecebida(
+        string instrumentoId, string campo, DateOnly dataRef, int revisao, string fonte, decimal valorNovo, decimal? valorAnterior) =>
+        RevisoesDePrecoRecebidas.Add(
+            new RevisaoDePrecoRecebida(instrumentoId, campo, dataRef, revisao, fonte, valorNovo, valorAnterior));
+
+    public void RegistrarValorDivergenteNoHistoricoDePrecos(
+        string instrumentoId, string campo, DateOnly dataRef, string fonte, int revisao, decimal valorAnterior, decimal valorNovo) =>
+        ValoresDivergentesNoHistoricoDePrecos.Add(
+            new ValorDivergenteNoHistoricoDePrecos(instrumentoId, campo, dataRef, fonte, revisao, valorAnterior, valorNovo));
+
     public List<SinalizacaoDePosicaoNegativa> Sinalizacoes { get; } = [];
 
     public List<RegistroDeHorizonteCalendario> RegistrosDeHorizonteCalendario { get; } = [];

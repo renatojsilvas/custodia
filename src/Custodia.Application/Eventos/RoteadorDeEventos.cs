@@ -33,7 +33,7 @@ public sealed class RoteadorDeEventos
 
         if (routingKey.StartsWith(PrefixoPrices, StringComparison.Ordinal))
         {
-            return DesfechoRoteamento.Estacionar(MotivoParking.TipoNaoTratadoPrices);
+            return RotearPrices(corpo);
         }
 
         if (routingKey.StartsWith(PrefixoCorpactions, StringComparison.Ordinal))
@@ -54,6 +54,27 @@ public sealed class RoteadorDeEventos
         }
 
         var motivo = resultado.Error == TradeRegisteredErrors.VersaoNaoSuportada
+            ? MotivoParking.VersaoNaoSuportada
+            : MotivoParking.PayloadInvalido;
+
+        return DesfechoRoteamento.Estacionar(motivo);
+    }
+
+    private static DesfechoRoteamento RotearPrices(string corpo)
+    {
+        if (!EhJson(corpo) || !PriceObservedPayload.CorrespondeAoTipo(corpo))
+        {
+            return DesfechoRoteamento.Estacionar(MotivoParking.TipoNaoTratadoPrices);
+        }
+
+        var resultado = PriceObservedPayload.Deserializar(corpo);
+
+        if (resultado.IsSuccess)
+        {
+            return DesfechoRoteamento.Observar(resultado.Value);
+        }
+
+        var motivo = resultado.Error == PriceObservedErrors.VersaoNaoSuportada
             ? MotivoParking.VersaoNaoSuportada
             : MotivoParking.PayloadInvalido;
 

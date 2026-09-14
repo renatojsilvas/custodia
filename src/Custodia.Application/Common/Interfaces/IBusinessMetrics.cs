@@ -21,4 +21,10 @@ public interface IBusinessMetrics
     void RegistrarGuardaALiquidarVencidaSemLiquidacao(int quantidade);
 
     void RegistrarGuardaTributoDivergenteDoRederivado(int quantidade);
+
+    void RegistrarRevisaoDePrecoRecebida(
+        string instrumentoId, string campo, DateOnly dataRef, int revisao, string fonte, decimal valorNovo, decimal? valorAnterior);
+
+    void RegistrarValorDivergenteNoHistoricoDePrecos(
+        string instrumentoId, string campo, DateOnly dataRef, string fonte, int revisao, decimal valorAnterior, decimal valorNovo);
 }

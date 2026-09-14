@@ -6,6 +6,7 @@ using Custodia.Application.Conciliacao;
 using Custodia.Application.Liquidacao;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
+using Custodia.Application.Precos;
 using Custodia.Infrastructure.Reparo;
 using Custodia.Infrastructure.Common;
 using Custodia.Infrastructure.Conciliacao;
@@ -45,6 +46,7 @@ public static class DependencyInjection
         services.AddScoped<IMovimentoWriteRepository, MovimentoWriteRepository>();
         services.AddScoped<IPosicaoCorrenteReadRepository, PosicaoCorrenteReadRepository>();
         services.AddScoped<IPosicaoCorrenteWriteRepository, PosicaoCorrenteWriteRepository>();
+        services.AddScoped<IPrecoWriteRepository, PrecoWriteRepository>();
         services.AddScoped<IAplicadorIncrementalDePosicao, AplicadorIncrementalDePosicao>();
         services.AddScoped<ICalendarioDiasUteisReadRepository, CalendarioDiasUteisReadRepository>();
         services.AddScoped<IProximoDiaUtilService, ProximoDiaUtilService>();

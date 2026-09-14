@@ -1,6 +1,7 @@
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
+using Custodia.Application.Precos;
 using Custodia.Infrastructure.Observability;
 using Custodia.Infrastructure.Persistence;
 using Custodia.Infrastructure.Persistence.Repositories;
@@ -164,6 +165,7 @@ public sealed class DependencyInjectionTests
         Assert.IsType<MovimentoWriteRepository>(scope.ServiceProvider.GetRequiredService<IMovimentoWriteRepository>());
         Assert.IsType<PosicaoCorrenteReadRepository>(scope.ServiceProvider.GetRequiredService<IPosicaoCorrenteReadRepository>());
         Assert.IsType<PosicaoCorrenteWriteRepository>(scope.ServiceProvider.GetRequiredService<IPosicaoCorrenteWriteRepository>());
+        Assert.IsType<PrecoWriteRepository>(scope.ServiceProvider.GetRequiredService<IPrecoWriteRepository>());
     }
 
     [Fact]

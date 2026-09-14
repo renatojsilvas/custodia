@@ -35,6 +35,16 @@ internal sealed class FakeBusinessMetrics : IBusinessMetrics
     public void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora) =>
         CandidatasInconsistentes.Add(new CandidataInconsistenteRegistrada(clienteId, tradeId, refExternaOfensora));
 
+    public void RegistrarRevisaoDePrecoRecebida(
+        string instrumentoId, string campo, DateOnly dataRef, int revisao, string fonte, decimal valorNovo, decimal? valorAnterior)
+    {
+    }
+
+    public void RegistrarValorDivergenteNoHistoricoDePrecos(
+        string instrumentoId, string campo, DateOnly dataRef, string fonte, int revisao, decimal valorAnterior, decimal valorNovo)
+    {
+    }
+
     public List<int> GuardaResgatesSemAliq { get; } = [];
 
     public List<int> GuardaAjustesDeResgateSemReversao { get; } = [];
