@@ -176,6 +176,81 @@ public sealed class BusinessMetrics(ILogger<BusinessMetrics> logger) : IBusiness
             valorNovo);
     }
 
+    private static readonly Counter PrecoInstrumentoDesconhecidoTotal = Metrics.CreateCounter(
+        "custodia_preco_instrumento_desconhecido_total",
+        "Total de instrumentos do livro que o Hub de Preços não conhece ao consultar /v1/prices/asof " +
+        "(motivo instrumento_desconhecido) — nunca fabricamos preço para eles; alerta, porque é sinal de defeito " +
+        "de catálogo em algum dos dois lados.",
+        new CounterConfiguration { LabelNames = ["instrumento_id"] });
+
+    private static readonly Counter PrecoCampoPosicaoNaoInformadoTotal = Metrics.CreateCounter(
+        "custodia_preco_campo_posicao_nao_informado_total",
+        "Total de itens do /v1/prices/asof com campos de preço mas sem campoPosicao — defeito de classificação " +
+        "no Hub (PADROES §10.32); histórico gravado, preco_atual não tocado.",
+        new CounterConfiguration { LabelNames = ["instrumento_id"] });
+
+    private static readonly Counter PrecoInstrumentoPosicionadoSemPrecoTotal = Metrics.CreateCounter(
+        "custodia_preco_instrumento_posicionado_sem_preco_total",
+        "Total de instrumentos posicionados sem preço encontrado na consulta ao Hub, rotulado por motivo: " +
+        "sem_preco_ate_a_data (a fonte não tem preço até a data) ou campo_posicao_sem_preco (campoPosicao " +
+        "informado mas ausente entre os campos devolvidos) — rótulos nunca fundidos.",
+        new CounterConfiguration { LabelNames = ["instrumento_id", "motivo"] });
+
+    private static readonly Gauge ConciliacaoDePrecosSemPrecoAtualGauge = Metrics.CreateGauge(
+        "custodia_conciliacao_precos_sem_preco_atual",
+        "Quantidade de instrumentos do livro (fora de caixa:) sem linha em preco_atual, medida na última volta " +
+        "da conciliação cíclica de preços. Mantém viva a métrica de posicionado sem preço em regime.");
+
+    private static readonly Counter ConciliacaoDePrecosVoltaTotal = Metrics.CreateCounter(
+        "custodia_conciliacao_precos_volta_total",
+        "Total de voltas da conciliação cíclica de preços, rotulado por desfecho (completude ou falha).",
+        new CounterConfiguration { LabelNames = ["desfecho"] });
+
+    public void RegistrarPrecoInstrumentoDesconhecido(string instrumentoId)
+    {
+        PrecoInstrumentoDesconhecidoTotal.WithLabels(instrumentoId).Inc();
+
+        logger.LogError(
+            "Instrumento {InstrumentoId} do livro é desconhecido no Hub de Preços ao consultar /v1/prices/asof. " +
+            "Investigue catálogo/onboarding.",
+            instrumentoId);
+    }
+
+    public void RegistrarPrecoCampoPosicaoNaoInformado(string instrumentoId)
+    {
+        PrecoCampoPosicaoNaoInformadoTotal.WithLabels(instrumentoId).Inc();
+
+        logger.LogError(
+            "Instrumento {InstrumentoId} veio do Hub de Preços com campos mas sem campoPosicao. Defeito de " +
+            "classificação no Hub — histórico gravado, preco_atual não tocado.",
+            instrumentoId);
+    }
+
+    public void RegistrarPrecoInstrumentoPosicionadoSemPreco(string instrumentoId, string motivo)
+    {
+        PrecoInstrumentoPosicionadoSemPrecoTotal.WithLabels(instrumentoId, motivo).Inc();
+
+        logger.LogWarning(
+            "Instrumento {InstrumentoId} posicionado sem preço encontrado ({Motivo}).",
+            instrumentoId,
+            motivo);
+    }
+
+    public void RegistrarConciliacaoDePrecosSemPrecoAtual(int quantidade)
+    {
+        ConciliacaoDePrecosSemPrecoAtualGauge.Set(quantidade);
+
+        if (quantidade > 0)
+        {
+            logger.LogWarning(
+                "Conciliação de preços: {Quantidade} instrumento(s) do livro ainda sem preco_atual.",
+                quantidade);
+        }
+    }
+
+    public void RegistrarConciliacaoDePrecosVolta(string desfecho) =>
+        ConciliacaoDePrecosVoltaTotal.WithLabels(desfecho).Inc();
+
     public void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora)
     {
         LiquidacaoCandidataInconsistenteTotal.Inc();

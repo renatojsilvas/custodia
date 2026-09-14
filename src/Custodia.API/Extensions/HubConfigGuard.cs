@@ -24,10 +24,9 @@ public static class HubConfigGuard
                 $"Configuração inválida: '{BaseUrlKey}' ('{trimmedBaseUrl}') não é uma URL http(s) " +
                 $"absoluta válida em ambiente '{environmentName}'. Configure via variável de ambiente " +
                 "Hub__BaseUrl (Docker/produção) ou dotnet user-secrets set \"Hub:BaseUrl\" \"<url>\" " +
-                "--project src/Custodia.API (dev local). Sem isto, o bootstrap REST da projeção de " +
-                "preços (GET {Hub:BaseUrl}/v1/prices/asof, que popula preco_atual e historico_precos " +
-                "quando a projeção está vazia ou atrasada) e o asof do worker de recálculo do F7 nunca " +
-                "conseguem falar com o Hub.");
+                "--project src/Custodia.API (dev local). Sem isto, o verbo `--bootstrap-precos` e a " +
+                "conciliação cíclica (GET {Hub:BaseUrl}/v1/prices/asof, que preenchem preco_atual e " +
+                "historico_precos) e o asof do worker de recálculo do F7 nunca conseguem falar com o Hub.");
         }
 
         var trimmedApiKey = apiKey?.Trim() ?? string.Empty;
@@ -44,10 +43,10 @@ public static class HubConfigGuard
         Validate(environment.EnvironmentName, configuration[BaseUrlKey], configuration[ApiKeyKey]);
 
     private const string ApiKeyHint =
-        "É a chave que A CUSTÓDIA ENVIA ao Hub (X-Api-Key) no bootstrap REST da projeção de preços e " +
-        "no asof do worker de recálculo do F7 — diferente de ApiKey:Key, que é a chave que a Custódia " +
-        "EXIGE de quem a chama. Configure via variável de ambiente Hub__ApiKey (Docker/produção) ou " +
-        "dotnet user-secrets set \"Hub:ApiKey\" \"<chave>\" --project src/Custodia.API (dev local). Sem " +
-        "isto, o bootstrap REST recebe 401/403 do Hub e a projeção de preços fica sem dado onde o " +
-        "evento prices.* ainda não chegou.";
+        "É a chave que A CUSTÓDIA ENVIA ao Hub (X-Api-Key) no verbo `--bootstrap-precos`, na " +
+        "conciliação cíclica e no asof do worker de recálculo do F7 — diferente de ApiKey:Key, que é a " +
+        "chave que a Custódia EXIGE de quem a chama. Configure via variável de ambiente Hub__ApiKey " +
+        "(Docker/produção) ou dotnet user-secrets set \"Hub:ApiKey\" \"<chave>\" --project " +
+        "src/Custodia.API (dev local). Sem isto, essas chamadas recebem 401/403 do Hub e a projeção de " +
+        "preços fica sem dado onde o evento prices.* ainda não chegou.";
 }

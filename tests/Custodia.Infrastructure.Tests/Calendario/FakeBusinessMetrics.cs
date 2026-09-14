@@ -45,6 +45,26 @@ internal sealed class FakeBusinessMetrics : IBusinessMetrics
     {
     }
 
+    public void RegistrarPrecoInstrumentoDesconhecido(string instrumentoId)
+    {
+    }
+
+    public void RegistrarPrecoCampoPosicaoNaoInformado(string instrumentoId)
+    {
+    }
+
+    public void RegistrarPrecoInstrumentoPosicionadoSemPreco(string instrumentoId, string motivo)
+    {
+    }
+
+    public List<int> ConciliacaoDePrecosSemPrecoAtual { get; } = [];
+
+    public List<string> ConciliacaoDePrecosVoltas { get; } = [];
+
+    public void RegistrarConciliacaoDePrecosSemPrecoAtual(int quantidade) => ConciliacaoDePrecosSemPrecoAtual.Add(quantidade);
+
+    public void RegistrarConciliacaoDePrecosVolta(string desfecho) => ConciliacaoDePrecosVoltas.Add(desfecho);
+
     public List<int> GuardaResgatesSemAliq { get; } = [];
 
     public List<int> GuardaAjustesDeResgateSemReversao { get; } = [];

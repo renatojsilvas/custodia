@@ -18,9 +18,10 @@ services:
       - RabbitMq__Host=plataforma-rabbitmq
       - RabbitMq__User=${RABBITMQ_USER:?RABBITMQ_USER e obrigatorio (usuario do broker plataforma-rabbitmq, provisionado pelo hub-precos)}
       - RabbitMq__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD e obrigatorio (senha do broker plataforma-rabbitmq)}
-      # F6: bootstrap REST da projecao de precos (ARQUITETURA §7.1: popula preco_atual e
-      # historico_precos via GET {Hub__BaseUrl}/v1/prices/asof quando a projecao esta
-      # vazia ou atrasada) e o `asof` do worker de recalculo (§7.4). NAO cobre resolucao
+      # F6: quem preenche preco_atual e historico_precos (ARQUITETURA §7.1) via
+      # GET {Hub__BaseUrl}/v1/prices/asof e o verbo `--bootstrap-precos` e a
+      # conciliacao ciclica — nao este servico web sozinho; o `asof` tambem alimenta o
+      # worker de recalculo do F7. NAO cobre resolucao
       # nome->id do onboarding (§7.2): essa acontece em Operacoes, na borda
       # (ADR-10/ADR-11) — a Custodia so recebe instrumento_id ja resolvido, cru, no
       # evento trades.registered; a Custodia nao tem endpoint de escrita (ADR-10), entao

@@ -27,4 +27,14 @@ public interface IBusinessMetrics
 
     void RegistrarValorDivergenteNoHistoricoDePrecos(
         string instrumentoId, string campo, DateOnly dataRef, string fonte, int revisao, decimal valorAnterior, decimal valorNovo);
+
+    void RegistrarPrecoInstrumentoDesconhecido(string instrumentoId);
+
+    void RegistrarPrecoCampoPosicaoNaoInformado(string instrumentoId);
+
+    void RegistrarPrecoInstrumentoPosicionadoSemPreco(string instrumentoId, string motivo);
+
+    void RegistrarConciliacaoDePrecosSemPrecoAtual(int quantidade);
+
+    void RegistrarConciliacaoDePrecosVolta(string desfecho);
 }
