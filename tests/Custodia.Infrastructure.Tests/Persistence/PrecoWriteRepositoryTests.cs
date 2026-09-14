@@ -1,3 +1,4 @@
+using System.Data;
 using Custodia.Application.Precos;
 using Custodia.Infrastructure.Persistence.Repositories;
 using Dapper;
@@ -8,6 +9,36 @@ namespace Custodia.Infrastructure.Tests.Persistence;
 [Collection("infra-postgres")]
 public sealed class PrecoWriteRepositoryTests(InfrastructurePostgresFixture fixture)
 {
+    static PrecoWriteRepositoryTests()
+    {
+        DefaultTypeMap.MatchNamesWithUnderscores = true;
+        SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
+        SqlMapper.AddTypeHandler(new DateTimeOffsetTypeHandler());
+    }
+
+    private sealed class DateOnlyTypeHandler : SqlMapper.TypeHandler<DateOnly>
+    {
+        public override DateOnly Parse(object value) => DateOnly.FromDateTime((DateTime)value);
+
+        public override void SetValue(IDbDataParameter parameter, DateOnly value)
+        {
+            parameter.DbType = DbType.Date;
+            parameter.Value = value.ToDateTime(TimeOnly.MinValue);
+        }
+    }
+
+    private sealed class DateTimeOffsetTypeHandler : SqlMapper.TypeHandler<DateTimeOffset>
+    {
+        public override DateTimeOffset Parse(object value) =>
+            new(DateTime.SpecifyKind((DateTime)value, DateTimeKind.Utc));
+
+        public override void SetValue(IDbDataParameter parameter, DateTimeOffset value)
+        {
+            parameter.DbType = DbType.DateTime;
+            parameter.Value = value.UtcDateTime;
+        }
+    }
+
     private const string Fonte = "td-api";
 
     private static string NovoInstrumentoId() => $"td:preco-repo-{Guid.NewGuid():N}";

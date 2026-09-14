@@ -191,6 +191,11 @@ public sealed class HubPrecosClient(HttpClient httpClient, ILogger<HubPrecosClie
             var camposConvertidos = new Dictionary<string, PrecoAsOfCampo>();
             foreach (var (campo, campoBruto) in bruto.Campos)
             {
+                if (string.IsNullOrWhiteSpace(campo) || campo.Trim() != campo)
+                {
+                    return HubPrecosErrors.HubRespostaInvalida;
+                }
+
                 var campoResult = ParaCampo(campoBruto);
                 if (campoResult.IsFailure)
                 {
@@ -220,12 +225,13 @@ public sealed class HubPrecosClient(HttpClient httpClient, ILogger<HubPrecosClie
 
         if (!decimal.TryParse(
                 campoBruto.Valor, NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingSign,
-                CultureInfo.InvariantCulture, out var valor))
+                CultureInfo.InvariantCulture, out var valor)
+            || SchemaNumericLimits.ExcedePrecisaoDePreco(valor))
         {
             return HubPrecosErrors.HubRespostaInvalida;
         }
 
-        if (string.IsNullOrWhiteSpace(campoBruto.Fonte))
+        if (string.IsNullOrWhiteSpace(campoBruto.Fonte) || campoBruto.Fonte.Trim() != campoBruto.Fonte)
         {
             return HubPrecosErrors.HubRespostaInvalida;
         }

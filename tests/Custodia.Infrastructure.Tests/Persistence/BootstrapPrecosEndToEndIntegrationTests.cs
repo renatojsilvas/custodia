@@ -123,6 +123,9 @@ public sealed class BootstrapPrecosEndToEndIntegrationTests(InfrastructurePostgr
         var instrumentoB = NovoInstrumentoId("fora-do-livro");
         var instrumentoC = NovoInstrumentoId("data-ref-fora-da-janela");
 
+        var desdeDaJanela = hoje.AddDays(-5);
+        var ateDaJanela = hoje;
+
         await InserirMovimentoAsync(clienteId, instrumentoA, hoje.AddDays(-5));
         await InserirMovimentoAsync(clienteId, instrumentoC, hoje.AddDays(-5));
 
@@ -150,8 +153,13 @@ public sealed class BootstrapPrecosEndToEndIntegrationTests(InfrastructurePostgr
 
         var handlerBootstrapInicial = CriarHandler(fakeHub);
         var resultadoInicial = await handlerBootstrapInicial.Handle(
-            new ColetarPrecosDoHubCommand(EscopoDeColetaDePrecos.LivroInteiroNaJanela, null, null), CancellationToken.None);
-        Assert.True(resultadoInicial.IsSuccess);
+            new ColetarPrecosDoHubCommand(EscopoDeColetaDePrecos.LivroInteiroNaJanela, desdeDaJanela, ateDaJanela),
+            CancellationToken.None);
+        Assert.True(
+            resultadoInicial.IsSuccess,
+            resultadoInicial.IsFailure
+                ? $"{resultadoInicial.Error.Code}: {resultadoInicial.Error.Description}"
+                : string.Empty);
 
         var instrumentosDoLivro = new[] { instrumentoA, instrumentoC };
         var instrumentosTodos = new[] { instrumentoA, instrumentoB, instrumentoC };
@@ -180,8 +188,13 @@ public sealed class BootstrapPrecosEndToEndIntegrationTests(InfrastructurePostgr
 
         var handlerBootstrapFinal = CriarHandler(fakeHub);
         var resultadoFinal = await handlerBootstrapFinal.Handle(
-            new ColetarPrecosDoHubCommand(EscopoDeColetaDePrecos.LivroInteiroNaJanela, null, null), CancellationToken.None);
-        Assert.True(resultadoFinal.IsSuccess);
+            new ColetarPrecosDoHubCommand(EscopoDeColetaDePrecos.LivroInteiroNaJanela, desdeDaJanela, ateDaJanela),
+            CancellationToken.None);
+        Assert.True(
+            resultadoFinal.IsSuccess,
+            resultadoFinal.IsFailure
+                ? $"{resultadoFinal.Error.Code}: {resultadoFinal.Error.Description}"
+                : string.Empty);
 
         var historicoDepois = await LerHistoricoAsync(instrumentosTodos);
         var precoAtualDepois = await LerPrecoAtualAsync(instrumentosTodos);

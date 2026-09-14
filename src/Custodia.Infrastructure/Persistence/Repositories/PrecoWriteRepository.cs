@@ -1,21 +1,13 @@
 using Custodia.Application.Precos;
 using Custodia.Domain.Common;
-using Dapper;
+using Custodia.Domain.Precos;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 
 namespace Custodia.Infrastructure.Persistence.Repositories;
 
 public sealed class PrecoWriteRepository(AppDbContext dbContext) : IPrecoWriteRepository
 {
-    static PrecoWriteRepository()
-    {
-        DapperTypeHandlers.Register();
-    }
-
-    private sealed record LinhaCampoAnterior(string? CampoAnterior);
-
     public async Task<Result<ResultadoHistorico>> RegistrarHistoricoAsync(ObservacaoDePreco observacao, CancellationToken ct)
     {
         await dbContext.ObterOuAbrirTransacaoAsync(ct);
@@ -100,28 +92,22 @@ public sealed class PrecoWriteRepository(AppDbContext dbContext) : IPrecoWriteRe
     public async Task<Result<ValorRevisaoAnteriorConsulta>> ObterValorRevisaoAnteriorAsync(
         ObservacaoDePreco observacao, CancellationToken ct)
     {
-        var transacao = await dbContext.ObterOuAbrirTransacaoAsync(ct);
-        var conexao = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+        await dbContext.ObterOuAbrirTransacaoAsync(ct);
 
-        var valor = await conexao.QuerySingleOrDefaultAsync<decimal?>(new CommandDefinition(
-            """
-            SELECT valor FROM historico_precos
-            WHERE instrumento_id = @InstrumentoId AND data_ref = @DataRef AND campo = @Campo
-              AND fonte = @Fonte AND revisao = @RevisaoAnterior
-            """,
-            new
-            {
-                observacao.InstrumentoId,
-                observacao.DataRef,
-                observacao.Campo,
-                observacao.Fonte,
-                RevisaoAnterior = observacao.Revisao - 1,
-            },
-            transacao.GetDbTransaction(),
-            cancellationToken: ct));
+        var linhas = await dbContext.HistoricoPrecos
+            .FromSqlInterpolated(
+                $"""
+                SELECT * FROM historico_precos
+                WHERE instrumento_id = {observacao.InstrumentoId} AND data_ref = {observacao.DataRef} AND campo = {observacao.Campo}
+                  AND fonte = {observacao.Fonte} AND revisao = {observacao.Revisao - 1}
+                """)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var linha = linhas.SingleOrDefault();
 
         return Result<ValorRevisaoAnteriorConsulta>.Success(
-            valor.HasValue ? ValorRevisaoAnteriorConsulta.De(valor.Value) : ValorRevisaoAnteriorConsulta.Inexistente);
+            linha is null ? ValorRevisaoAnteriorConsulta.Inexistente : ValorRevisaoAnteriorConsulta.De(linha.Valor));
     }
 
     public async Task<Result<ResultadoRegistroBootstrap>> RegistrarBootstrapAsync(
@@ -141,30 +127,28 @@ public sealed class PrecoWriteRepository(AppDbContext dbContext) : IPrecoWriteRe
 
         try
         {
-            var transacao = await dbContext.ObterOuAbrirTransacaoAsync(ct);
-            var conexao = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+            await dbContext.ObterOuAbrirTransacaoAsync(ct);
 
-            var linha = await conexao.QuerySingleOrDefaultAsync<LinhaCampoAnterior>(new CommandDefinition(
-                """
-                WITH antes AS (
-                    SELECT campo FROM preco_atual WHERE instrumento_id = @InstrumentoId
-                )
-                INSERT INTO preco_atual (instrumento_id, data_ref, campo, valor, revisao)
-                VALUES (@InstrumentoId, @DataRef, @Campo, @Valor, @Revisao)
-                ON CONFLICT (instrumento_id) DO UPDATE SET
-                    data_ref = EXCLUDED.data_ref,
-                    campo = EXCLUDED.campo,
-                    valor = EXCLUDED.valor,
-                    revisao = EXCLUDED.revisao
-                WHERE preco_atual.campo <> EXCLUDED.campo
-                   OR (EXCLUDED.data_ref, EXCLUDED.revisao) >= (preco_atual.data_ref, preco_atual.revisao)
-                RETURNING (SELECT campo FROM antes) AS "CampoAnterior"
-                """,
-                observacao,
-                transacao.GetDbTransaction(),
-                cancellationToken: ct));
+            var linhas = await dbContext.Database
+                .SqlQuery<string?>(
+                    $"""
+                    WITH antes AS (
+                        SELECT campo FROM preco_atual WHERE instrumento_id = {observacao.InstrumentoId}
+                    )
+                    INSERT INTO preco_atual (instrumento_id, data_ref, campo, valor, revisao)
+                    VALUES ({observacao.InstrumentoId}, {observacao.DataRef}, {observacao.Campo}, {observacao.Valor}, {observacao.Revisao})
+                    ON CONFLICT (instrumento_id) DO UPDATE SET
+                        data_ref = EXCLUDED.data_ref,
+                        campo = EXCLUDED.campo,
+                        valor = EXCLUDED.valor,
+                        revisao = EXCLUDED.revisao
+                    WHERE preco_atual.campo <> EXCLUDED.campo
+                       OR (EXCLUDED.data_ref, EXCLUDED.revisao) >= (preco_atual.data_ref, preco_atual.revisao)
+                    RETURNING (SELECT campo FROM antes) AS "CampoAnterior"
+                    """)
+                .ToListAsync(ct);
 
-            var precoAtual = ClassificarResultadoDeBootstrap(linha, observacao.Campo);
+            var precoAtual = ClassificarResultadoDeBootstrap(linhas, observacao.Campo);
 
             return Result<ResultadoRegistroBootstrap>.Success(
                 new ResultadoRegistroBootstrap(historicoResult.Value, precoAtual));
@@ -183,54 +167,53 @@ public sealed class PrecoWriteRepository(AppDbContext dbContext) : IPrecoWriteRe
         }
     }
 
-    private static ResultadoBootstrapPrecoAtual ClassificarResultadoDeBootstrap(LinhaCampoAnterior? linha, string campoNovo)
+    private static ResultadoBootstrapPrecoAtual ClassificarResultadoDeBootstrap(IReadOnlyList<string?> linhas, string campoNovo)
     {
-        if (linha is null)
+        if (linhas.Count == 0)
         {
             return ResultadoBootstrapPrecoAtual.IgnoradoMaisAntigo();
         }
 
-        if (linha.CampoAnterior is null)
+        var campoAnterior = linhas.Single();
+
+        if (campoAnterior is null)
         {
             return ResultadoBootstrapPrecoAtual.Criado();
         }
 
-        return linha.CampoAnterior == campoNovo
-            ? ResultadoBootstrapPrecoAtual.AtualizadoMesmoCampo(linha.CampoAnterior)
-            : ResultadoBootstrapPrecoAtual.CampoTrocado(linha.CampoAnterior);
+        return campoAnterior == campoNovo
+            ? ResultadoBootstrapPrecoAtual.AtualizadoMesmoCampo(campoAnterior)
+            : ResultadoBootstrapPrecoAtual.CampoTrocado(campoAnterior);
     }
 
     private async Task<decimal> ObterValorHistoricoAsync(ObservacaoDePreco observacao, CancellationToken ct)
     {
-        var transacao = await dbContext.ObterOuAbrirTransacaoAsync(ct);
-        var conexao = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+        await dbContext.ObterOuAbrirTransacaoAsync(ct);
 
-        return await conexao.QuerySingleAsync<decimal>(new CommandDefinition(
-            """
-            SELECT valor FROM historico_precos
-            WHERE instrumento_id = @InstrumentoId AND data_ref = @DataRef AND campo = @Campo
-              AND fonte = @Fonte AND revisao = @Revisao
-            """,
-            observacao,
-            transacao.GetDbTransaction(),
-            cancellationToken: ct));
+        var linhas = await dbContext.HistoricoPrecos
+            .FromSqlInterpolated(
+                $"""
+                SELECT * FROM historico_precos
+                WHERE instrumento_id = {observacao.InstrumentoId} AND data_ref = {observacao.DataRef} AND campo = {observacao.Campo}
+                  AND fonte = {observacao.Fonte} AND revisao = {observacao.Revisao}
+                """)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        return linhas.Single().Valor;
     }
 
     private async Task<MotivoPrecoAtualNaoAtualizado> DiagnosticarNaoAtualizacaoAsync(
         ObservacaoDePreco observacao, CancellationToken ct)
     {
-        var transacao = await dbContext.ObterOuAbrirTransacaoAsync(ct);
-        var conexao = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+        await dbContext.ObterOuAbrirTransacaoAsync(ct);
 
-        var linha = await conexao.QuerySingleOrDefaultAsync<LinhaDiagnostico>(new CommandDefinition(
-            """
-            SELECT campo AS "Campo", data_ref AS "DataRef", revisao AS "Revisao"
-            FROM preco_atual
-            WHERE instrumento_id = @InstrumentoId
-            """,
-            new { observacao.InstrumentoId },
-            transacao.GetDbTransaction(),
-            cancellationToken: ct));
+        var linhas = await dbContext.PrecosAtuais
+            .FromSqlInterpolated($"SELECT * FROM preco_atual WHERE instrumento_id = {observacao.InstrumentoId}")
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var linha = linhas.SingleOrDefault();
 
         if (linha is null)
         {
@@ -241,6 +224,4 @@ public sealed class PrecoWriteRepository(AppDbContext dbContext) : IPrecoWriteRe
             ? MotivoPrecoAtualNaoAtualizado.CampoDiferenteDoGravado
             : MotivoPrecoAtualNaoAtualizado.MaisVelhoQueArmazenado;
     }
-
-    private sealed record LinhaDiagnostico(string Campo, DateOnly DataRef, int Revisao);
 }

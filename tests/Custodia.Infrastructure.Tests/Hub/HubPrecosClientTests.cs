@@ -250,6 +250,60 @@ public sealed class HubPrecosClientTests
             new[] { HubPrecosErrors.HubIndisponivel, HubPrecosErrors.HubRespostaInvalida });
     }
 
+    [Theory]
+    [InlineData(" pu_venda")]
+    [InlineData("pu_venda ")]
+    [InlineData("\tpu_venda")]
+    [InlineData("   ")]
+    public async Task ObterFatiaAsync_ComChaveDeCampoComEspacoNaBordaOuSoEspaco_DevolveRespostaInvalida(string campo)
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029", campoPosicao: "pu_venda", campo: campo)}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(HubPrecosErrors.HubRespostaInvalida, resultado.Error);
+    }
+
+    [Theory]
+    [InlineData(" td")]
+    [InlineData("td ")]
+    [InlineData("\ttd")]
+    [InlineData("   ")]
+    public async Task ObterFatiaAsync_ComFonteComEspacoNaBordaOuSoEspaco_DevolveRespostaInvalida(string fonte)
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029", fonte: fonte)}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(HubPrecosErrors.HubRespostaInvalida, resultado.Error);
+    }
+
+    [Fact]
+    public async Task ObterFatiaAsync_ComCampoEFonteSemEspacoNaBorda_ControlePositivo_DevolveSucesso()
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029", campoPosicao: "pu_venda", campo: "pu_venda", fonte: "td")}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        var item = Assert.Single(resultado.Value);
+        Assert.Equal("td", item.Campos!["pu_venda"].Fonte);
+    }
+
     [Fact]
     public async Task ObterFatiaAsync_ComValorIlegivel_DevolveRespostaInvalida()
     {
@@ -317,6 +371,68 @@ public sealed class HubPrecosClientTests
 
         Assert.True(resultado.IsFailure);
         Assert.Equal(HubPrecosErrors.HubRespostaInvalida, resultado.Error);
+    }
+
+    [Fact]
+    public async Task ObterFatiaAsync_ComValorDeMagnitudeAcimaDaSuportada_DevolveRespostaInvalida()
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029", valor: "1000000000000.000000")}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(HubPrecosErrors.HubRespostaInvalida, resultado.Error);
+    }
+
+    [Fact]
+    public async Task ObterFatiaAsync_ComValorNoLimiteSuperiorDeMagnitudeSuportado_ControlePositivo_DevolveSucesso()
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029", valor: "999999999999.999999")}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        var item = Assert.Single(resultado.Value);
+        Assert.Equal(999999999999.999999m, item.Campos!["pu_venda"].Valor);
+    }
+
+    [Fact]
+    public async Task ObterFatiaAsync_ComValorDeEscalaAcimaDaSuportada_DevolveRespostaInvalida()
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029", valor: "105.1234567")}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(HubPrecosErrors.HubRespostaInvalida, resultado.Error);
+    }
+
+    [Fact]
+    public async Task ObterFatiaAsync_ComValorNaEscalaSuportada_ControlePositivo_DevolveSucesso()
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029", valor: "105.123456")}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        var item = Assert.Single(resultado.Value);
+        Assert.Equal(105.123456m, item.Campos!["pu_venda"].Valor);
     }
 
     [Fact]

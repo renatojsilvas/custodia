@@ -58,12 +58,17 @@ public static class PriceObservedPayload
             return PriceObservedErrors.PayloadInvalido;
         }
 
+        if (TemEspacoNaBorda(instrumentoId) || TemEspacoNaBorda(campo) || TemEspacoNaBorda(fonte))
+        {
+            return PriceObservedErrors.IdentificadorComEspacoNaBorda;
+        }
+
         if (instrumentoId.StartsWith(InstrumentosCaixa.Prefixo, StringComparison.OrdinalIgnoreCase))
         {
             return PriceObservedErrors.PayloadInvalido;
         }
 
-        if (!DecimalContrato.TryParse(valorBruto, out var valor) || ExcedePrecisaoSuportada(valor))
+        if (!DecimalContrato.TryParse(valorBruto, out var valor) || SchemaNumericLimits.ExcedePrecisaoDePreco(valor))
         {
             return PriceObservedErrors.PayloadInvalido;
         }
@@ -86,9 +91,7 @@ public static class PriceObservedPayload
         return new PriceObservedEvento(instrumentoId, dataRef, campo, valor, fonte, revisao, observadoEm);
     }
 
-    private static bool ExcedePrecisaoSuportada(decimal valor) =>
-        Math.Abs(valor) >= SchemaNumericLimits.PrecoLimiteSuperiorExclusivo
-        || decimal.Round(valor, SchemaNumericLimits.PrecoEscala) != valor;
+    private static bool TemEspacoNaBorda(string valor) => valor.Trim() != valor;
 
     private static bool TentaExtrairInteiro(JsonElement raiz, string nome, out int valor)
     {
@@ -109,7 +112,7 @@ public static class PriceObservedPayload
             && propriedade.ValueKind == JsonValueKind.String)
         {
             var texto = propriedade.GetString();
-            if (!string.IsNullOrEmpty(texto))
+            if (!string.IsNullOrWhiteSpace(texto))
             {
                 valor = texto;
                 return true;

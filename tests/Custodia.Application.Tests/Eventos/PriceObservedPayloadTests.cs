@@ -108,6 +108,111 @@ public sealed class PriceObservedPayloadTests
         Assert.Equal(PriceObservedErrors.PayloadInvalido, resultado.Error);
     }
 
+    [Theory]
+    [InlineData("caixa:BRL")]
+    [InlineData("CAIXA:BRL")]
+    [InlineData("Caixa:a_liquidar")]
+    public void Deserializar_InstrumentoNoNamespaceCaixaEmQualquerCaixa_DevolvePayloadInvalido(string instrumentoId)
+    {
+        var payload = PayloadValido.Replace(
+            "\"instrumentoId\": \"td:tesouro-ipca-2035-05-15\",", $"\"instrumentoId\": \"{instrumentoId}\",");
+
+        var resultado = PriceObservedPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(PriceObservedErrors.PayloadInvalido, resultado.Error);
+    }
+
+    [Theory]
+    [InlineData(" caixa:BRL")]
+    [InlineData("caixa:BRL ")]
+    [InlineData("\\tcaixa:BRL")]
+    [InlineData(" td:x")]
+    [InlineData("td:x\\t")]
+    public void Deserializar_InstrumentoIdComEspacoNaBorda_DevolveIdentificadorComEspacoNaBorda(string instrumentoId)
+    {
+        var payload = PayloadValido.Replace(
+            "\"instrumentoId\": \"td:tesouro-ipca-2035-05-15\",", $"\"instrumentoId\": \"{instrumentoId}\",");
+
+        var resultado = PriceObservedPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(PriceObservedErrors.IdentificadorComEspacoNaBorda, resultado.Error);
+    }
+
+    [Theory]
+    [InlineData(" pu_venda")]
+    [InlineData("pu_venda ")]
+    [InlineData("pu_venda\\t")]
+    public void Deserializar_CampoComEspacoNaBorda_DevolveIdentificadorComEspacoNaBorda(string campo)
+    {
+        var payload = PayloadValido.Replace("\"campo\": \"pu_venda\",", $"\"campo\": \"{campo}\",");
+
+        var resultado = PriceObservedPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(PriceObservedErrors.IdentificadorComEspacoNaBorda, resultado.Error);
+    }
+
+    [Theory]
+    [InlineData(" td-api")]
+    [InlineData("td-api ")]
+    [InlineData("td-api\\t")]
+    public void Deserializar_FonteComEspacoNaBorda_DevolveIdentificadorComEspacoNaBorda(string fonte)
+    {
+        var payload = PayloadValido.Replace("\"fonte\": \"td-api\",", $"\"fonte\": \"{fonte}\",");
+
+        var resultado = PriceObservedPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(PriceObservedErrors.IdentificadorComEspacoNaBorda, resultado.Error);
+    }
+
+    [Fact]
+    public void Deserializar_InstrumentoIdSoEspacoEmBranco_DevolvePayloadInvalido()
+    {
+        var payload = PayloadValido.Replace(
+            "\"instrumentoId\": \"td:tesouro-ipca-2035-05-15\",", "\"instrumentoId\": \"   \",");
+
+        var resultado = PriceObservedPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(PriceObservedErrors.PayloadInvalido, resultado.Error);
+    }
+
+    [Fact]
+    public void Deserializar_CampoSoEspacoEmBranco_DevolvePayloadInvalido()
+    {
+        var payload = PayloadValido.Replace("\"campo\": \"pu_venda\",", "\"campo\": \"   \",");
+
+        var resultado = PriceObservedPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(PriceObservedErrors.PayloadInvalido, resultado.Error);
+    }
+
+    [Fact]
+    public void Deserializar_FonteSoEspacoEmBranco_DevolvePayloadInvalido()
+    {
+        var payload = PayloadValido.Replace("\"fonte\": \"td-api\",", "\"fonte\": \"   \",");
+
+        var resultado = PriceObservedPayload.Deserializar(payload);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(PriceObservedErrors.PayloadInvalido, resultado.Error);
+    }
+
+    [Fact]
+    public void Deserializar_InstrumentoIdCampoFonteSemEspacoNaBordaENaoCaixa_ControlePositivo_Aceita()
+    {
+        var resultado = PriceObservedPayload.Deserializar(PayloadValido);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal("td:tesouro-ipca-2035-05-15", resultado.Value.InstrumentoId);
+        Assert.Equal("pu_venda", resultado.Value.Campo);
+        Assert.Equal("td-api", resultado.Value.Fonte);
+    }
+
     [Fact]
     public void Deserializar_ValorComEscalaAcimaDaSuportada_DevolvePayloadInvalido()
     {

@@ -112,6 +112,18 @@ public sealed class RoteadorDeEventosTests
     }
 
     [Fact]
+    public void Rotear_PricesComInstrumentoIdComEspacoNaBorda_DevolveEstacionarComIdentificadorComEspacoNaBorda()
+    {
+        var payload = PayloadPriceObservedValido.Replace(
+            "\"instrumentoId\": \"td:tesouro-ipca-2035-05-15\",", "\"instrumentoId\": \" td:x\",");
+
+        var desfecho = _roteador.Rotear("prices.td", payload);
+
+        Assert.Equal(DesfechoRoteamentoTipo.Estacionar, desfecho.Tipo);
+        Assert.Equal(MotivoParking.IdentificadorComEspacoNaBorda, desfecho.Motivo);
+    }
+
+    [Fact]
     public void Rotear_PricesComPriceObservedInvalido_DevolveEstacionarComPayloadInvalido()
     {
         var payload = PayloadPriceObservedValido.Replace("\"campo\": \"pu_venda\",", string.Empty);

@@ -9,4 +9,10 @@ public static class PriceObservedErrors
 
     public static readonly Error PayloadInvalido =
         new("PriceObserved.PayloadInvalido", "Payload do PriceObserved inválido.", ErrorType.Unprocessable);
+
+    public static readonly Error IdentificadorComEspacoNaBorda =
+        new(
+            "PriceObserved.IdentificadorComEspacoNaBorda",
+            "instrumentoId, campo ou fonte com espaço, tab ou newline na borda.",
+            ErrorType.Unprocessable);
 }

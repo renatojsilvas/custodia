@@ -76,7 +76,9 @@ public sealed class RoteadorDeEventos
 
         var motivo = resultado.Error == PriceObservedErrors.VersaoNaoSuportada
             ? MotivoParking.VersaoNaoSuportada
-            : MotivoParking.PayloadInvalido;
+            : resultado.Error == PriceObservedErrors.IdentificadorComEspacoNaBorda
+                ? MotivoParking.IdentificadorComEspacoNaBorda
+                : MotivoParking.PayloadInvalido;
 
         return DesfechoRoteamento.Estacionar(motivo);
     }
