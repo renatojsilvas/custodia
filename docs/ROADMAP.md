@@ -5670,7 +5670,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   Handler de `PriceObserved` fazendo upsert em `preco_atual` **e no `historico_precos`**
   (a tabela nasce no F3, com a chave inteira), deduplicado pela chave natural
   `(instrumentoId, dataRef, campo, fonte, revisao)`; client HTTP do Hub para bootstrap via
-  `GET {hub}/prices/asof`, com timeout, Polly e conversão de exceção em `Result` na
+  `GET {hub}/v1/prices/asof`, com timeout, Polly e conversão de exceção em `Result` na
   Infrastructure; **log destacado de toda `revisao > 0`** (§12: correções são raras e
   merecem visibilidade). Drenagem do `custodia.parked` do motivo
   `tipo_nao_tratado_prices`.
@@ -5683,7 +5683,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   **Decisões desta fase:**
 
   - **Histórico local SIM** (a §7.1 chama de recomendado). O recálculo do F7 não pode
-    depender de o Hub estar online. *Rejeitado:* consultar sempre `/prices/asof` — poria
+    depender de o Hub estar online. *Rejeitado:* consultar sempre `/v1/prices/asof` — poria
     dependência síncrona de outro serviço dentro do caminho de recálculo, e o Fluxo 5
     recalcula **todos** os clientes posicionados. **A DDL é do F3, não desta fase:** a
     decisão é aqui, a tabela nasce lá, porque no F3 não há escritor e aqui já há — que é o
