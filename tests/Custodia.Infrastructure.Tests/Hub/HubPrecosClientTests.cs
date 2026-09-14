@@ -136,6 +136,57 @@ public sealed class HubPrecosClientTests
     }
 
     [Fact]
+    public async Task ObterFatiaAsync_ComTodosOsPedidosPresentesEUmIdExtraSemXTotalCountSemRepeticao_DevolveColetaIncompleta()
+    {
+        var itens = string.Join(",", new[]
+        {
+            ItemJson("td:tesouro-selic-2029"), ItemJson("td:tesouro-ipca-2035"), ItemJson("td:nao-pedido"),
+        });
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK, $$"""{"date":"2026-09-10","items":[{{itens}}]}"""));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(
+            Data, ["td:tesouro-selic-2029", "td:tesouro-ipca-2035"], CancellationToken.None);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(HubPrecosErrors.HubColetaIncompleta, resultado.Error);
+    }
+
+    [Fact]
+    public async Task ObterFatiaAsync_ComConjuntoIgualAoPedidoEXTotalCountMaiorQueItens_DevolveColetaIncompleta()
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029")}}]}""",
+            new Dictionary<string, string> { ["X-Total-Count"] = "2" }));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsFailure);
+        Assert.Equal(HubPrecosErrors.HubColetaIncompleta, resultado.Error);
+    }
+
+    [Fact]
+    public async Task ObterFatiaAsync_ComConjuntoIgualAoPedidoEXTotalCountIgualAoNumeroDeItens_ControlePositivo_DevolveSucesso()
+    {
+        var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(
+            HttpStatusCode.OK,
+            $$"""{"date":"2026-09-10","items":[{{ItemJson("td:tesouro-selic-2029")}}]}""",
+            new Dictionary<string, string> { ["X-Total-Count"] = "1" }));
+
+        var cliente = CriarCliente(handler);
+
+        var resultado = await cliente.ObterFatiaAsync(Data, ["td:tesouro-selic-2029"], CancellationToken.None);
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Single(resultado.Value);
+    }
+
+    [Fact]
     public async Task ObterFatiaAsync_SemXTotalCountEComConjuntoCompleto_DevolveSucesso()
     {
         var handler = new FakeHttpMessageHandler().Enqueue(FakeHttpMessageHandler.JsonResponse(

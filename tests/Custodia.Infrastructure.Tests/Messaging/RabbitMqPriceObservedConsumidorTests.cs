@@ -17,6 +17,7 @@ namespace Custodia.Infrastructure.Tests.Messaging;
 public sealed class RabbitMqPriceObservedConsumidorTests(RabbitMqConsumidorFixture fixture) : IAsyncLifetime
 {
     private static readonly TimeSpan TimeoutCurto = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan JanelaDeAssentamento = TimeSpan.FromSeconds(1);
 
     private static readonly Counter MensagensPorDesfechoTotal = Metrics.CreateCounter(
         "custodia_consumo_mensagens_total", "help", new CounterConfiguration { LabelNames = ["desfecho"] });
@@ -172,9 +173,10 @@ public sealed class RabbitMqPriceObservedConsumidorTests(RabbitMqConsumidorFixtu
         await consumidor.StartAsync(CancellationToken.None);
         try
         {
-            Assert.True(await EsperarAsync(
-                () => Task.FromResult(LerContadorDesfecho("ack_preco_so_historico") > antesSoHistorico),
-                TimeoutCurto));
+            await EsperarIncrementoExatoDeUmAsync(
+                "ack_preco_so_historico", antesSoHistorico,
+                "evento só-histórico tem que ser ackado exatamente uma vez — se cair em requeue o contador " +
+                "continua crescendo depois da janela de assentamento");
 
             Assert.True(await EsperarAsync(async () =>
             {
@@ -191,28 +193,29 @@ public sealed class RabbitMqPriceObservedConsumidorTests(RabbitMqConsumidorFixtu
             await PublicarAsync(canalPublicador, "prices.td", payloadReplay);
             await PublicarAsync(canalPublicador, "prices.td", payloadDivergenteConflitante);
 
-            Assert.True(
-                await EsperarAsync(
-                    () => Task.FromResult(LerContadorDesfecho("ack_preco_replay") > antesReplay), TimeoutCurto),
-                "reentrega exata do mesmo evento tem que ser reconhecida como replay, não como valor divergente");
+            await EsperarIncrementoExatoDeUmAsync(
+                "ack_preco_replay", antesReplay,
+                "reentrega exata do mesmo evento tem que ser reconhecida como replay, não como valor divergente, " +
+                "e ackada exatamente uma vez — se cair em requeue o contador continua crescendo depois da janela " +
+                "de assentamento");
 
-            Assert.True(
-                await EsperarAsync(
-                    () => Task.FromResult(LerContadorDesfecho("ack_preco_valor_divergente") > antesDivergente),
-                    TimeoutCurto),
+            await EsperarIncrementoExatoDeUmAsync(
+                "ack_preco_valor_divergente", antesDivergente,
                 "mesma chave (instrumento, campo, dataRef, revisão, fonte) com valor diferente tem que ser " +
-                "reconhecida como divergente, não como replay");
-
-            Assert.True(
-                await EsperarAsync(
-                    async () => await ContarMensagensAsync(RabbitMqTopologia.FilaPrincipal) == 0, TimeoutCurto),
-                "os cinco eventos publicados (só-histórico, replay, divergente original, replay repetido, " +
-                "divergente conflitante) têm que ser drenados da fila principal — todos ack, nenhum requeue");
+                "reconhecida como divergente, não como replay, e ackada exatamente uma vez — se cair em requeue " +
+                "o contador continua crescendo depois da janela de assentamento");
         }
         finally
         {
             await consumidor.StopAsync(CancellationToken.None);
         }
+
+        Assert.True(
+            await EsperarAsync(
+                async () => await ContarMensagensAsync(RabbitMqTopologia.FilaPrincipal) == 0, TimeoutCurto),
+            "os cinco eventos publicados (só-histórico, replay, divergente original, replay repetido, " +
+            "divergente conflitante) têm que ter sido ackados de verdade — com o consumidor já parado, uma " +
+            "mensagem que ainda estivesse em laço de requeue volta a 'ready' e a fila principal não fica vazia");
 
         var precoAtualDivergente = await LerPrecoAtualAsync(instrumentoIdDivergente);
         Assert.NotNull(precoAtualDivergente);
@@ -222,6 +225,17 @@ public sealed class RabbitMqPriceObservedConsumidorTests(RabbitMqConsumidorFixtu
         Assert.Empty(motivosParked);
         Assert.Equal(0u, await ContarMensagensAsync(RabbitMqTopologia.FilaDlq));
         Assert.Equal(0u, await ContarMensagensAsync(RabbitMqTopologia.FilaRetry));
+    }
+
+    private async Task EsperarIncrementoExatoDeUmAsync(string desfecho, double antes, string mensagem)
+    {
+        Assert.True(
+            await EsperarAsync(() => Task.FromResult(LerContadorDesfecho(desfecho) > antes), TimeoutCurto),
+            mensagem);
+
+        await Task.Delay(JanelaDeAssentamento);
+
+        Assert.True(antes + 1 == LerContadorDesfecho(desfecho), mensagem);
     }
 
     private async Task<uint> ContarMensagensAsync(string fila)

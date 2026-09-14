@@ -248,6 +248,46 @@ public sealed class PrecoWriteRepositoryTests(InfrastructurePostgresFixture fixt
     }
 
     [Fact]
+    public async Task Push_MesmaTuplaDataRefRevisaoComFonteDiferente_LimiteConhecido_SegundaFonteAlternaOValorEmPrecoAtual()
+    {
+        var instrumentoId = NovoInstrumentoId();
+        var dataRef = new DateOnly(2026, 8, 10);
+        var observadoEm = new DateTimeOffset(2026, 8, 10, 20, 0, 0, TimeSpan.Zero);
+
+        await using var dbBootstrap = fixture.CriarDbContext();
+        var repoBootstrap = new PrecoWriteRepository(dbBootstrap);
+        await repoBootstrap.RegistrarBootstrapAsync(
+            Observacao(instrumentoId, dataRef.AddDays(-1), "pu_venda", 1m, 0, observadoEm), CancellationToken.None);
+        await ((Custodia.Application.Common.Interfaces.IUnitOfWork)dbBootstrap).SaveChangesAsync(CancellationToken.None);
+
+        await using var dbPrimeiraFonte = fixture.CriarDbContext();
+        var repoPrimeiraFonte = new PrecoWriteRepository(dbPrimeiraFonte);
+        var resultadoPrimeiraFonte = await PushAsync(
+            repoPrimeiraFonte, Observacao(instrumentoId, dataRef, "pu_venda", 100m, 0, observadoEm, fonte: "td-api"));
+        await ((Custodia.Application.Common.Interfaces.IUnitOfWork)dbPrimeiraFonte).SaveChangesAsync(CancellationToken.None);
+
+        Assert.Equal(ResultadoPriceObservedTipo.AplicadoEmPrecoAtual, resultadoPrimeiraFonte);
+
+        await using var dbSegundaFonte = fixture.CriarDbContext();
+        var repoSegundaFonte = new PrecoWriteRepository(dbSegundaFonte);
+        var resultadoSegundaFonte = await PushAsync(
+            repoSegundaFonte, Observacao(instrumentoId, dataRef, "pu_venda", 200m, 0, observadoEm, fonte: "outra-fonte"));
+        await ((Custodia.Application.Common.Interfaces.IUnitOfWork)dbSegundaFonte).SaveChangesAsync(CancellationToken.None);
+
+        Assert.Equal(ResultadoPriceObservedTipo.AplicadoEmPrecoAtual, resultadoSegundaFonte);
+
+        var precoAtual = await LerPrecoAtualAsync(instrumentoId);
+        Assert.NotNull(precoAtual);
+        Assert.Equal(200m, precoAtual!.Valor);
+
+        var historico = await LerHistoricoAsync(instrumentoId);
+        var linhasDaTupla = historico.Where(h => h.DataRef == dataRef && h.Revisao == 0).ToList();
+        Assert.Equal(2, linhasDaTupla.Count);
+        Assert.Contains(linhasDaTupla, h => h.Fonte == "td-api" && h.Valor == 100m);
+        Assert.Contains(linhasDaTupla, h => h.Fonte == "outra-fonte" && h.Valor == 200m);
+    }
+
+    [Fact]
     public async Task Push_CampoDiferenteDoGravado_SoHistoricoENaoTocaPrecoAtual()
     {
         var instrumentoId = NovoInstrumentoId();
@@ -383,6 +423,41 @@ public sealed class PrecoWriteRepositoryTests(InfrastructurePostgresFixture fixt
         Assert.Equal("taxa_venda", precoAtual!.Campo);
         Assert.Equal(new DateOnly(2026, 7, 1), precoAtual.DataRef);
         Assert.Equal(5m, precoAtual.Valor);
+    }
+
+    [Fact]
+    public async Task RegistrarBootstrapAsync_CampoDiferente_TrocaAData_PushPosteriorDoCampoAntigoVaiSoParaHistorico()
+    {
+        var instrumentoId = NovoInstrumentoId();
+        var observadoEm = new DateTimeOffset(2026, 8, 5, 20, 0, 0, TimeSpan.Zero);
+
+        await using var db1 = fixture.CriarDbContext();
+        var repo1 = new PrecoWriteRepository(db1);
+        await repo1.RegistrarBootstrapAsync(
+            Observacao(instrumentoId, new DateOnly(2026, 8, 5), "pu_venda", 200m, 0, observadoEm), CancellationToken.None);
+        await ((Custodia.Application.Common.Interfaces.IUnitOfWork)db1).SaveChangesAsync(CancellationToken.None);
+
+        await using var db2 = fixture.CriarDbContext();
+        var repo2 = new PrecoWriteRepository(db2);
+        await repo2.RegistrarBootstrapAsync(
+            Observacao(instrumentoId, new DateOnly(2026, 7, 1), "taxa_venda", 5m, 0, observadoEm), CancellationToken.None);
+        await ((Custodia.Application.Common.Interfaces.IUnitOfWork)db2).SaveChangesAsync(CancellationToken.None);
+
+        await using var db3 = fixture.CriarDbContext();
+        var repo3 = new PrecoWriteRepository(db3);
+        var resultadoPushDoCampoAntigo = await PushAsync(
+            repo3, Observacao(instrumentoId, new DateOnly(2026, 8, 10), "pu_venda", 300m, 0, observadoEm));
+        await ((Custodia.Application.Common.Interfaces.IUnitOfWork)db3).SaveChangesAsync(CancellationToken.None);
+
+        Assert.Equal(ResultadoPriceObservedTipo.SoHistorico, resultadoPushDoCampoAntigo);
+
+        var precoAtual = await LerPrecoAtualAsync(instrumentoId);
+        Assert.Equal("taxa_venda", precoAtual!.Campo);
+        Assert.Equal(new DateOnly(2026, 7, 1), precoAtual.DataRef);
+        Assert.Equal(5m, precoAtual.Valor);
+
+        var historico = await LerHistoricoAsync(instrumentoId);
+        Assert.Contains(historico, h => h.Campo == "pu_venda" && h.DataRef == new DateOnly(2026, 8, 10) && h.Valor == 300m);
     }
 
     private sealed record HistoricoRow(

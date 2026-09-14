@@ -1,7 +1,7 @@
-using System.Globalization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Prometheus;
 using Custodia.API;
+using Custodia.API.Cli;
 using Custodia.API.Extensions;
 using Custodia.API.Middleware;
 using Custodia.Application;
@@ -23,9 +23,6 @@ const string VerboDrenarParking = "--drenar-parking";
 const string VerboRepararResgatesAntigos = "--reparar-resgates-antigos";
 const string VerboBootstrapPrecos = "--bootstrap-precos";
 const string ArgumentoPassagemId = "--passagem-id";
-const string ArgumentoDesde = "--desde";
-const string ArgumentoAte = "--ate";
-const string FormatoDataArgumento = "yyyy-MM-dd";
 const int CodigoDeSaidaUso = 64;
 
 if (args.Length > 0
@@ -251,29 +248,19 @@ static async Task<int> ExecutarDrenarParkingAsync(IServiceProvider servicos, str
 
 static async Task<int> ExecutarBootstrapPrecosAsync(IServiceProvider servicos, string[] args)
 {
-    DateOnly? desde = null;
-    DateOnly? ate = null;
-
-    for (var i = 1; i < args.Length - 1; i++)
+    var argumentos = BootstrapPrecosArgumentos.Interpretar(args);
+    if (!argumentos.EhValido)
     {
-        if (args[i] == ArgumentoDesde
-            && DateOnly.TryParseExact(
-                args[i + 1], FormatoDataArgumento, CultureInfo.InvariantCulture, DateTimeStyles.None, out var desdeValor))
-        {
-            desde = desdeValor;
-        }
-        else if (args[i] == ArgumentoAte
-            && DateOnly.TryParseExact(
-                args[i + 1], FormatoDataArgumento, CultureInfo.InvariantCulture, DateTimeStyles.None, out var ateValor))
-        {
-            ate = ateValor;
-        }
+        Console.Error.WriteLine(
+            $"Uso: {VerboBootstrapPrecos} [{BootstrapPrecosArgumentos.ArgumentoDesde} <data>] " +
+            $"[{BootstrapPrecosArgumentos.ArgumentoAte} <data>] — {argumentos.ErroDeUso}");
+        return CodigoDeSaidaUso;
     }
 
     using var escopo = servicos.CreateScope();
     var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
     var resultado = await mediator.Send(
-        new ColetarPrecosDoHubCommand(EscopoDeColetaDePrecos.LivroInteiroNaJanela, desde, ate));
+        new ColetarPrecosDoHubCommand(EscopoDeColetaDePrecos.LivroInteiroNaJanela, argumentos.Desde, argumentos.Ate));
 
     if (resultado.IsFailure)
     {
