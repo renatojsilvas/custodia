@@ -5854,8 +5854,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   pela §6 do `PADROES`: fora dos ambientes isentos, segredo ausente **derruba o boot**, e a
   guarda de API key checa **comprimento mínimo E placeholder**, não só vazio — molde
   `../operacoes/src/Operacoes.API/Extensions/HubConfigGuard.cs` e `KeyStrengthGuard.cs`. O
-  bloco do `.env.example` reescrito no F1 vira aqui o texto definitivo. Localmente o alias é
-  `hub-precos-app`, nunca `app` (§10.1). **Avise no PR: mudança quebrante** para quem já tem
+  bloco do `.env.example` reescrito no F1 vira aqui o texto definitivo. **Localmente NÃO é
+  `hub-precos-app`** (correção de 2026-09-13): o compose local do `hub-precos` deixa o `app`
+  **fora** da rede `plataforma` de propósito e só publica `127.0.0.1:5080`, então o valor local
+  é `http://host.docker.internal:5080/`, como no `.env` do `operacoes`; o alias
+  `hub-precos-app` existe **só em produção**, e nunca se usa `app` (§10.1). **Avise no PR: mudança quebrante** para quem já tem
   `.env` local, e rode `config -q` contra o `.env` real.
 
   **Âncoras:** `ARQUITETURA` §7.1 (`preco_atual` e histórico local recomendado), §7.3 (ramo
@@ -6078,7 +6081,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   a guarda de API key checa comprimento minimo E placeholder, nao so vazio — molde
   ../operacoes/src/Operacoes.API/Extensions/HubConfigGuard.cs e KeyStrengthGuard.cs.
   Reescreva o bloco do .env.example com o papel VERDADEIRO do Hub aqui. Localmente o
-  alias e hub-precos-app, NUNCA app (PADROES 10.1). AVISE NO PR que e mudanca quebrante
+  valor e http://host.docker.internal:5080/ (o compose local do hub-precos deixa o app FORA
+  da rede plataforma); hub-precos-app e o alias SO EM PRODUCAO; NUNCA app (PADROES 10.1). AVISE NO PR que e mudanca quebrante
   e rode `docker compose config -q` contra o .env REAL.
 
   Ao final, guardiao-padroes e DEPOIS revisor, em serie, nunca em paralelo. Achado grave
