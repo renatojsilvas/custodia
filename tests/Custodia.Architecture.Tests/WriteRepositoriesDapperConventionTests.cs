@@ -10,23 +10,25 @@ public sealed partial class WriteRepositoriesDapperConventionTests
         RepoRoot, "src", "Custodia.Infrastructure", "Persistence", "Repositories");
 
     [Fact]
-    public void NenhumWriteRepository_UsaDapper()
+    public void NenhumRepositoryQueNaoSejaReadRepository_UsaDapper()
     {
-        var arquivos = ListarArquivosWriteRepository();
+        var arquivos = ListarArquivosQueNaoSaoReadRepository();
 
         Assert.True(
             arquivos.Count > 0,
-            $"esta asserção só é uma convenção real se houver ao menos um *WriteRepository.cs em " +
-            $"'{DiretorioRepositories}' para inspecionar; encontrados: {arquivos.Count}");
+            $"esta asserção só é uma convenção real se houver ao menos um arquivo em " +
+            $"'{DiretorioRepositories}' cujo nome não termine em ReadRepository.cs para inspecionar; " +
+            $"encontrados: {arquivos.Count}");
 
         var ocorrencias = EncontrarOcorrenciasDeDapper(arquivos);
 
         Assert.True(
             ocorrencias.Count == 0,
-            "nenhum *WriteRepository.cs deve usar Dapper (deve ler dentro da transação ambiente via EF " +
-            "— FromSqlInterpolated/SqlQuery —, como MovimentoTravamentoRepository, e não via Dapper sobre " +
-            "a conexão obtida de dbContext.Database.GetDbConnection() — terceira técnica de acesso a " +
-            "dados na mesma classe). Ocorrências encontradas:\n" + string.Join('\n', ocorrencias));
+            "nenhum arquivo em Persistence/Repositories cujo nome não termine em ReadRepository.cs deve " +
+            "usar Dapper — PADROES §3 reserva Dapper para *ReadRepository.cs; escrita e leitura dentro da " +
+            "transação ambiente devem usar EF (FromSqlInterpolated/SqlQuery), como MovimentoTravamentoRepository, " +
+            "e não Dapper sobre a conexão obtida de dbContext.Database.GetDbConnection() — terceira técnica " +
+            "de acesso a dados na mesma classe. Ocorrências encontradas:\n" + string.Join('\n', ocorrencias));
     }
 
     [Fact]
@@ -43,10 +45,10 @@ public sealed partial class WriteRepositoriesDapperConventionTests
             Assert.True(
                 EncontrarOcorrenciasDeDapper([caminhoTemporario]).Count == 1,
                 "esta asserção prova, contra um arquivo real em disco, que o scanner usado pelo teste " +
-                "'NenhumWriteRepository_UsaDapper' enxerga uma ocorrência de verdade quando ela existe — " +
-                "o controle positivo exigido pelo PADROES §10.8 para a asserção negativa acima. Nenhum " +
-                "*WriteRepository.cs real usa Dapper hoje, então o controle não pode vir de código de " +
-                "produção.");
+                "'NenhumRepositoryQueNaoSejaReadRepository_UsaDapper' enxerga uma ocorrência de verdade quando " +
+                "ela existe — o controle positivo exigido pelo PADROES §10.8 para a asserção negativa acima. " +
+                "Nenhum arquivo real fora de *ReadRepository.cs usa Dapper hoje, então o controle não pode vir " +
+                "de código de produção.");
         }
         finally
         {
@@ -61,15 +63,16 @@ public sealed partial class WriteRepositoriesDapperConventionTests
         return caminho;
     }
 
-    private static List<string> ListarArquivosWriteRepository()
+    private static List<string> ListarArquivosQueNaoSaoReadRepository()
     {
         if (!Directory.Exists(DiretorioRepositories))
         {
             return [];
         }
 
-        return Directory.EnumerateFiles(DiretorioRepositories, "*WriteRepository.cs", SearchOption.AllDirectories)
+        return Directory.EnumerateFiles(DiretorioRepositories, "*.cs", SearchOption.AllDirectories)
             .Where(caminho => !ContemSegmentoBinOuObj(caminho))
+            .Where(caminho => !caminho.EndsWith("ReadRepository.cs", StringComparison.Ordinal))
             .ToList();
     }
 
