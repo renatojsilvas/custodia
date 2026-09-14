@@ -253,7 +253,7 @@ public sealed class HubPrecosClientTests
     [Theory]
     [InlineData(" pu_venda")]
     [InlineData("pu_venda ")]
-    [InlineData("\tpu_venda")]
+    [InlineData("\\tpu_venda")]
     [InlineData("   ")]
     public async Task ObterFatiaAsync_ComChaveDeCampoComEspacoNaBordaOuSoEspaco_DevolveRespostaInvalida(string campo)
     {
@@ -272,7 +272,7 @@ public sealed class HubPrecosClientTests
     [Theory]
     [InlineData(" td")]
     [InlineData("td ")]
-    [InlineData("\ttd")]
+    [InlineData("\\ttd")]
     [InlineData("   ")]
     public async Task ObterFatiaAsync_ComFonteComEspacoNaBordaOuSoEspaco_DevolveRespostaInvalida(string fonte)
     {

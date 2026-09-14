@@ -8,6 +8,7 @@ using Custodia.Infrastructure.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Prometheus;
 using RabbitMQ.Client;
 
 namespace Custodia.Infrastructure.Tests.Messaging;
@@ -16,6 +17,11 @@ namespace Custodia.Infrastructure.Tests.Messaging;
 public sealed class RabbitMqPriceObservedConsumidorTests(RabbitMqConsumidorFixture fixture) : IAsyncLifetime
 {
     private static readonly TimeSpan TimeoutCurto = TimeSpan.FromSeconds(20);
+
+    private static readonly Counter MensagensPorDesfechoTotal = Metrics.CreateCounter(
+        "custodia_consumo_mensagens_total", "help", new CounterConfiguration { LabelNames = ["desfecho"] });
+
+    private static double LerContadorDesfecho(string desfecho) => MensagensPorDesfechoTotal.WithLabels(desfecho).Value;
 
     public Task InitializeAsync() => fixture.LimparEstadoAsync();
 
@@ -121,6 +127,108 @@ public sealed class RabbitMqPriceObservedConsumidorTests(RabbitMqConsumidorFixtu
 
         var historico = await ContarHistoricoAsync(instrumentoId, dataRef);
         Assert.Equal(2, historico);
+    }
+
+    [Fact]
+    public async Task TresDesfechosDePrecoNoMesmoTeste_SoHistoricoReplayEValorDivergente_CadaUmAckedEDistinguivelPeloDesfecho()
+    {
+        const string instrumentoIdSoHistorico = "td:tesouro-teste-price-so-historico";
+        const string instrumentoIdReplay = "td:tesouro-teste-price-replay";
+        const string instrumentoIdDivergente = "td:tesouro-teste-price-divergente";
+
+        var dataRefSoHistorico = new DateOnly(2026, 8, 10);
+        var observadoEmSoHistorico = new DateTimeOffset(2026, 8, 9, 20, 0, 0, TimeSpan.Zero);
+        await SemearPrecoAtualAsync(instrumentoIdSoHistorico, dataRefSoHistorico, "pu_venda", 1000m, 0, observadoEmSoHistorico);
+        var payloadSoHistorico = PriceObservedPayloadBuilder.Valido(
+            instrumentoIdSoHistorico, dataRefSoHistorico.AddDays(-1), "pu_venda", 999m, "td-api", 0, observadoEmSoHistorico);
+
+        var dataRefReplay = new DateOnly(2026, 8, 10);
+        var observadoEmReplay = new DateTimeOffset(2026, 8, 10, 20, 0, 0, TimeSpan.Zero);
+        await SemearPrecoAtualAsync(instrumentoIdReplay, dataRefReplay.AddDays(-1), "pu_venda", 1m, 0, observadoEmReplay);
+        var payloadReplay = PriceObservedPayloadBuilder.Valido(
+            instrumentoIdReplay, dataRefReplay, "pu_venda", 777.123456m, "td-api", 0, observadoEmReplay);
+
+        var dataRefDivergente = new DateOnly(2026, 8, 10);
+        var observadoEmDivergente = new DateTimeOffset(2026, 8, 10, 20, 0, 0, TimeSpan.Zero);
+        await SemearPrecoAtualAsync(instrumentoIdDivergente, dataRefDivergente.AddDays(-1), "pu_venda", 1m, 0, observadoEmDivergente);
+        var payloadDivergenteOriginal = PriceObservedPayloadBuilder.Valido(
+            instrumentoIdDivergente, dataRefDivergente, "pu_venda", 100m, "td-api", 0, observadoEmDivergente);
+        var payloadDivergenteConflitante = PriceObservedPayloadBuilder.Valido(
+            instrumentoIdDivergente, dataRefDivergente, "pu_venda", 200m, "td-api", 0, observadoEmDivergente);
+
+        var antesSoHistorico = LerContadorDesfecho("ack_preco_so_historico");
+        var antesReplay = LerContadorDesfecho("ack_preco_replay");
+        var antesDivergente = LerContadorDesfecho("ack_preco_valor_divergente");
+
+        await using var conexaoPublicadora = await fixture.CriarConexaoAmqpAsync();
+        await using var canalPublicador = await conexaoPublicadora.CreateChannelAsync();
+
+        await PublicarAsync(canalPublicador, "prices.td", payloadSoHistorico);
+        await PublicarAsync(canalPublicador, "prices.td", payloadReplay);
+        await PublicarAsync(canalPublicador, "prices.td", payloadDivergenteOriginal);
+
+        var (provider, consumidor, _) = CriarConsumidor();
+        await using var _ = provider;
+        await consumidor.StartAsync(CancellationToken.None);
+        try
+        {
+            Assert.True(await EsperarAsync(
+                () => Task.FromResult(LerContadorDesfecho("ack_preco_so_historico") > antesSoHistorico),
+                TimeoutCurto));
+
+            Assert.True(await EsperarAsync(async () =>
+            {
+                var precoAtual = await LerPrecoAtualAsync(instrumentoIdReplay);
+                return precoAtual is not null && precoAtual.Valor == 777.123456m;
+            }, TimeoutCurto));
+
+            Assert.True(await EsperarAsync(async () =>
+            {
+                var precoAtual = await LerPrecoAtualAsync(instrumentoIdDivergente);
+                return precoAtual is not null && precoAtual.Valor == 100m;
+            }, TimeoutCurto));
+
+            await PublicarAsync(canalPublicador, "prices.td", payloadReplay);
+            await PublicarAsync(canalPublicador, "prices.td", payloadDivergenteConflitante);
+
+            Assert.True(
+                await EsperarAsync(
+                    () => Task.FromResult(LerContadorDesfecho("ack_preco_replay") > antesReplay), TimeoutCurto),
+                "reentrega exata do mesmo evento tem que ser reconhecida como replay, não como valor divergente");
+
+            Assert.True(
+                await EsperarAsync(
+                    () => Task.FromResult(LerContadorDesfecho("ack_preco_valor_divergente") > antesDivergente),
+                    TimeoutCurto),
+                "mesma chave (instrumento, campo, dataRef, revisão, fonte) com valor diferente tem que ser " +
+                "reconhecida como divergente, não como replay");
+
+            Assert.True(
+                await EsperarAsync(
+                    async () => await ContarMensagensAsync(RabbitMqTopologia.FilaPrincipal) == 0, TimeoutCurto),
+                "os cinco eventos publicados (só-histórico, replay, divergente original, replay repetido, " +
+                "divergente conflitante) têm que ser drenados da fila principal — todos ack, nenhum requeue");
+        }
+        finally
+        {
+            await consumidor.StopAsync(CancellationToken.None);
+        }
+
+        var precoAtualDivergente = await LerPrecoAtualAsync(instrumentoIdDivergente);
+        Assert.NotNull(precoAtualDivergente);
+        Assert.Equal(100m, precoAtualDivergente.Valor);
+
+        var motivosParked = await LerMotivosDaFilaParkedAsync();
+        Assert.Empty(motivosParked);
+        Assert.Equal(0u, await ContarMensagensAsync(RabbitMqTopologia.FilaDlq));
+        Assert.Equal(0u, await ContarMensagensAsync(RabbitMqTopologia.FilaRetry));
+    }
+
+    private async Task<uint> ContarMensagensAsync(string fila)
+    {
+        await using var conexao = await fixture.CriarConexaoAmqpAsync();
+        await using var canal = await conexao.CreateChannelAsync();
+        return await canal.MessageCountAsync(fila);
     }
 
     private async Task SemearPrecoAtualAsync(
