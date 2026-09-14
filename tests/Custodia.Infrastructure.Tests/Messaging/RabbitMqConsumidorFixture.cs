@@ -114,7 +114,8 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
     public async Task LimparEstadoAsync()
     {
         await using var db = CriarDbContext();
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE movimentos, posicao_corrente RESTART IDENTITY;");
+        await db.Database.ExecuteSqlRawAsync(
+            "TRUNCATE TABLE movimentos, posicao_corrente, preco_atual, historico_precos RESTART IDENTITY;");
 
         await using var conexao = await CriarConexaoAmqpAsync();
         await using var canal = await conexao.CreateChannelAsync();

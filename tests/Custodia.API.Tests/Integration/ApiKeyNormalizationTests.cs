@@ -103,6 +103,8 @@ public sealed class ApiKeyNormalizationTests
                     ["RabbitMq:Host"] = "127.0.0.1",
                     ["RabbitMq:User"] = "guest",
                     ["RabbitMq:Password"] = "guest",
+                    ["Hub:BaseUrl"] = "http://hub.invalid/",
+                    ["Hub:ApiKey"] = "hub-api-key-para-teste-de-normalizacao",
                 });
             });
         }

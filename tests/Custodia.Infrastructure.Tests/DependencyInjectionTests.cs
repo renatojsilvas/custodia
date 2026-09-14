@@ -1,6 +1,10 @@
 using Custodia.Application.Common.Interfaces;
 using Custodia.Application.Movimentos;
 using Custodia.Application.Posicoes;
+using Custodia.Application.Precos;
+using Custodia.Application.Precos.Bootstrap;
+using Custodia.Application.Precos.Hub;
+using Custodia.Infrastructure.Hub;
 using Custodia.Infrastructure.Observability;
 using Custodia.Infrastructure.Persistence;
 using Custodia.Infrastructure.Persistence.Repositories;
@@ -164,6 +168,7 @@ public sealed class DependencyInjectionTests
         Assert.IsType<MovimentoWriteRepository>(scope.ServiceProvider.GetRequiredService<IMovimentoWriteRepository>());
         Assert.IsType<PosicaoCorrenteReadRepository>(scope.ServiceProvider.GetRequiredService<IPosicaoCorrenteReadRepository>());
         Assert.IsType<PosicaoCorrenteWriteRepository>(scope.ServiceProvider.GetRequiredService<IPosicaoCorrenteWriteRepository>());
+        Assert.IsType<PrecoWriteRepository>(scope.ServiceProvider.GetRequiredService<IPrecoWriteRepository>());
     }
 
     [Fact]
@@ -179,5 +184,68 @@ public sealed class DependencyInjectionTests
 
         Assert.Same(TimeProvider.System, first);
         Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void AddInfrastructure_RegistraIEscopoDePrecosReadRepository()
+    {
+        var services = new ServiceCollection();
+        services.AddInfrastructure(BuildConfiguration());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<EscopoDePrecosReadRepository>(
+            scope.ServiceProvider.GetRequiredService<IEscopoDePrecosReadRepository>());
+    }
+
+    [Fact]
+    public void AddInfrastructure_RegistraIHubPrecosClientComoHubPrecosClient()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] =
+                    "Host=localhost;Port=5432;Database=custodia_teste;Username=custodia_app;Password=segredo",
+                ["Hub:BaseUrl"] = "http://hub.interno/",
+                ["Hub:ApiKey"] = "chave-de-teste",
+            })
+            .Build();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddInfrastructure(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var cliente = scope.ServiceProvider.GetRequiredService<IHubPrecosClient>();
+
+        Assert.IsType<HubPrecosClient>(cliente);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ConfiguraOHttpClientDoHubPrecosComBaseUrlEApiKeyTrim()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] =
+                    "Host=localhost;Port=5432;Database=custodia_teste;Username=custodia_app;Password=segredo",
+                ["Hub:BaseUrl"] = "http://hub.interno/",
+                ["Hub:ApiKey"] = "  chave-de-teste-com-espacos  ",
+            })
+            .Build();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddInfrastructure(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var httpClientFactory = provider.GetRequiredService<IHttpClientFactory>();
+        var httpClient = httpClientFactory.CreateClient(nameof(IHubPrecosClient));
+
+        Assert.Equal(new Uri("http://hub.interno/"), httpClient.BaseAddress);
+        Assert.Equal("chave-de-teste-com-espacos", httpClient.DefaultRequestHeaders.GetValues("X-Api-Key").Single());
     }
 }

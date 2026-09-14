@@ -13,8 +13,10 @@ Arquitetura: `../plataforma-docs/ARQUITETURA.md` (§7 inteira é desta casa).
 padrões corrigidos, e foi o serviço mais parecido com este (append-only, trigger de
 imutabilidade, identidade de outro contexto gravada crua). Para o que o `operacoes` não
 tem — jobs, `IHostedService`, adapters de fonte externa, GET condicional, coleta em laço
-contra serviço externo — o molde é `../hub-precos`. (Coleta **em laço**, não "paginada":
-o `GET /prices/asof` do Hub **não é paginado**, e o F6 registra quais são os laços reais.)
+contra serviço externo — o molde é `../hub-precos`. (Coleta **em laço**, e o laço de páginas não é o que importa:
+o `GET /v1/prices/asof` do Hub **é paginado no código**, ao contrário do que a §4.5 diz, mas a
+Custódia pede fatias que cabem numa página e prova a completude por igualdade de conjuntos; o F6
+registra os laços reais e a divergência, conferida em 2026-09-13.)
 Para projeto `*.Web`, E2E e teste de carga,
 `../tesouro-direto-api`. Quando os moldes divergirem, prefere-se o `operacoes` e
 registra-se por quê. Ver `PADROES.md`, `LEIA-ME-KIT.md` e `CLAUDE.md`.
@@ -5668,7 +5670,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   Handler de `PriceObserved` fazendo upsert em `preco_atual` **e no `historico_precos`**
   (a tabela nasce no F3, com a chave inteira), deduplicado pela chave natural
   `(instrumentoId, dataRef, campo, fonte, revisao)`; client HTTP do Hub para bootstrap via
-  `GET {hub}/prices/asof`, com timeout, Polly e conversão de exceção em `Result` na
+  `GET {hub}/v1/prices/asof`, com timeout, Polly e conversão de exceção em `Result` na
   Infrastructure; **log destacado de toda `revisao > 0`** (§12: correções são raras e
   merecem visibilidade). Drenagem do `custodia.parked` do motivo
   `tipo_nao_tratado_prices`.
@@ -5681,7 +5683,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   **Decisões desta fase:**
 
   - **Histórico local SIM** (a §7.1 chama de recomendado). O recálculo do F7 não pode
-    depender de o Hub estar online. *Rejeitado:* consultar sempre `/prices/asof` — poria
+    depender de o Hub estar online. *Rejeitado:* consultar sempre `/v1/prices/asof` — poria
     dependência síncrona de outro serviço dentro do caminho de recálculo, e o Fluxo 5
     recalcula **todos** os clientes posicionados. **A DDL é do F3, não desta fase:** a
     decisão é aqui, a tabela nasce lá, porque no F3 não há escritor e aqui já há — que é o
@@ -5710,14 +5712,20 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     default seria pior ("quando `acao:PETR4` chegar, o default ou mente ou muda em silêncio
     para quem omitiu o parâmetro"). *Rejeitado:* gravar `campo = 'pu_venda'` fixo — funciona
     hoje e apodrece na fase 2, em silêncio, exatamente como a §10.32 descreve.
-  - **GET condicional contra o Hub: SIM**, ao contrário do `operacoes`. A §10.30 registra a
-    ausência lá porque a URL carregava o **termo digitado** e cada termo novo era um miss
-    garantido. Aqui o bootstrap sonda **URL fixa em ciclo**, que é o caso do
-    `../hub-precos/src/Hub.Infrastructure/TdApi/TdApiClient.cs` — o molde volta a valer. E a
-    própria §10.30 diz o que fazer então: o store de ETag nasce **com prazo, teto e
-    evicção**, as três coisas que a §10.16 cobra e cuja ausência deixou o hub em 304
-    permanente depois de um banco zerado por fora. *Rejeitado:* portar o
-    `ConditionalGetStore` como está no molde, sem prazo.
+  - **GET condicional contra o Hub: NÃO — REVERTIDA na abertura da fase (2026-09-13).** A
+    versão anterior desta decisão dizia SIM porque "o bootstrap sonda **URL fixa em ciclo**,
+    que é o caso do `TdApiClient`". **A premissa é falsa contra o contrato real:** a URL do
+    `asof` carrega `date`, a fatia de `instruments` e a página — muda a cada dia e a cada
+    mudança do livro —, então é o caso da §10.30 do `operacoes` (miss garantido), não o do
+    `TdApiClient`. E há um segundo motivo, mais grave: **304 só é honesto para quem guarda o
+    corpo.** A Custódia não guarda o corpo; guarda linhas derivadas dele em tabelas que o
+    Pronto (a) manda derrubar com `TRUNCATE`, e um processo que tivesse o ETag de antes do
+    `TRUNCATE` receberia 304 e não reconstruiria nada — o incidente da §10.16 com outra
+    roupa. *Rejeitado:* portar o `BoundedConditionalGetStore` do molde. Ele **já** tem prazo,
+    teto e evicção (a proibição "não porte como está" foi escrita contra uma versão anterior
+    do molde), mas num verbo administrativo vive vazio (código morto) e num serviço cíclico
+    recria o 304 sobre dado derrubado. **Se um dia existir sonda de URL fixa contra o Hub,
+    esta decisão se reabre**, e a §10.30 diz com que três propriedades o store nasce.
   - **Sem last-known-good**, e a ausência é decidida por motivo **diferente** do
     `operacoes`: lá o cache servia também a validação de uma escrita (§10.29); aqui não há
     escrita de negócio nenhuma. O que proíbe o LKG aqui é outra coisa — servir preço velho
@@ -5746,14 +5754,24 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   que o cliente vê (P2). É literalmente o erro que o `LEIA-ME-KIT` registra em **"Escrever
   contrato assumindo que os campos andam juntos"**, escrito **sobre este payload**.
 
-  **O BOOTSTRAP: o `/prices/asof` NÃO é paginado, e o laço que existe é outro.**
+  **O BOOTSTRAP: os laços que importam são dois, e a paginação do Hub NÃO é um deles.**
 
-  A §4.5 define `GET /prices/asof?date=D[&instruments=a,b,c]` devolvendo `items[]`. **Não
-  há `page`, não há `pageSize`, não há `X-Total-Count`.** O rascunho anterior mandava
-  testar boundary de `pageSize` e validar `X-Total-Count` contra este contrato: Pronto
-  inexecutável, e um empurrão para o executor **inventar paginação em contrato de
-  terceiro**. Pior, a §10.31 ficava aplicada ao laço errado, e o laço real ficava sem
-  classificação nenhuma. Os laços reais são dois, e cada condição de parada é classificada:
+  **Correção de 2026-09-13, conferida no código do `../hub-precos` (HEAD `d5c05c9`).** A
+  §4.5 define `GET /prices/asof?date=D[&instruments=a,b,c]` sem paginação, e a versão
+  anterior deste parágrafo afirmava "não há `page`, não há `pageSize`, não há
+  `X-Total-Count`". **O Hub real pagina:** a rota é **`/v1/prices/asof`**
+  (`Hub.API/Program.cs`, `MapGroup("/v1")`), aceita `page`/`pageSize` (default 100, máx 500,
+  `PaginationDefaults.cs`), aplica-os **sempre, inclusive com `instruments` informado**, e
+  emite `X-Total-Count` = número de instrumentos **distintos** pedidos (`PricesEndpoints.cs`,
+  `GetPrecosAsOfQueryHandler.HandleListaAsync`). A ARQUITETURA é de outro repo e fica como
+  está; a divergência fica registrada aqui e na memória. **O que muda, e o que NÃO muda:** a
+  Custódia **não implementa laço de páginas** — pede cada fatia com
+  `page=1&pageSize=<tamanho da fatia>` explícitos (depender do default de 100 de um terceiro
+  é o defeito que a própria §4.5 aponta no `campo=` com default), fatia padrão de 100 e teto
+  validado **bem abaixo** dos 500 do Hub, porque o limite real é o **tamanho da linha de
+  requisição** (500 ids `td:` passam de 8 KB e voltam 414). A completude continua sendo a
+  **igualdade de conjuntos** abaixo, e ela pega também o truncamento por página. Cada
+  condição de parada é classificada:
 
   **Escopo — "quais instrumentos pedir" — decidido aqui, porque sem isso não há laço.** O
   conjunto é derivado do **LIVRO**: os `instrumento_id` distintos de `movimentos`,
@@ -5774,6 +5792,10 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   | **B · fatias de `instruments`** | consumi todas as fatias do conjunto derivado do livro | **completude** | sucesso |
   | | teto de fatias | **limite** | **falha**, `Hub.ColetaIncompleta` |
   | | a resposta **não traz todos** os ids que a fatia pediu | **limite** | **falha**, `Hub.ColetaIncompleta` |
+  | | a resposta traz id que **não foi pedido** (normalização: o Hub devolve `trim` + minúsculas, o livro grava cru) | **limite** | **falha**, `Hub.ColetaIncompleta`, mensagem própria |
+  | | `X-Total-Count` presente e **maior** que os itens devolvidos (truncamento por página) | **limite** | **falha**, `Hub.ColetaIncompleta`, mensagem própria |
+  | **A e B** · resposta 401/403 | não é parada de laço: é configuração | **falha**, `Hub.AcessoNegado` — nunca `Hub.Indisponivel`, porque repetir não conserta |
+  | **A e B** · 4xx restante, JSON ilegível, item sem campo obrigatório | não é parada de laço: é contrato | **falha**, `Hub.RespostaInvalida` |
 
   **A última linha é a que substitui o boundary de `pageSize`, e ela é mais forte que o
   guard de `X-Total-Count` da §10.31** — porque aqui o contrato **garante** a contagem: a
@@ -5832,8 +5854,11 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   pela §6 do `PADROES`: fora dos ambientes isentos, segredo ausente **derruba o boot**, e a
   guarda de API key checa **comprimento mínimo E placeholder**, não só vazio — molde
   `../operacoes/src/Operacoes.API/Extensions/HubConfigGuard.cs` e `KeyStrengthGuard.cs`. O
-  bloco do `.env.example` reescrito no F1 vira aqui o texto definitivo. Localmente o alias é
-  `hub-precos-app`, nunca `app` (§10.1). **Avise no PR: mudança quebrante** para quem já tem
+  bloco do `.env.example` reescrito no F1 vira aqui o texto definitivo. **Localmente NÃO é
+  `hub-precos-app`** (correção de 2026-09-13): o compose local do `hub-precos` deixa o `app`
+  **fora** da rede `plataforma` de propósito e só publica `127.0.0.1:5080`, então o valor local
+  é `http://host.docker.internal:5080/`, como no `.env` do `operacoes`; o alias
+  `hub-precos-app` existe **só em produção**, e nunca se usa `app` (§10.1). **Avise no PR: mudança quebrante** para quem já tem
   `.env` local, e rode `config -q` contra o `.env` real.
 
   **Âncoras:** `ARQUITETURA` §7.1 (`preco_atual` e histórico local recomendado), §7.3 (ramo
@@ -5843,6 +5868,71 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   §10.30, §10.31, §10.32; `LEIA-ME-KIT` **"Escrever contrato assumindo que os campos andam
   juntos"** (é sobre este payload, e é a âncora do `dataRef` por campo) e "Porta publicada
   no compose local não existe em produção".
+
+  **Decisões acrescentadas na abertura da fase (2026-09-13), conferidas contra o código do
+  `../hub-precos` e validadas pelo `advisor`.** O bloco de prompt abaixo foi corrigido nos
+  pontos que elas desmentem.
+
+  - **O `PriceObserved` NÃO TEM `campoPosicao`** (`Hub.Application/Eventos/PriceObservedEvent.cs`),
+    e a regra "evento de campo que não é o `campoPosicao` não toca `preco_atual`" precisa
+    dele. **Decisão:** o push compara `evento.campo` com `preco_atual.campo` **já gravado** —
+    o `campoPosicao` que o produtor marcou na resposta do `asof` e o bootstrap persistiu. É
+    marcação persistida, não re-derivação. Sem linha em `preco_atual`, o push grava **só o
+    histórico**. O push **nunca** troca `preco_atual.campo`; o bootstrap troca quando o
+    `campoPosicao` do `asof` difere do gravado (classe mudou no Hub), **sem** passar pela
+    regra `≥` — comparar `(dataRef, revisao)` entre campos diferentes não significa nada —,
+    e com `LogWarning`. *Rejeitados:* hard-code de `pu_venda` (§10.32); chamar o `asof` de
+    dentro do consumidor (dependência síncrona no caminho do broker). **Pendência do dono,
+    não desta fase:** `campoPosicao` opcional (sem bump de `v`) no `PriceObserved` do
+    `hub-precos` fecharia o buraco na origem.
+  - **O buraco que a decisão acima abre fecha-se por CONCILIAÇÃO CÍCLICA.** Instrumento que
+    entra no livro depois do último bootstrap nunca ganharia `preco_atual`. Um hosted
+    service chama `asof(hoje)` **só** para os instrumentos do livro (sem `caixa:`) **sem
+    linha** em `preco_atual`, sem ETag, pelo mesmo caminho de gravação do bootstrap. Em
+    regime o conjunto é vazio e **não há chamada HTTP**; é ele também que mantém viva a
+    métrica de instrumento posicionado sem preço. *Rejeitado:* aceitar o buraco — o Pronto
+    permissivo desta fase ("preço do dia chegando por push e aparecendo em `preco_atual`")
+    só valeria para instrumento já bootstrapado.
+  - **Ordem na transação do push: histórico PRIMEIRO.** `INSERT ... ON CONFLICT DO NOTHING`
+    em `historico_precos`; se a chave já existia com **`valor` diferente**, é violação do
+    contrato do Hub (mudança de valor exige `revisao + 1`) → desfecho nomeado, log crítico,
+    métrica, **nada** sobrescrito, ack (não é transitório). Só sem divergência vem o upsert
+    condicional de `preco_atual`, num único `INSERT ... ON CONFLICT DO UPDATE ... WHERE`
+    atômico: `(dataRef, revisao)` do evento `≥` o armazenado **e** `campo` igual ao gravado.
+    Na ordem inversa, o `≥` com igualdade gravaria o valor divergente antes de detectá-lo.
+    **Limite conhecido:** `preco_atual` não tem `fonte`; com duas fontes para o mesmo campo e
+    data (fase 2, ou `manual`) a tupla empata e a linha alterna entre elas.
+  - **Os dois casos do `asof` que o produtor NÃO marca com `motivo` têm desfecho próprio.**
+    Classifique `motivo` **primeiro** (`instrumento_desconhecido` sempre vem com
+    `campoPosicao` nulo; `sem_preco_ate_a_data` pode vir). Depois: `campoPosicao` nulo **com**
+    `campos` → `campo_posicao_nao_informado` (grava o histórico, não toca `preco_atual`,
+    alerta — é defeito de classificação no Hub); `campos` **sem a chave** do `campoPosicao` →
+    grava os campos presentes, não toca `preco_atual`, e conta na métrica de posicionado sem
+    preço com label **próprio** (`campo_posicao_sem_preco`), nunca fundido com
+    `sem_preco_ate_a_data`.
+  - **Janela:** `desde` default = menor `data_evento` de movimento não-`caixa:`; `ate`
+    default = hoje em `America/Sao_Paulo` (F3, 5e); o verbo aceita `--desde/--ate` para
+    percorrer por partes, e a mensagem de `Hub.ColetaIncompleta` por teto de dias diz isso.
+    **Dias CORRIDOS**, não os úteis do `calendario_dias_uteis`: só os úteis faria a cobertura
+    depender de dois calendários concordarem (o do Hub e o nosso, que a ADR-12 não liga), e
+    uma `data_ref` num dia que só a Custódia chama de não útil sumiria. Custa ~1,4× as
+    chamadas.
+  - **O bootstrap é VERBO ADMINISTRATIVO** (`--bootstrap-precos [--desde D] [--ate D]`, no
+    padrão de `--drenar-parking`), com linha `DESFECHO=...` na saída e código de saída
+    **distinto** para "coleta completa, mas houve `instrumento_desconhecido`": a coleta está
+    completa e o dado está doente, e as duas coisas não saem com o mesmo `0`.
+  - **Log destacado de `revisao > 0`:** por mensagem no push (e na drenagem, que usa o mesmo
+    caminho); no bootstrap e na conciliação, **um resumo com contagem** — uma reconstrução
+    reemitiria um log por revisão histórica e afogaria a raridade que o log existe para
+    mostrar.
+  - **Validação do payload do push, na forma da do trade:** `v == 1` (senão
+    `versao_nao_suportada`), `tipo == "PriceObserved"`, `valor` em cultura invariante e dentro
+    de `numeric(18,6)`, `dataRef` e `observadoEm` legíveis, `instrumentoId` fora do namespace
+    `caixa:` (senão `payload_invalido`). `prices.*` com outro `tipo` continua
+    `tipo_nao_tratado_prices`, e o residual dele na drenagem é legítimo.
+  - **Primeiro deploy:** drenar o parking antes de qualquer bootstrap **não cria**
+    `preco_atual` (primeira decisão acima). Pela monotonicidade as duas ordens convergem, mas
+    a que deixa a projeção útil é **bootstrap, depois drenagem**.
 
   **Prompt:**
   ```
@@ -5869,7 +5959,7 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     de mensagens fora de ordem, no primeiro boot. A 5 diz que "redelivery e esperada e
     INOCUA (dedupe por chave natural)" — isso vale para o LIVRO, nao para uma projecao
     de "ultimo".
-  - client HTTP do Hub para GET {hub}/prices/asof, com timeout, Polly e conversao de
+  - client HTTP do Hub para GET {hub}/v1/prices/asof, com timeout, Polly e conversao de
     excecao em Result na Infrastructure. Molde:
     ../hub-precos/src/Hub.Infrastructure/TdApi/TdApiClient.cs e
     ../operacoes/src/Operacoes.Infrastructure/Catalogo/ (para o padrao de porta/Result);
@@ -5884,11 +5974,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   DECISOES JA TOMADAS:
   1. HISTORICO LOCAL SIM, nao so preco_atual: o recalculo do F7 nao pode depender de o
      Hub estar online. A DDL de historico_precos JA EXISTE (F3) — nao a crie aqui.
-  2. GET CONDICIONAL (If-None-Match) SIM, ao contrario do operacoes — aqui a URL e FIXA
-     e sondada em ciclo, que e o caso do TdApiClient do molde e nao o da busca por termo
-     (PADROES 10.30). MAS o store de ETag nasce COM PRAZO, TETO E EVICCAO (PADROES
-     10.16): sem isso o hub ficou em 304 permanente depois de um banco zerado por fora.
-     NAO porte o ConditionalGetStore do molde como esta.
+  2. GET CONDICIONAL NAO — REVERTIDA em 2026-09-13 (ver as decisoes acima deste prompt):
+     a URL do asof leva date e instruments, NAO e fixa, e 304 sobre tabela derrubada por
+     TRUNCATE e o incidente da 10.16. Registre a AUSENCIA no formato da 10.30.
   3. SEM last-known-good. Servir preco velho como fresco alimentaria snapshot no F7, e
      snapshot e documento que o cliente ve (P2) — e forward-fill materializado como
      observacao, proibido nominalmente pela secao 9 do PADROES. Registre a AUSENCIA com
@@ -5909,10 +5997,12 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   truncada: preco faltando em silencio vira snapshot com valor errado, gravado e
   versionado):
 
-  ATENCAO: /prices/asof NAO E PAGINADO. A secao 4.5 o define como
-  `?date=D[&instruments=a,b,c]` devolvendo `items[]` — NAO existe `page`, NAO existe
-  `pageSize`, NAO existe `X-Total-Count`. Nao invente paginacao em contrato de terceiro,
-  e nao teste boundary de pageSize: nao ha o que testar. Os lacos que EXISTEM sao dois.
+  ATENCAO: a 4.5 diz que /prices/asof nao e paginado, mas o Hub REAL (/v1/prices/asof)
+  PAGINA sempre (page/pageSize, default 100, max 500; X-Total-Count = ids distintos
+  pedidos) — conferido no codigo em 2026-09-13. NAO implemente laco de paginas: peca cada
+  fatia com page=1&pageSize=<tamanho da fatia> explicitos, fatia padrao 100, teto validado
+  bem abaixo de 500 (o limite real e o tamanho da URL). A completude e a igualdade de
+  conjuntos abaixo, que pega tambem truncamento por pagina. Os lacos que EXISTEM sao dois.
 
   ESCOPO — quais instrumentos pedir. E derivado do LIVRO: os instrumento_id distintos de
   `movimentos`, EXCLUIDO o namespace `caixa:` (V4 do F3 — preco 1 por definicao, nao
@@ -5931,6 +6021,9 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     consumi todas as fatias do conjunto ...... COMPLETUDE -> sucesso
     teto de fatias ........................... LIMITE     -> FALHA, Hub.ColetaIncompleta
     a resposta NAO traz todos os ids da fatia  LIMITE     -> FALHA, Hub.ColetaIncompleta
+    id devolvido que NAO foi pedido .......... LIMITE     -> FALHA, Hub.ColetaIncompleta
+    X-Total-Count > itens devolvidos ......... LIMITE     -> FALHA, Hub.ColetaIncompleta
+  401/403 -> Hub.AcessoNegado; 4xx restante ou corpo ilegivel -> Hub.RespostaInvalida.
   Parada por LIMITE devolve FALHA, nunca Success parcial.
 
   A ULTIMA LINHA SUBSTITUI O BOUNDARY DE pageSize, e e MAIS FORTE que o guard de
@@ -5988,7 +6081,8 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   a guarda de API key checa comprimento minimo E placeholder, nao so vazio — molde
   ../operacoes/src/Operacoes.API/Extensions/HubConfigGuard.cs e KeyStrengthGuard.cs.
   Reescreva o bloco do .env.example com o papel VERDADEIRO do Hub aqui. Localmente o
-  alias e hub-precos-app, NUNCA app (PADROES 10.1). AVISE NO PR que e mudanca quebrante
+  valor e http://host.docker.internal:5080/ (o compose local do hub-precos deixa o app FORA
+  da rede plataforma); hub-precos-app e o alias SO EM PRODUCAO; NUNCA app (PADROES 10.1). AVISE NO PR que e mudanca quebrante
   e rode `docker compose config -q` contra o .env REAL.
 
   Ao final, guardiao-padroes e DEPOIS revisor, em serie, nunca em paralelo. Achado grave
@@ -6008,8 +6102,20 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   reprocessada substituindo o valor em `preco_atual`, deixando **as duas** revisões no
   `historico_precos` e produzindo o log destacado. (**Estrita**)
   (a) `preco_atual` e o `historico_precos` **derrubados com `TRUNCATE`** e reconstruídos
-  inteiramente pelo bootstrap REST, sem intervenção manual, com `diff` vazio contra o
-  estado anterior — essa é a **prova** de que são descartáveis, não a afirmação de que são;
+  pelo bootstrap REST, sem intervenção manual — essa é a **prova** de que são descartáveis,
+  não a afirmação de que são. **Redação corrigida em 2026-09-13:** "diff vazio contra o estado
+  anterior" não vale em geral — o `asof` devolve só a revisão **corrente**, e o push grava
+  instrumentos fora do livro, que o bootstrap não pede —, e um teste escrito assim ou
+  reprovaria a implementação certa ou seria forçado a um estado anterior artificial. A prova
+  tem **duas direções**: (a1) `diff` **vazio no recorte** que o bootstrap tem autoridade para
+  reconstruir — instrumentos do livro, revisão corrente por `(instrumento, data_ref, campo,
+  fonte)`, `data_ref` alcançável por `asof(D)` para `D` na janela —, **incluindo
+  `observado_em`**, que push e bootstrap gravam **do payload**, nunca do `DEFAULT now()` (sem
+  isso o diff nunca fica vazio, e a varredura de defasagem do F7 veria toda revisão
+  reconstruída como nova); e (a2) o **complemento** — o que existia antes e não voltou — é
+  **exatamente** o conjunto previsto (revisões substituídas, instrumentos fora do livro,
+  `data_ref` sem cobertura na janela), porque sem esta segunda asserção o teste passa
+  encolhendo o recorte;
   (b) reentrega do mesmo `PriceObserved` não duplica linha nem muda nada;
   (c) **monotonicidade nas duas direções:** entregar `dataRef` D-3 **depois** de D-1 **não
   muda** `preco_atual`, e `revisao 0` depois de `revisao 1` do mesmo dia também não — com
@@ -6053,6 +6159,15 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
   o database `custodia`. É esta a fase em que a tentação aparece — "o bootstrap seria mais
   simples lendo o banco do Hub" —, e a ADR-12 a proíbe; o que entrou aqui é uma **URL HTTP**,
   não uma conexão.
+  (i) **push de instrumento sem linha em `preco_atual` não a cria** (o `PriceObserved` não
+  traz `campoPosicao`), e a **conciliação cíclica** a cria na volta seguinte com `asof(hoje)`;
+  e uma volta com o conjunto vazio **não faz chamada HTTP nenhuma**;
+  (j) **drenagem de `tipo_nao_tratado_prices` com `PriceObserved` VÁLIDO plantado** devolve
+  `n_motivo ≥ 1` e residual 0 — e o `switch` do reprocessador é exaustivo (desfecho sem ramo
+  lança), porque o `default` que devolvia o motivo original re-estacionaria todo preço
+  drenado como residual eterno, com a suíte verde;
+  (k) **mesma chave de `historico_precos` com `valor` diferente** não sobrescreve nada, nem o
+  histórico nem `preco_atual`, e cai num desfecho nomeado com log crítico e métrica.
 
 - [ ] **F7** — `eod.ready`, snapshots e o worker de recálculo: a engrenagem central.
   **Dependência externa nova: o Hub publicando `eod.ready`.**
@@ -6678,6 +6793,13 @@ patrimônio do dia fica **menor** que o real — nunca maior, nunca "plausível 
     re-versionar o dia — isto é, preço individual disparando re-valoração diária, que é
     exatamente o que a ADR-9 proíbe e o que o Pronto (a) reprova por asserção. *Este é o
     contraexemplo que a primeira redação desta decisão não sobrevivia, e ele fica escrito.*
+    **E o F6 acrescenta uma condição a esta alínea (2026-09-13):** depois de `TRUNCATE` e
+    bootstrap REST, `historico_precos` volta com linhas `revisao > 0` **antigas** — a revisão
+    corrente de datas já materializadas. Elas **não** são gatilho pendente, e o que as separa
+    de uma revisão nova é o `observado_em`, que o F6 grava **do payload** (o instante em que o
+    Hub observou), nunca do `now()` da reconstrução. Trocar a comparação por "linha inserida
+    depois do snapshot" (`xmin`, uma coluna de inserção local) faria uma reconstrução de
+    projeção disparar o recálculo de todos os clientes posicionados.
     **O ESCOPO DO `recalcular` QUE ELA ENFILEIRA É O CLIENTE, NÃO A CHAVE DEFASADA — e sem
     isso ela não conserta o caso que mais motivou a decisão.** Achado um `(cliente,
     instrumento, data)` defasado, a varredura enfileira `recalcular(cliente, i, desde=data)`

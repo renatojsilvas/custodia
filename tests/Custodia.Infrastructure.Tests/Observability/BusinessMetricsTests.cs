@@ -13,6 +13,12 @@ public sealed class BusinessMetricsTests
     private static readonly Gauge CalendarioDiasUteisHorizonteDiasRestantesGauge = Metrics.CreateGauge(
         "custodia_calendario_dias_uteis_horizonte_dias_restantes", "help");
 
+    private static readonly Counter RevisaoDePrecoRecebidaTotal = Metrics.CreateCounter(
+        "custodia_preco_revisao_recebida_total", "help", new CounterConfiguration { LabelNames = ["instrumento_id", "campo"] });
+
+    private static readonly Counter ValorDivergenteNoHistoricoDePrecosTotal = Metrics.CreateCounter(
+        "custodia_preco_valor_divergente_total", "help", new CounterConfiguration { LabelNames = ["instrumento_id", "campo"] });
+
     private readonly BusinessMetrics _metrics = new(NullLogger<BusinessMetrics>.Instance);
 
     [Fact]
@@ -70,5 +76,61 @@ public sealed class BusinessMetricsTests
         metrics.RegistrarHorizonteCalendarioDiasUteis(diasRestantes: 1500, diasMinimosConfigurados: 90);
 
         Assert.Empty(logger.Entries);
+    }
+
+    [Fact]
+    public void RegistrarRevisaoDePrecoRecebida_RevisaoMaiorQueZero_ProduzLogDestacadoDeWarning()
+    {
+        var logger = new FakeLogger<BusinessMetrics>();
+        var metrics = new BusinessMetrics(logger);
+        var instrumentoId = $"td:metrics-revisao-{Guid.NewGuid():N}";
+
+        metrics.RegistrarRevisaoDePrecoRecebida(
+            instrumentoId, "pu_venda", new DateOnly(2026, 8, 1), revisao: 1, fonte: "td-api", valorNovo: 110m, valorAnterior: 100m);
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public void RegistrarRevisaoDePrecoRecebida_IncrementaOContadorRotuladoPorInstrumentoECampo()
+    {
+        var logger = new FakeLogger<BusinessMetrics>();
+        var metrics = new BusinessMetrics(logger);
+        var instrumentoId = $"td:metrics-revisao-contador-{Guid.NewGuid():N}";
+        var antes = RevisaoDePrecoRecebidaTotal.WithLabels(instrumentoId, "pu_venda").Value;
+
+        metrics.RegistrarRevisaoDePrecoRecebida(
+            instrumentoId, "pu_venda", new DateOnly(2026, 8, 1), revisao: 1, fonte: "td-api", valorNovo: 110m, valorAnterior: 100m);
+
+        var depois = RevisaoDePrecoRecebidaTotal.WithLabels(instrumentoId, "pu_venda").Value;
+        Assert.Equal(1, depois - antes);
+    }
+
+    [Fact]
+    public void RegistrarValorDivergenteNoHistoricoDePrecos_ProduzLogCritico()
+    {
+        var logger = new FakeLogger<BusinessMetrics>();
+        var metrics = new BusinessMetrics(logger);
+        var instrumentoId = $"td:metrics-divergencia-{Guid.NewGuid():N}";
+
+        metrics.RegistrarValorDivergenteNoHistoricoDePrecos(
+            instrumentoId, "pu_venda", new DateOnly(2026, 8, 1), fonte: "td-api", revisao: 0, valorAnterior: 100m, valorNovo: 200m);
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical);
+    }
+
+    [Fact]
+    public void RegistrarValorDivergenteNoHistoricoDePrecos_IncrementaOContadorRotuladoPorInstrumentoECampo()
+    {
+        var logger = new FakeLogger<BusinessMetrics>();
+        var metrics = new BusinessMetrics(logger);
+        var instrumentoId = $"td:metrics-divergencia-contador-{Guid.NewGuid():N}";
+        var antes = ValorDivergenteNoHistoricoDePrecosTotal.WithLabels(instrumentoId, "pu_venda").Value;
+
+        metrics.RegistrarValorDivergenteNoHistoricoDePrecos(
+            instrumentoId, "pu_venda", new DateOnly(2026, 8, 1), fonte: "td-api", revisao: 0, valorAnterior: 100m, valorNovo: 200m);
+
+        var depois = ValorDivergenteNoHistoricoDePrecosTotal.WithLabels(instrumentoId, "pu_venda").Value;
+        Assert.Equal(1, depois - antes);
     }
 }

@@ -127,6 +127,130 @@ public sealed class BusinessMetrics(ILogger<BusinessMetrics> logger) : IBusiness
         }
     }
 
+    private static readonly Counter RevisaoDePrecoRecebidaTotal = Metrics.CreateCounter(
+        "custodia_preco_revisao_recebida_total",
+        "Total de revisões de preço (revisao > 0) recebidas via push ou drenagem — raras por definição " +
+        "(ARQUITETURA §12); cada uma é uma correção de valor já publicado no histórico.",
+        new CounterConfiguration { LabelNames = ["instrumento_id", "campo"] });
+
+    private static readonly Counter ValorDivergenteNoHistoricoDePrecosTotal = Metrics.CreateCounter(
+        "custodia_preco_valor_divergente_total",
+        "Total de PriceObserved cuja chave natural (instrumento, data, campo, fonte, revisão) já existia no " +
+        "histórico com um valor DIFERENTE — violação do contrato do Hub (mudança de valor exige revisao+1). " +
+        "Nada é sobrescrito em nenhuma das duas tabelas.",
+        new CounterConfiguration { LabelNames = ["instrumento_id", "campo"] });
+
+    public void RegistrarRevisaoDePrecoRecebida(
+        string instrumentoId, string campo, DateOnly dataRef, int revisao, string fonte, decimal valorNovo, decimal? valorAnterior)
+    {
+        RevisaoDePrecoRecebidaTotal.WithLabels(instrumentoId, campo).Inc();
+
+        logger.LogWarning(
+            "Revisão de preço recebida: instrumento {InstrumentoId}, campo {Campo}, data {DataRef}, revisão " +
+            "{Revisao}, fonte {Fonte}, valor novo {ValorNovo}, valor anterior {ValorAnterior}. Correções são " +
+            "raras (ARQUITETURA §12) e merecem visibilidade.",
+            instrumentoId,
+            campo,
+            dataRef,
+            revisao,
+            fonte,
+            valorNovo,
+            valorAnterior);
+    }
+
+    public void RegistrarValorDivergenteNoHistoricoDePrecos(
+        string instrumentoId, string campo, DateOnly dataRef, string fonte, int revisao, decimal valorAnterior, decimal valorNovo)
+    {
+        ValorDivergenteNoHistoricoDePrecosTotal.WithLabels(instrumentoId, campo).Inc();
+
+        logger.LogCritical(
+            "Valor divergente no histórico de preços: instrumento {InstrumentoId}, campo {Campo}, data {DataRef}, " +
+            "fonte {Fonte}, revisão {Revisao}, valor já gravado {ValorAnterior}, valor recebido {ValorNovo}. " +
+            "Mudança de valor exige revisao+1 (contrato do Hub) — nada foi sobrescrito.",
+            instrumentoId,
+            campo,
+            dataRef,
+            fonte,
+            revisao,
+            valorAnterior,
+            valorNovo);
+    }
+
+    private static readonly Counter PrecoInstrumentoDesconhecidoTotal = Metrics.CreateCounter(
+        "custodia_preco_instrumento_desconhecido_total",
+        "Total de instrumentos do livro que o Hub de Preços não conhece ao consultar /v1/prices/asof " +
+        "(motivo instrumento_desconhecido) — nunca fabricamos preço para eles; alerta, porque é sinal de defeito " +
+        "de catálogo em algum dos dois lados.",
+        new CounterConfiguration { LabelNames = ["instrumento_id"] });
+
+    private static readonly Counter PrecoCampoPosicaoNaoInformadoTotal = Metrics.CreateCounter(
+        "custodia_preco_campo_posicao_nao_informado_total",
+        "Total de itens do /v1/prices/asof com campos de preço mas sem campoPosicao — defeito de classificação " +
+        "no Hub (PADROES §10.32); histórico gravado, preco_atual não tocado.",
+        new CounterConfiguration { LabelNames = ["instrumento_id"] });
+
+    private static readonly Counter PrecoInstrumentoPosicionadoSemPrecoTotal = Metrics.CreateCounter(
+        "custodia_preco_instrumento_posicionado_sem_preco_total",
+        "Total de instrumentos posicionados sem preço encontrado na consulta ao Hub, rotulado por motivo: " +
+        "sem_preco_ate_a_data (a fonte não tem preço até a data) ou campo_posicao_sem_preco (campoPosicao " +
+        "informado mas ausente entre os campos devolvidos) — rótulos nunca fundidos.",
+        new CounterConfiguration { LabelNames = ["instrumento_id", "motivo"] });
+
+    private static readonly Gauge ConciliacaoDePrecosSemPrecoAtualGauge = Metrics.CreateGauge(
+        "custodia_conciliacao_precos_sem_preco_atual",
+        "Quantidade de instrumentos do livro (fora de caixa:) sem linha em preco_atual, medida na última volta " +
+        "da conciliação cíclica de preços. Mantém viva a métrica de posicionado sem preço em regime.");
+
+    private static readonly Counter ConciliacaoDePrecosVoltaTotal = Metrics.CreateCounter(
+        "custodia_conciliacao_precos_volta_total",
+        "Total de voltas da conciliação cíclica de preços, rotulado por desfecho (completude ou falha).",
+        new CounterConfiguration { LabelNames = ["desfecho"] });
+
+    public void RegistrarPrecoInstrumentoDesconhecido(string instrumentoId)
+    {
+        PrecoInstrumentoDesconhecidoTotal.WithLabels(instrumentoId).Inc();
+
+        logger.LogError(
+            "Instrumento {InstrumentoId} do livro é desconhecido no Hub de Preços ao consultar /v1/prices/asof. " +
+            "Investigue catálogo/onboarding.",
+            instrumentoId);
+    }
+
+    public void RegistrarPrecoCampoPosicaoNaoInformado(string instrumentoId)
+    {
+        PrecoCampoPosicaoNaoInformadoTotal.WithLabels(instrumentoId).Inc();
+
+        logger.LogError(
+            "Instrumento {InstrumentoId} veio do Hub de Preços com campos mas sem campoPosicao. Defeito de " +
+            "classificação no Hub — histórico gravado, preco_atual não tocado.",
+            instrumentoId);
+    }
+
+    public void RegistrarPrecoInstrumentoPosicionadoSemPreco(string instrumentoId, string motivo)
+    {
+        PrecoInstrumentoPosicionadoSemPrecoTotal.WithLabels(instrumentoId, motivo).Inc();
+
+        logger.LogWarning(
+            "Instrumento {InstrumentoId} posicionado sem preço encontrado ({Motivo}).",
+            instrumentoId,
+            motivo);
+    }
+
+    public void RegistrarConciliacaoDePrecosSemPrecoAtual(int quantidade)
+    {
+        ConciliacaoDePrecosSemPrecoAtualGauge.Set(quantidade);
+
+        if (quantidade > 0)
+        {
+            logger.LogWarning(
+                "Conciliação de preços: {Quantidade} instrumento(s) do livro ainda sem preco_atual.",
+                quantidade);
+        }
+    }
+
+    public void RegistrarConciliacaoDePrecosVolta(string desfecho) =>
+        ConciliacaoDePrecosVoltaTotal.WithLabels(desfecho).Inc();
+
     public void RegistrarLiquidacaoCandidataInconsistente(string clienteId, string tradeId, string refExternaOfensora)
     {
         LiquidacaoCandidataInconsistenteTotal.Inc();

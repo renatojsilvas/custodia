@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Prometheus;
 using Custodia.API;
+using Custodia.API.Cli;
 using Custodia.API.Extensions;
 using Custodia.API.Middleware;
 using Custodia.Application;
 using Custodia.Application.Reparo;
 using Custodia.Application.Posicoes;
+using Custodia.Application.Precos.Bootstrap;
 using Custodia.Domain.Common;
 using Custodia.Domain.Eventos;
 using Custodia.Infrastructure;
@@ -19,11 +21,13 @@ using IResult = Microsoft.AspNetCore.Http.IResult;
 const string VerboReconstruirPosicoes = "--reconstruir-posicoes";
 const string VerboDrenarParking = "--drenar-parking";
 const string VerboRepararResgatesAntigos = "--reparar-resgates-antigos";
+const string VerboBootstrapPrecos = "--bootstrap-precos";
 const string ArgumentoPassagemId = "--passagem-id";
 const int CodigoDeSaidaUso = 64;
 
 if (args.Length > 0
-    && (args[0] == VerboReconstruirPosicoes || args[0] == VerboDrenarParking || args[0] == VerboRepararResgatesAntigos))
+    && (args[0] == VerboReconstruirPosicoes || args[0] == VerboDrenarParking
+        || args[0] == VerboRepararResgatesAntigos || args[0] == VerboBootstrapPrecos))
 {
     var codigoDeSaidaAdmin = await ExecutarComandoAdministrativoAsync(args);
     Environment.Exit(codigoDeSaidaAdmin);
@@ -44,6 +48,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<RabbitMqFilaProfundidadePoller>();
     builder.Services.AddHostedService<CalendarioDiasUteisHorizonteGuard>();
     builder.Services.AddHostedService<ConciliacaoDeResgatesJob>();
+    builder.Services.AddHostedService<ConciliacaoDePrecosJob>();
 
     if (builder.Configuration.GetValue(ChaveConfiguracaoLiquidacaoJobHabilitado, defaultValue: true))
     {
@@ -55,6 +60,8 @@ NormalizeApiKeyConfiguration(app.Configuration);
 ConnectionStringGuard.Validate(app.Configuration, app.Environment);
 ApiKeyGuard.Validate(app.Configuration, app.Environment);
 RabbitMqConfigGuard.Validate(app.Configuration, app.Environment);
+HubConfigGuard.Validate(app.Configuration, app.Environment);
+BootstrapPrecosConfigGuard.Validate(app.Configuration);
 await app.InitializeDatabaseAsync();
 app.UseForwardedHeaders();
 var httpMetricsExcludedPaths = app.Configuration.GetSection("Metrics:ExcludedPaths").Get<string[]>() ?? [];
@@ -132,6 +139,12 @@ static async Task<int> ExecutarComandoAdministrativoAsync(string[] args)
     ConnectionStringGuard.Validate(adminBuilder.Configuration, adminBuilder.Environment);
     RabbitMqConfigGuard.Validate(adminBuilder.Configuration, adminBuilder.Environment);
 
+    if (args[0] == VerboBootstrapPrecos)
+    {
+        HubConfigGuard.Validate(adminBuilder.Configuration, adminBuilder.Environment);
+        BootstrapPrecosConfigGuard.Validate(adminBuilder.Configuration);
+    }
+
     using var adminHost = adminBuilder.Build();
 
     await adminHost.Services.GetRequiredService<IDatabaseInitializer>().InitializeAsync();
@@ -141,6 +154,7 @@ static async Task<int> ExecutarComandoAdministrativoAsync(string[] args)
         VerboReconstruirPosicoes => await ExecutarReconstruirPosicoesAsync(adminHost.Services, args),
         VerboDrenarParking => await ExecutarDrenarParkingAsync(adminHost.Services, args),
         VerboRepararResgatesAntigos => await ExecutarRepararResgatesAntigosAsync(adminHost.Services),
+        VerboBootstrapPrecos => await ExecutarBootstrapPrecosAsync(adminHost.Services, args),
         _ => CodigoDeSaidaUso,
     };
 }
@@ -230,6 +244,44 @@ static async Task<int> ExecutarDrenarParkingAsync(IServiceProvider servicos, str
         DesfechoDrenagem.Interrompida => 6,
         _ => 1,
     };
+}
+
+static async Task<int> ExecutarBootstrapPrecosAsync(IServiceProvider servicos, string[] args)
+{
+    var argumentos = BootstrapPrecosArgumentos.Interpretar(args);
+    if (!argumentos.EhValido)
+    {
+        Console.Error.WriteLine(
+            $"Uso: {VerboBootstrapPrecos} [{BootstrapPrecosArgumentos.ArgumentoDesde} <data>] " +
+            $"[{BootstrapPrecosArgumentos.ArgumentoAte} <data>] — {argumentos.ErroDeUso}");
+        return CodigoDeSaidaUso;
+    }
+
+    using var escopo = servicos.CreateScope();
+    var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
+    var resultado = await mediator.Send(
+        new ColetarPrecosDoHubCommand(EscopoDeColetaDePrecos.LivroInteiroNaJanela, argumentos.Desde, argumentos.Ate));
+
+    if (resultado.IsFailure)
+    {
+        Console.WriteLine(
+            $"DESFECHO=FALHA CODIGO={resultado.Error.Code} MENSAGEM=\"{resultado.Error.Description}\"");
+        return 1;
+    }
+
+    var valor = resultado.Value;
+    var houveAnomalia = valor.InstrumentosDesconhecidos > 0 || valor.CampoPosicaoNaoInformado > 0 || valor.ValoresDivergentes > 0;
+
+    Console.WriteLine(
+        $"DESFECHO={(houveAnomalia ? "COMPLETUDE_COM_ANOMALIA" : "COMPLETUDE")} DIAS={valor.Dias} " +
+        $"CHAMADAS={valor.ChamadasHttp} INSTRUMENTOS={valor.Instrumentos} HISTORICO_INSERIDO={valor.HistoricoInserido} " +
+        $"PRECO_ATUAL_CRIADO={valor.PrecoAtualCriado} PRECO_ATUAL_ATUALIZADO={valor.PrecoAtualAtualizado} " +
+        $"PRECO_ATUAL_CAMPO_TROCADO={valor.PrecoAtualCampoTrocado} SEM_PRECO={valor.SemPreco} " +
+        $"CAMPO_POSICAO_SEM_PRECO={valor.CampoPosicaoSemPreco} CAMPO_POSICAO_NAO_INFORMADO={valor.CampoPosicaoNaoInformado} " +
+        $"DESCONHECIDOS={valor.InstrumentosDesconhecidos} VALORES_DIVERGENTES={valor.ValoresDivergentes} " +
+        $"REVISOES_MAIORES_QUE_ZERO={valor.RevisoesMaioresQueZero}");
+
+    return houveAnomalia ? 2 : 0;
 }
 
 public partial class Program;

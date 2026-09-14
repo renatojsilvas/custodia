@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Custodia.Application.Eventos;
+using Custodia.Application.Precos;
 using Custodia.Domain.Eventos;
 using MediatR;
 using Microsoft.Extensions.Configuration;
@@ -206,6 +207,10 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
                 await ProcessarTradeAsync(ea, cabecalhosOriginais, desfecho.Evento!, corpo);
                 return;
 
+            case DesfechoRoteamentoTipo.Observar:
+                await ProcessarPrecoAsync(ea, cabecalhosOriginais, desfecho.EventoPreco!, corpo);
+                return;
+
             default:
                 throw new InvalidOperationException($"Desfecho de roteamento não reconhecido: '{desfecho.Tipo}'.");
         }
@@ -247,6 +252,53 @@ public sealed class RabbitMqTradeConsumidor : BackgroundService
             default:
                 throw new InvalidOperationException(
                     $"Resultado de TradeRegistered não reconhecido: '{resultado.Value.Tipo}'.");
+        }
+    }
+
+    private async Task ProcessarPrecoAsync(
+        BasicDeliverEventArgs ea, Dictionary<string, object?> cabecalhosOriginais, PriceObservedEvento evento, byte[] corpo)
+    {
+        using var escopo = _scopeFactory.CreateScope();
+        var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
+        var resultado = await mediator.Send(new ProcessarPriceObservedCommand(evento), CancellationToken.None);
+
+        if (resultado.IsFailure)
+        {
+            _logger.LogCritical(
+                "Falha reconhecida e determinística ao processar PriceObserved (instrumento {InstrumentoId}, campo " +
+                "{Campo}, data {DataRef}, revisão {Revisao}): {Codigo} - {Mensagem}. Estacionando com motivo {Motivo} " +
+                "em vez de requeue indefinido.",
+                evento.InstrumentoId, evento.Campo, evento.DataRef, evento.Revisao, resultado.Error.Code,
+                resultado.Error.Description, MotivoParking.FalhaInesperadaNoProcessamento.Name);
+            await EstacionarAsync(ea, cabecalhosOriginais, MotivoParking.FalhaInesperadaNoProcessamento, corpo);
+            return;
+        }
+
+        switch (resultado.Value.Tipo)
+        {
+            case ResultadoPriceObservedTipo.AplicadoEmPrecoAtual:
+                await AckAsync(ea);
+                _metrics.RegistrarDesfecho("ack_preco_aplicado_preco_atual");
+                return;
+
+            case ResultadoPriceObservedTipo.SoHistorico:
+                await AckAsync(ea);
+                _metrics.RegistrarDesfecho("ack_preco_so_historico");
+                return;
+
+            case ResultadoPriceObservedTipo.ReplaySemAlteracao:
+                await AckAsync(ea);
+                _metrics.RegistrarDesfecho("ack_preco_replay");
+                return;
+
+            case ResultadoPriceObservedTipo.ValorDivergente:
+                await AckAsync(ea);
+                _metrics.RegistrarDesfecho("ack_preco_valor_divergente");
+                return;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Resultado de PriceObserved não reconhecido: '{resultado.Value.Tipo}'.");
         }
     }
 

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Custodia.Application.Eventos;
+using Custodia.Application.Precos;
 using Custodia.Domain.Eventos;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,9 +37,24 @@ public sealed class RoteadorMensagemParkingReprocessador(
             case DesfechoRoteamentoTipo.Escriturar:
                 return await EscriturarAsync(desfecho.Evento!, motivoOriginal, ct);
 
+            case DesfechoRoteamentoTipo.Observar:
+                return await ObservarAsync(desfecho.EventoPreco!, motivoOriginal, ct);
+
             default:
-                return ResultadoReprocessamento.Falha(motivoOriginal);
+                throw new InvalidOperationException($"Desfecho de roteamento não reconhecido: '{desfecho.Tipo}'.");
         }
+    }
+
+    private async Task<ResultadoReprocessamento> ObservarAsync(
+        PriceObservedEvento evento, MotivoParking motivoOriginal, CancellationToken ct)
+    {
+        using var escopo = scopeFactory.CreateScope();
+        var mediator = escopo.ServiceProvider.GetRequiredService<IMediator>();
+        var resultado = await mediator.Send(new ProcessarPriceObservedCommand(evento), ct);
+
+        return resultado.IsSuccess
+            ? ResultadoReprocessamento.Sucesso()
+            : ResultadoReprocessamento.Falha(motivoOriginal);
     }
 
     private async Task<ResultadoReprocessamento> EscriturarAsync(

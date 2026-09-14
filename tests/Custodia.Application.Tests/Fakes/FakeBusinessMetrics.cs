@@ -15,8 +15,55 @@ internal sealed record CalendarioExauridoNaLiquidacao(string ClienteId, string T
 
 internal sealed record CandidataInconsistenteNaLiquidacao(string ClienteId, string TradeId, string RefExternaOfensora);
 
+internal sealed record RevisaoDePrecoRecebida(
+    string InstrumentoId, string Campo, DateOnly DataRef, int Revisao, string Fonte, decimal ValorNovo, decimal? ValorAnterior);
+
+internal sealed record ValorDivergenteNoHistoricoDePrecos(
+    string InstrumentoId, string Campo, DateOnly DataRef, string Fonte, int Revisao, decimal ValorAnterior, decimal ValorNovo);
+
+internal sealed record InstrumentoPosicionadoSemPreco(string InstrumentoId, string Motivo);
+
 internal sealed class FakeBusinessMetrics : IBusinessMetrics
 {
+    public List<RevisaoDePrecoRecebida> RevisoesDePrecoRecebidas { get; } = [];
+
+    public List<ValorDivergenteNoHistoricoDePrecos> ValoresDivergentesNoHistoricoDePrecos { get; } = [];
+
+    public List<string> InstrumentosDesconhecidos { get; } = [];
+
+    public List<string> CamposPosicaoNaoInformados { get; } = [];
+
+    public List<InstrumentoPosicionadoSemPreco> InstrumentosPosicionadosSemPreco { get; } = [];
+
+    public List<int> ConciliacaoDePrecosSemPrecoAtual { get; } = [];
+
+    public List<string> ConciliacaoDePrecosVoltas { get; } = [];
+
+    public void RegistrarPrecoInstrumentoDesconhecido(string instrumentoId) =>
+        InstrumentosDesconhecidos.Add(instrumentoId);
+
+    public void RegistrarPrecoCampoPosicaoNaoInformado(string instrumentoId) =>
+        CamposPosicaoNaoInformados.Add(instrumentoId);
+
+    public void RegistrarPrecoInstrumentoPosicionadoSemPreco(string instrumentoId, string motivo) =>
+        InstrumentosPosicionadosSemPreco.Add(new InstrumentoPosicionadoSemPreco(instrumentoId, motivo));
+
+    public void RegistrarConciliacaoDePrecosSemPrecoAtual(int quantidade) =>
+        ConciliacaoDePrecosSemPrecoAtual.Add(quantidade);
+
+    public void RegistrarConciliacaoDePrecosVolta(string desfecho) =>
+        ConciliacaoDePrecosVoltas.Add(desfecho);
+
+    public void RegistrarRevisaoDePrecoRecebida(
+        string instrumentoId, string campo, DateOnly dataRef, int revisao, string fonte, decimal valorNovo, decimal? valorAnterior) =>
+        RevisoesDePrecoRecebidas.Add(
+            new RevisaoDePrecoRecebida(instrumentoId, campo, dataRef, revisao, fonte, valorNovo, valorAnterior));
+
+    public void RegistrarValorDivergenteNoHistoricoDePrecos(
+        string instrumentoId, string campo, DateOnly dataRef, string fonte, int revisao, decimal valorAnterior, decimal valorNovo) =>
+        ValoresDivergentesNoHistoricoDePrecos.Add(
+            new ValorDivergenteNoHistoricoDePrecos(instrumentoId, campo, dataRef, fonte, revisao, valorAnterior, valorNovo));
+
     public List<SinalizacaoDePosicaoNegativa> Sinalizacoes { get; } = [];
 
     public List<RegistroDeHorizonteCalendario> RegistrosDeHorizonteCalendario { get; } = [];

@@ -16,19 +16,21 @@ services:
       - RabbitMq__Host=plataforma-rabbitmq
       - RabbitMq__User=${RABBITMQ_USER:-guest}
       - RabbitMq__Password=${RABBITMQ_PASSWORD:-guest}
-      # VARIAVEIS QUE AINDA NAO ESTAO AQUI — mesmo criterio do docker-compose.prod.yml:
-      # a credencial entra NA FASE QUE A TORNA REAL. Alem de derrubar o `up` sem motivo,
-      # uma variavel com `:?` que ninguem le quebra o `docker compose config -q` do CI.
-      #
-      #   Hub__{BaseUrl,ApiKey}  -> quando existir o bootstrap REST da projecao de precos
-      #                             (ARQUITETURA §7.1) e o `asof` do worker de recalculo
-      #                             (§7.4). NAO cobre resolucao nome->id do onboarding
-      #                             (§7.2): essa acontece em Operacoes, na borda
-      #                             (ADR-10/ADR-11) — a Custodia so recebe instrumento_id
-      #                             ja resolvido, cru, no evento trades.registered. O Hub
-      #                             e servico externo (repo hub-precos) e nao sobe aqui;
-      #                             na rede "plataforma" o alias e "hub-precos-app", nao
-      #                             "app" (§10.1).
+      # F6: quem preenche preco_atual e historico_precos (ARQUITETURA §7.1) via
+      # GET {Hub__BaseUrl}/v1/prices/asof e o verbo `--bootstrap-precos` e a
+      # conciliacao ciclica — nao este servico web sozinho; o `asof` tambem alimenta o
+      # worker de recalculo do F7. NAO cobre resolucao nome->id do onboarding (§7.2):
+      # essa acontece em Operacoes, na borda (ADR-10/ADR-11) — a Custodia so recebe
+      # instrumento_id ja resolvido, cru, no evento trades.registered; a Custodia nao
+      # tem endpoint de escrita (ADR-10), entao nao ha "validar instrumento" aqui. O Hub
+      # e servico externo (repo hub-precos) e nao sobe neste compose; o compose LOCAL do
+      # hub-precos deixa o `app` FORA da rede "plataforma" de proposito e so publica
+      # 127.0.0.1:5080 — o alias "hub-precos-app" existe SO EM PRODUCAO. Localmente use
+      # http://host.docker.internal:5080/ no .env (mesmo valor do `operacoes`); nunca
+      # "app" (§10.1). Sem default, mesmo em dev local (mesmo criterio do `operacoes`):
+      # HubConfigGuard derruba o boot fora de Development/Testing se estiver ausente.
+      - Hub__BaseUrl=${CUSTODIA_HUB_BASE_URL:?CUSTODIA_HUB_BASE_URL e obrigatorio no .env (URL do Hub de Precos)}
+      - Hub__ApiKey=${CUSTODIA_HUB_API_KEY:?CUSTODIA_HUB_API_KEY e obrigatorio no .env (chave que o custodia envia ao Hub)}
     ports:
       # Portas LOCAIS do desenvolvedor (nao da VPS). O operacoes usa 5081 (app) e 5434
       # (pg); estas sao as seguintes. Se colidirem com outro servico SEU, troque aqui, no
