@@ -1,0 +1,53 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+
+namespace Custodia.API.Extensions;
+
+public static class HubConfigGuard
+{
+    private const string BaseUrlKey = "Hub:BaseUrl";
+    private const string ApiKeyKey = "Hub:ApiKey";
+
+    public static void Validate(string environmentName, string? baseUrl, string? apiKey)
+    {
+        if (string.Equals(environmentName, "Development", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(environmentName, "Testing", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var trimmedBaseUrl = baseUrl?.Trim() ?? string.Empty;
+        if (!Uri.TryCreate(trimmedBaseUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException(
+                $"Configuração inválida: '{BaseUrlKey}' ('{trimmedBaseUrl}') não é uma URL http(s) " +
+                $"absoluta válida em ambiente '{environmentName}'. Configure via variável de ambiente " +
+                "Hub__BaseUrl (Docker/produção) ou dotnet user-secrets set \"Hub:BaseUrl\" \"<url>\" " +
+                "--project src/Custodia.API (dev local). Sem isto, o bootstrap REST da projeção de " +
+                "preços (GET {Hub:BaseUrl}/v1/prices/asof, que popula preco_atual e historico_precos " +
+                "quando a projeção está vazia ou atrasada) e o asof do worker de recálculo do F7 nunca " +
+                "conseguem falar com o Hub.");
+        }
+
+        var trimmedApiKey = apiKey?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedApiKey))
+        {
+            throw new InvalidOperationException(
+                $"Configuração inválida: '{ApiKeyKey}' está vazia em ambiente '{environmentName}'. {ApiKeyHint}");
+        }
+
+        KeyStrengthGuard.EnsureStrong(ApiKeyKey, environmentName, trimmedApiKey, ApiKeyHint);
+    }
+
+    public static void Validate(IConfiguration configuration, IHostEnvironment environment) =>
+        Validate(environment.EnvironmentName, configuration[BaseUrlKey], configuration[ApiKeyKey]);
+
+    private const string ApiKeyHint =
+        "É a chave que A CUSTÓDIA ENVIA ao Hub (X-Api-Key) no bootstrap REST da projeção de preços e " +
+        "no asof do worker de recálculo do F7 — diferente de ApiKey:Key, que é a chave que a Custódia " +
+        "EXIGE de quem a chama. Configure via variável de ambiente Hub__ApiKey (Docker/produção) ou " +
+        "dotnet user-secrets set \"Hub:ApiKey\" \"<chave>\" --project src/Custodia.API (dev local). Sem " +
+        "isto, o bootstrap REST recebe 401/403 do Hub e a projeção de preços fica sem dado onde o " +
+        "evento prices.* ainda não chegou.";
+}

@@ -55,6 +55,7 @@ NormalizeApiKeyConfiguration(app.Configuration);
 ConnectionStringGuard.Validate(app.Configuration, app.Environment);
 ApiKeyGuard.Validate(app.Configuration, app.Environment);
 RabbitMqConfigGuard.Validate(app.Configuration, app.Environment);
+HubConfigGuard.Validate(app.Configuration, app.Environment);
 await app.InitializeDatabaseAsync();
 app.UseForwardedHeaders();
 var httpMetricsExcludedPaths = app.Configuration.GetSection("Metrics:ExcludedPaths").Get<string[]>() ?? [];
