@@ -1770,3 +1770,55 @@ conceitos se encontram.
 em segundos. Numa varredura de string (SQL embutido, nome de métrica, chave de configuração,
 documento) **não há compilador**, o filtro cego passa despercebido, e o que sobrevive é uma ocorrência
 órfã que ninguém procura de novo.
+
+### 10.51. Acima de 20 `ServiceProvider` no mesmo processo, o EF Core LANÇA — e quem falha é outro teste
+
+**Medido na `custodia`, F6 (2026-09-14/15), e custou dois dias com três causas erradas pelo caminho.**
+
+Depois de uma fase que só ACRESCENTOU testes, dois testes **antigos** de consumidor passaram a falhar
+por **timeout de 20 s** na suíte completa, e a passar quando rodados isolados. Eles não tinham sido
+tocados, e o código de produção deles também não.
+
+A causa não estava neles. Cada teste que monta a própria infraestrutura (`new ServiceCollection()` +
+`AddInfrastructure`) registra um `NpgsqlDataSource` **novo**, e o EF Core mantém um provider interno
+por configuração distinta de opções — a instância do data source entra na chave. A partir do 21º, o EF
+**lança** `InvalidOperationException` (`ManyServiceProvidersCreatedWarning`: *"More than twenty
+'IServiceProvider' instances have been created for internal use"*) ao resolver o `DbContext`. Num teste
+de consumidor isso vira exceção **dentro do handler**: a mensagem estaciona com o motivo genérico de
+falha inesperada, e o teste que esperava o motivo dele espera até o timeout. O número de testes que
+constroem provider é global ao processo, então **qualquer** classe nova empurra os vizinhos para
+depois do limite — o sintoma aparece longe da mudança, e a suíte parece flaky.
+
+**Regra: em teste, um data source por FIXTURE, não um por teste.** A fixture cria um
+`NpgsqlDataSource` no start, descarta no fim, e cada provider de teste troca o registro depois do
+`AddInfrastructure`:
+
+```csharp
+servicos.AddInfrastructure(configuration);
+servicos.Replace(ServiceDescriptor.Singleton(_dataSourceCompartilhado));
+```
+
+São seis linhas, atacam a causa (parar de multiplicar provider interno) e deixam o teste mais parecido
+com produção, que tem **um** data source por processo — por isso a aplicação nunca vê este limite. Na
+`custodia` isso levou a suíte de 233 verdes + 2 falhas, com **3** ocorrências da exceção no log, para
+**235 verdes com zero** ocorrências.
+
+*Rejeitado:* suprimir o aviso nos testes com
+`ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))`. Funciona, mas cala
+o único sinal de que providers estão se multiplicando, exige conhecer três detalhes do EF Core (e que
+`Replace` no descritor de `DbContextOptions` funciona enquanto um segundo `AddDbContext` **não
+compõe**), e não se transporta para os repos vizinhos sem reexplicação.
+
+**Guardas, porque a regra baixa a contagem mas não elimina o teto:**
+
+- **Ao ver timeout em teste que você não tocou, conte a exceção no log** antes de formular hipótese:
+  `grep -c 'More than twenty' <log>`. Zero nas corridas verdes, ≥ 1 nas vermelhas, e a primeira
+  ocorrência imediatamente **antes** da falha é a assinatura.
+- **Procure onde ela acontece SEM falhar.** Na `custodia`, em corridas verdes a exceção caía dentro de
+  dois testes que esperavam um caminho de falha — e **passavam por causa dela**. Teste que aceita
+  "qualquer falha" absorve erro de infraestrutura e vira vácuo (§10.8): ele tem de afirmar a **causa**
+  que o próprio teste forçou.
+- **`operacoes` e `hub-precos` registram o `AppDbContext` do mesmo jeito** (`AddDbContext` com
+  `UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>())`) e têm o mesmo teto latente, hoje só não
+  alcançado porque têm menos testes desse tipo. Não se muda suíte verde por precaução: quando o
+  sintoma aparecer, é este item que encurta o diagnóstico de dois dias para dez minutos.

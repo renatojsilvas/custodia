@@ -23,6 +23,9 @@ public static class SchemaNumericLimits
     public static readonly decimal PrecoLimiteSuperiorExclusivo =
         Potencia10(PrecoPrecisao - PrecoEscala);
 
+    public static bool ExcedePrecisaoDePreco(decimal valor) =>
+        Math.Abs(valor) >= PrecoLimiteSuperiorExclusivo || decimal.Round(valor, PrecoEscala) != valor;
+
     private static decimal Potencia10(int expoente)
     {
         var resultado = 1m;

@@ -49,8 +49,9 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       # Gate barato (segundos): docker-compose.prod.yml exige ${CUSTODIA_APP_PASSWORD:?...},
-      # ${CUSTODIA_API_KEY:?...}, ${RABBITMQ_USER:?...} e ${RABBITMQ_PASSWORD:?...} (sem
-      # default em produção, de propósito). Este bloco env: é a ÚNICA fonte das
+      # ${CUSTODIA_API_KEY:?...}, ${RABBITMQ_USER:?...}, ${RABBITMQ_PASSWORD:?...},
+      # ${CUSTODIA_HUB_BASE_URL:?...} e ${CUSTODIA_HUB_API_KEY:?...} (sem default em
+      # produção, de propósito). Este bloco env: é a ÚNICA fonte das
       # obrigatórias aqui — o runner não tem `.env` (não é versionado);
       # sem estas dummies o `config -q` do docker-compose.prod.yml abaixo falha e o job
       # `test` reprova (mesma armadilha documentada no molde
@@ -63,15 +64,17 @@ jobs:
       # nem a menos. Uma a menos e o `config -q` reprova; uma a mais e ninguém percebe que
       # sobrou, até alguém concluir do CI que o serviço depende de algo que ele não usa.
       # F4: o consumidor de eventos existe agora, e `RabbitMq__User`/`RabbitMq__Password`
-      # entraram nos composes com `:?` — as dummies entram junto. `Hub__*` continua fora:
-      # não está nos composes desta fase (ver o bloco "VARIAVEIS QUE AINDA NAO ESTAO AQUI"
-      # no docker-compose.prod.yml).
+      # entraram nos composes com `:?` — as dummies entram junto.
+      # F6: bootstrap REST da projeção de preços — `Hub__BaseUrl`/`Hub__ApiKey` entraram
+      # nos dois composes com `:?` — as dummies entram junto.
       - name: Compose config gate (sintaxe + tags existem no registry)
         env:
           CUSTODIA_APP_PASSWORD: dummy
           CUSTODIA_API_KEY: dummy
           RABBITMQ_USER: dummy
           RABBITMQ_PASSWORD: dummy
+          CUSTODIA_HUB_BASE_URL: http://hub-precos-app:8080/
+          CUSTODIA_HUB_API_KEY: dummy
         run: |
           set -e
           docker compose -f docker-compose.yml config -q
@@ -122,7 +125,10 @@ jobs:
           # pelo script de deploy entra em DUAS"). Quando o consumidor de eventos
           # existir e RabbitMq__User/Password entrarem nos composes com `:?`, ESSAS
           # (mesmo nome, papel diferente) passam a exigir as cinco.
-          envs: CUSTODIA_APP_PASSWORD,CUSTODIA_API_KEY,RABBITMQ_USER,RABBITMQ_PASSWORD
+          # F6: CUSTODIA_HUB_BASE_URL/CUSTODIA_HUB_API_KEY — bootstrap REST da projecao
+          # de precos (Hub__BaseUrl/Hub__ApiKey, com `:?` nos dois composes) — exigem as
+          # cinco listas do PADROES §10.33 desde já.
+          envs: CUSTODIA_APP_PASSWORD,CUSTODIA_API_KEY,RABBITMQ_USER,RABBITMQ_PASSWORD,CUSTODIA_HUB_BASE_URL,CUSTODIA_HUB_API_KEY
           script: |
             set -e
             REPO_DIR=/opt/custodia
@@ -197,24 +203,35 @@ jobs:
               exit 1
             fi
 
-            # SECRETS QUE AINDA NAO SAO VALIDADOS AQUI: Hub__*. Nao esta nos composes desta
-            # fase, entao nao entra no .env — e validar secret que ninguem consome so cria
-            # motivo de reprovar deploy sem causa. Ao acrescenta-lo, normalize na ORIGEM com
-            # `tr -d '\r\n'` (§10.4), como as demais, E lembre de incluir nas CINCO listas
-            # (PADROES §10.33): os dois composes, o `envs:` do ssh-action, o `env:` do MESMO
-            # step (de onde vem o valor — esquecer esta encaminha uma variavel INEXISTENTE,
-            # que chega aqui como string vazia e o `-z` abaixo acusaria "secret vazio" com o
-            # secret certo cadastrado no GitHub), o printf do .env abaixo, e as dummies do
-            # config gate.
+            # F6: Hub__BaseUrl/Hub__ApiKey — normalizadas na ORIGEM (PADROES §10.4), como as
+            # demais. Sem elas o container sobe e o HubConfigGuard derruba o boot em
+            # Production (src/Custodia.API/Extensions/HubConfigGuard.cs).
+            CUSTODIA_HUB_BASE_URL="$(printf '%s' "$CUSTODIA_HUB_BASE_URL" | tr -d '\r\n')"
+            if [ -z "$CUSTODIA_HUB_BASE_URL" ]; then
+              echo "ERRO: secret CUSTODIA_HUB_BASE_URL vazio (ou só com quebras de linha). É a URL do"
+              echo "      Hub de Preços usada pelo bootstrap REST da projeção (GET"
+              echo "      {Hub__BaseUrl}/v1/prices/asof); sem ela o HubConfigGuard derruba o boot em"
+              echo "      ambiente Production."
+              exit 1
+            fi
+
+            CUSTODIA_HUB_API_KEY="$(printf '%s' "$CUSTODIA_HUB_API_KEY" | tr -d '\r\n')"
+            if [ -z "$CUSTODIA_HUB_API_KEY" ]; then
+              echo "ERRO: secret CUSTODIA_HUB_API_KEY vazio (ou só com quebras de linha). É a chave"
+              echo "      que o custodia ENVIA ao Hub (direção oposta de CUSTODIA_API_KEY); sem ela o"
+              echo "      HubConfigGuard derruba o boot em ambiente Production."
+              exit 1
+            fi
 
             # ATENÇÃO: este .env é reescrito POR COMPLETO a cada deploy — não é um merge com
             # o que já existe na VPS. Qualquer variável obrigatória (${VAR:?...} no compose)
             # que não entrar neste MESMO printf derruba o serviço no próximo "up", mesmo que
             # a variável já tivesse valor num .env anterior. Já houve incidente neste
             # ecossistema com um script sobrescrevendo o .env com só parte das variáveis e
-            # reportando sucesso — as obrigatórias têm que estar juntas aqui.
-            printf 'CUSTODIA_APP_PASSWORD=%s\nCUSTODIA_API_KEY=%s\nRABBITMQ_USER=%s\nRABBITMQ_PASSWORD=%s\n' \
-              "$CUSTODIA_APP_PASSWORD" "$CUSTODIA_API_KEY" "$RABBITMQ_USER" "$RABBITMQ_PASSWORD" > .env
+            # reportando sucesso — as obrigatórias têm que estar juntas aqui, Hub__*
+            # incluído (F6).
+            printf 'CUSTODIA_APP_PASSWORD=%s\nCUSTODIA_API_KEY=%s\nRABBITMQ_USER=%s\nRABBITMQ_PASSWORD=%s\nCUSTODIA_HUB_BASE_URL=%s\nCUSTODIA_HUB_API_KEY=%s\n' \
+              "$CUSTODIA_APP_PASSWORD" "$CUSTODIA_API_KEY" "$RABBITMQ_USER" "$RABBITMQ_PASSWORD" "$CUSTODIA_HUB_BASE_URL" "$CUSTODIA_HUB_API_KEY" > .env
             chmod 600 .env
 
             echo "== provisionamento do banco =="
@@ -227,6 +244,7 @@ jobs:
             outros=$(docker ps --format '{{.Names}}' | grep -vx -e custodia-app || true)
             servicos=$(CUSTODIA_APP_PASSWORD=dummy CUSTODIA_API_KEY=dummy \
               RABBITMQ_USER=dummy RABBITMQ_PASSWORD=dummy \
+              CUSTODIA_HUB_BASE_URL=dummy CUSTODIA_HUB_API_KEY=dummy \
               docker compose -f docker-compose.prod.yml config --services)
             for rede in tesouro-net plataforma; do
               if ! docker network inspect "$rede" >/dev/null 2>&1; then
@@ -422,6 +440,8 @@ jobs:
           CUSTODIA_API_KEY: ${{ secrets.CUSTODIA_API_KEY }}
           RABBITMQ_USER: ${{ secrets.RABBITMQ_USER }}
           RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          CUSTODIA_HUB_BASE_URL: ${{ secrets.CUSTODIA_HUB_BASE_URL }}
+          CUSTODIA_HUB_API_KEY: ${{ secrets.CUSTODIA_HUB_API_KEY }}
 
   guarda-deploy:
     # PADROES §10.17: o `deploy` depende do `test`; um teste instável pula o deploy em

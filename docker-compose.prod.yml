@@ -18,25 +18,18 @@ services:
       - RabbitMq__Host=plataforma-rabbitmq
       - RabbitMq__User=${RABBITMQ_USER:?RABBITMQ_USER e obrigatorio (usuario do broker plataforma-rabbitmq, provisionado pelo hub-precos)}
       - RabbitMq__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD e obrigatorio (senha do broker plataforma-rabbitmq)}
-
-    # VARIAVEIS QUE AINDA NAO ESTAO AQUI, E POR QUE.
-    # O precedente deste ecossistema (ver o F4 do operacoes) e acrescentar a credencial
-    # obrigatoria NA FASE QUE A TORNA REAL, nunca antes: variavel com `:?` que o codigo
-    # ainda nao le derruba o deploy sem motivo, e o operador perde tempo procurando
-    # defeito onde so ha antecipacao.
-    #
-    #   Hub__{BaseUrl,ApiKey}           -> entra quando o bootstrap REST da projecao de
-    #                                      precos existir (§7.1) e o `asof` do worker de
-    #                                      recalculo (§7.4). NAO cobre resolucao nome->id
-    #                                      do onboarding (§7.2): essa acontece em
-    #                                      Operacoes, na borda (ADR-10/ADR-11) — a
-    #                                      Custodia so recebe instrumento_id ja
-    #                                      resolvido, cru, no evento trades.registered.
-    #
-    # Ao acrescentar qualquer uma, siga a guarda de boot do PADROES §6: fora dos
-    # ambientes isentos, segredo ausente DERRUBA O BOOT — nunca significa "sem
-    # verificacao" — e a guarda de API key checa comprimento minimo e placeholder, nao
-    # so vazio, tanto para a chave que este servico EXIGE quanto para a que ele ENVIA.
+      # F6: quem preenche preco_atual e historico_precos (ARQUITETURA §7.1) via
+      # GET {Hub__BaseUrl}/v1/prices/asof e o verbo `--bootstrap-precos` e a
+      # conciliacao ciclica — nao este servico web sozinho; o `asof` tambem alimenta o
+      # worker de recalculo do F7. NAO cobre resolucao
+      # nome->id do onboarding (§7.2): essa acontece em Operacoes, na borda
+      # (ADR-10/ADR-11) — a Custodia so recebe instrumento_id ja resolvido, cru, no
+      # evento trades.registered; a Custodia nao tem endpoint de escrita (ADR-10), entao
+      # nao ha "validar instrumento" aqui. Sem default, de proposito: fora dos ambientes
+      # isentos, HubConfigGuard (PADROES §6) derruba o boot se estiver ausente — e checa
+      # comprimento minimo e placeholder na chave, nao so vazio.
+      - Hub__BaseUrl=${CUSTODIA_HUB_BASE_URL:?CUSTODIA_HUB_BASE_URL e obrigatorio (URL do Hub de Precos)}
+      - Hub__ApiKey=${CUSTODIA_HUB_API_KEY:?CUSTODIA_HUB_API_KEY e obrigatorio (chave que o custodia envia ao Hub)}
 
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]

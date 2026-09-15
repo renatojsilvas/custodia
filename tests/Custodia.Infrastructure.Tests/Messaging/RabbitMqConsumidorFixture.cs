@@ -4,7 +4,9 @@ using Custodia.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using RabbitMQ.Client;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
@@ -15,6 +17,7 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
     private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder("rabbitmq:4-management-alpine").Build();
+    private NpgsqlDataSource _dataSourceCompartilhado = null!;
 
     public string ConnectionStringPostgres { get; private set; } = string.Empty;
 
@@ -31,6 +34,7 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
         await Task.WhenAll(_postgres.StartAsync(), _rabbitMq.StartAsync());
 
         ConnectionStringPostgres = _postgres.GetConnectionString();
+        _dataSourceCompartilhado = NpgsqlDataSource.Create(ConnectionStringPostgres);
 
         var uri = new Uri(_rabbitMq.GetConnectionString());
         var credenciais = uri.UserInfo.Split(':', 2);
@@ -49,6 +53,7 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        await _dataSourceCompartilhado.DisposeAsync();
         await _postgres.DisposeAsync();
         await _rabbitMq.DisposeAsync();
     }
@@ -94,6 +99,7 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
         });
         servicos.AddApplication();
         servicos.AddInfrastructure(configuration);
+        servicos.Replace(ServiceDescriptor.Singleton(_dataSourceCompartilhado));
         configurarServicosExtras?.Invoke(servicos);
         return servicos.BuildServiceProvider();
     }
@@ -114,7 +120,8 @@ public sealed class RabbitMqConsumidorFixture : IAsyncLifetime
     public async Task LimparEstadoAsync()
     {
         await using var db = CriarDbContext();
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE movimentos, posicao_corrente RESTART IDENTITY;");
+        await db.Database.ExecuteSqlRawAsync(
+            "TRUNCATE TABLE movimentos, posicao_corrente, preco_atual, historico_precos RESTART IDENTITY;");
 
         await using var conexao = await CriarConexaoAmqpAsync();
         await using var canal = await conexao.CreateChannelAsync();

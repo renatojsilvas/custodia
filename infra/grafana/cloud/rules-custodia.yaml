@@ -704,7 +704,7 @@ groups:
           severity: warning
           service: custodia
         isPaused: false
-      - uid: custodia-guarda-f5-a-liquidar-vencida-sem-liquidacao
+      - uid: custodia-guarda-f5-a-liquidar-vencida
         title: Custodia — Guarda F5 3/4 — a_liquidar vencida sem liq:<fato>:brl (job de liquidação atrasado ou parado)
         condition: C
         data:
@@ -763,7 +763,7 @@ groups:
           severity: warning
           service: custodia
         isPaused: false
-      - uid: custodia-guarda-f5-tributo-divergente-do-rederivado
+      - uid: custodia-guarda-f5-tributo-divergente
         title: Custodia — Guarda F5 4/4 — tributo divergente do re-derivado pela fila FIFO
         condition: C
         data:
@@ -822,5 +822,280 @@ groups:
             recente na sequência canônica (data_evento, registrado_em, id).
         labels:
           severity: critical
+          service: custodia
+        isPaused: false
+      - uid: custodia-preco-instrumento-desconhecido
+        title: Custodia — F6 — instrumento do livro desconhecido no Hub de Preços
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __DS_PROM__
+            model:
+              expr: increase(custodia_preco_instrumento_desconhecido_total{job="custodia"}[15m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        dashboardUid: ""
+        panelId: 0
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: O bootstrap ou a conciliação de preços encontrou instrumento do livro que o Hub não conhece
+          description: >-
+            Métrica: custodia_preco_instrumento_desconhecido_total{instrumento_id=} (Counter, F6,
+            BusinessMetrics.RegistrarPrecoInstrumentoDesconhecido), incrementada por
+            ColetarPrecosDoHubCommandHandler sempre que um item do GET /v1/prices/asof volta com
+            motivo="instrumento_desconhecido" — caso DIFERENTE de "sem_preco_ate_a_data"
+            (PADROES §10.32: os dois nunca se fundem), porque aqui o Hub não conhece o
+            instrumento_id de jeito nenhum, não é "sem preço ainda". Nenhuma linha é gravada em
+            historico_precos nem em preco_atual para ele. Counter incrementado por EVENTO (uma
+            resposta do asof), não por poller contínuo — por isso ausência de dado
+            (noDataState=OK) é o estado normal antes do primeiro caso, igual
+            custodia-posicao-negativa-sinalizada. Causas prováveis: o instrumento entrou no
+            livro (via trades.registered, resolvido na borda por Operações — ADR-10) antes do
+            Hub publicar o catálogo dele, ou id gravado errado em algum dos dois lados (ADR-4:
+            a Custódia grava o instrumento_id do Hub CRU, sem de-para). Ao diagnosticar: busque
+            o LogError de RegistrarPrecoInstrumentoDesconhecido com o instrumento_id e confira
+            o catálogo do Hub (repo hub-precos) para esse id; não há comando administrativo
+            que corrija isto automaticamente, porque a Custódia não tem catálogo próprio contra
+            o qual comparar (ADR-4 proíbe a terceira identidade).
+        labels:
+          severity: warning
+          service: custodia
+        isPaused: false
+      - uid: custodia-preco-campo-posicao-ausente
+        title: Custodia — F6 — item do asof sem campoPosicao (defeito de classificação no Hub)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __DS_PROM__
+            model:
+              expr: increase(custodia_preco_campo_posicao_nao_informado_total{job="custodia"}[15m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        dashboardUid: ""
+        panelId: 0
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: O Hub devolveu campos de preço sem campoPosicao para um instrumento do livro
+          description: >-
+            Métrica: custodia_preco_campo_posicao_nao_informado_total{instrumento_id=} (Counter,
+            F6, BusinessMetrics.RegistrarPrecoCampoPosicaoNaoInformado), incrementada por
+            ColetarPrecosDoHubCommandHandler quando um item do asof vem com motivo nulo e
+            campos preenchidos, mas campoPosicao nulo — a §4.5 não marca esse caso com motivo
+            próprio, então é classificado aqui como defeito de classificação no Hub (classe do
+            instrumento não resolvida no catálogo dele). O histórico É gravado (todos os campos
+            presentes, cada um com o dataRef PRÓPRIO — nunca item.dataRef); preco_atual NUNCA é
+            tocado, porque não há como saber qual campo marca a posição. Counter por evento;
+            noDataState=OK antes do primeiro caso, mesma convenção de
+            custodia-preco-instrumento-desconhecido. NUNCA confundir com a métrica de
+            "instrumento posicionado sem preço" (custodia_preco_instrumento_posicionado_sem_preco_total)
+            — aquela é ausência de VALOR com classificação normal; esta é ausência da PRÓPRIA
+            classificação. Ao diagnosticar: busque o LogError com o instrumento_id e confira o
+            catálogo de classes do Hub (ClasseInstrumento) para esse id.
+        labels:
+          severity: warning
+          service: custodia
+        isPaused: false
+      - uid: custodia-preco-valor-divergente
+        title: Custodia — Valor divergente no histórico de preços (mesma chave natural, valor diferente)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __DS_PROM__
+            model:
+              expr: increase(custodia_preco_valor_divergente_total{job="custodia"}[15m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        dashboardUid: ""
+        panelId: 0
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: Chegou um PriceObserved (push, drenagem ou bootstrap) cuja chave natural já existia com outro valor
+          description: >-
+            Métrica: custodia_preco_valor_divergente_total{instrumento_id=,campo=} (Counter, F6,
+            BusinessMetrics.RegistrarValorDivergenteNoHistoricoDePrecos), incrementada sempre
+            que a chave natural (instrumento_id, data_ref, campo, fonte, revisao) já está
+            gravada em historico_precos com um VALOR DIFERENTE do recebido — violação do
+            contrato do Hub, que exige revisao+1 para qualquer mudança de valor. NADA é
+            sobrescrito em nenhuma das duas tabelas (nem historico_precos, nem preco_atual);
+            o desfecho é log crítico + esta métrica. Counter por evento; noDataState=OK antes
+            do primeiro caso, mesma convenção das demais métricas de F6. severity=critical
+            porque é violação de contrato do produtor, não apenas dado ausente. Ao
+            diagnosticar: busque o LogCritical de RegistrarValorDivergenteNoHistoricoDePrecos
+            com instrumento/campo/data/fonte/revisão e os dois valores (gravado x recebido);
+            o conserto é investigar do lado do Hub por que o mesmo (data, campo, fonte,
+            revisão) mudou de valor sem bump de revisão — a Custódia não tem comando
+            administrativo para "escolher um lado", de propósito.
+        labels:
+          severity: critical
+          service: custodia
+        isPaused: false
+      - uid: custodia-conciliacao-precos-falhando
+        title: Custodia — Conciliação cíclica de preços falhando
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            datasourceUid: __DS_PROM__
+            model:
+              expr: increase(custodia_conciliacao_precos_volta_total{job="custodia",desfecho="falha"}[30m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        dashboardUid: ""
+        panelId: 0
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: A conciliação cíclica de preços (ConciliacaoDePrecosJob) falhou em pelo menos uma volta recente
+          description: >-
+            Métrica: custodia_conciliacao_precos_volta_total{desfecho=} (Counter, F6,
+            BusinessMetrics.RegistrarConciliacaoDePrecosVolta), incrementada a cada volta do
+            hosted service ConciliacaoDePrecosJob (PeriodicTimer, default 900s, configurável
+            por Decisao:ConciliacaoDePrecosCicloIntervaloSegundos), rotulado por desfecho
+            (completude|falha). O job chama ColetarPrecosDoHubCommand no escopo
+            SemPrecoAtualSoHoje — instrumentos do livro (fora de caixa:) sem linha em
+            preco_atual, pedindo asof(hoje) só para eles — e é ELE quem cria preco_atual para
+            um instrumento que entrou no livro depois do último bootstrap. Falha aqui (Hub
+            fora do ar, coleta incompleta, resposta inválida) significa que esse buraco fica
+            aberto: o LogError do próprio job traz o code/mensagem do erro. Janela de 30m
+            (2 ciclos no intervalo padrão) para não disparar por uma falha isolada de rede;
+            noDataState=OK porque o Counter só nasce depois da primeira volta (mesma convenção
+            das métricas de evento desta fase). Ao diagnosticar: confira Hub__BaseUrl/Hub__ApiKey
+            (HubConfigGuard) e a saúde do Hub de Preços antes de suspeitar de bug local.
+        labels:
+          severity: critical
+          service: custodia
+        isPaused: false
+      - uid: custodia-preco-livro-sem-preco-atual
+        title: Custodia — Instrumentos do livro sem preco_atual por tempo prolongado
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __DS_PROM__
+            model:
+              expr: custodia_conciliacao_precos_sem_preco_atual{job="custodia"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        dashboardUid: ""
+        panelId: 0
+        noDataState: OK
+        execErrState: Alerting
+        for: 1h
+        annotations:
+          summary: Instrumento(s) do livro seguem sem preco_atual depois de várias voltas da conciliação
+          description: >-
+            Métrica: custodia_conciliacao_precos_sem_preco_atual (Gauge, F6, BusinessMetrics.
+            RegistrarConciliacaoDePrecosSemPrecoAtual), medida a cada volta do
+            ConciliacaoDePrecosJob com o MESMO tamanho do escopo SemPrecoAtualSoHoje que o job
+            acabou de coletar (ResultadoColetaDePrecos.Instrumentos) — é a mesma métrica que
+            mantém viva a família "posicionado sem preço" em regime, quando não há push nem
+            bootstrap recentes. Publicada em TODO ciclo, inclusive com valor zero — ausência de
+            dado (noDataState=OK) aqui não significa app fora do ar (isso é
+            custodia-app-down), e sim que o job nunca rodou nesta série. for=1h (≈4 ciclos no
+            intervalo padrão de 900s) de propósito: um instrumento novo no livro fica
+            transitoriamente sem preco_atual até a próxima volta, e isso é o comportamento
+            ESPERADO (Pronto (i) do F6) — só vira sinal quando persiste por várias voltas
+            seguidas, o que indica Hub fora do ar, instrumento desconhecido no Hub (ver
+            custodia-preco-instrumento-desconhecido) ou item chegando sempre com
+            motivo="sem_preco_ate_a_data". Ao diagnosticar: cruze com
+            custodia-conciliacao-precos-falhando e com o LogWarning de
+            RegistrarConciliacaoDePrecosSemPrecoAtual para decidir qual das três causas é.
+        labels:
+          severity: warning
           service: custodia
         isPaused: false

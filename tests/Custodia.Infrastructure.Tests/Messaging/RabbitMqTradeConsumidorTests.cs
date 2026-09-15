@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 using Custodia.Application.Eventos;
+using Custodia.Application.Movimentos;
 using Custodia.Domain.Common;
 using Custodia.Domain.Eventos;
 using Custodia.Domain.Movimentos;
@@ -817,7 +818,10 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
         await PublicarAsync(canalPublicador, "trades.registered", TradePayloadBuilder.Aplicacao(
             tradeQueEstoura, clienteId, instrumentoId, 1m, 5000000000000.00m, dataEvento, registradoEm));
 
-        var (provider, consumidor, _) = CriarConsumidor();
+        var espia = new EspiaDeResultadoBehavior();
+        var (provider, consumidor, _) = CriarConsumidor(
+            configurarServicosExtras: services => services.AddSingleton<
+                IPipelineBehavior<ProcessarTradeRegisteredCommand, Result<ResultadoTradeRegistered>>>(espia));
         await using var _ = provider;
         await consumidor.StartAsync(CancellationToken.None);
         try
@@ -842,6 +846,16 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
         {
             await consumidor.StopAsync(CancellationToken.None);
         }
+
+        Assert.Null(
+            espia.UltimaExcecao);
+        Assert.NotNull(espia.UltimoResultado);
+        Assert.True(
+            espia.UltimoResultado!.IsFailure,
+            "o pipeline tem que ter devolvido um Result.Failure normalmente — nenhuma exceção pode ter " +
+            "interrompido o handler antes disso; senão o motivo estacionado seria falha_inesperada_no_processamento " +
+            "por uma causa qualquer, não pela específica que este teste alega.");
+        Assert.Equal(MovimentoWriteErrors.ValorNumericoExcedeMagnitudeOuEscalaSuportada, espia.UltimoResultado.Error);
 
         Assert.False(
             await ExisteMovimentoAsync(tradeQueEstoura),
@@ -874,7 +888,7 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
         try
         {
             var duasNegativasDeParking = await EsperarAsync(
-                () => Task.FromResult(publicador.Chamadas.Count(c => c.Exchange == RabbitMqTopologia.ExchangeParking) >= 2),
+                () => Task.FromResult(publicador.NegacoesDeConfirm.Count(c => c.Exchange == RabbitMqTopologia.ExchangeParking) >= 2),
                 TimeoutCurto);
 
             Assert.True(
@@ -898,6 +912,11 @@ public sealed class RabbitMqTradeConsumidorTests(RabbitMqConsumidorFixture fixtu
             antesTransitorio == depoisTransitorio,
             "o confirm negado ao estacionar NUNCA pode ser contabilizado como nack_requeue_transitorio — a " +
             "métrica mentiria sobre a causa.");
+        Assert.True(
+            publicador.NegacoesDeConfirm.Count(c => c.Exchange == RabbitMqTopologia.ExchangeParking) >= 2,
+            "o desfecho observado tem que vir do publicador falso registrando a confirmação NEGADA em " +
+            "custodia.parking pelo menos duas vezes — qualquer outra origem de falha (uma exceção não relacionada " +
+            "ao publisher confirm, por exemplo) não pode satisfazer esta prova.");
 
         Assert.DoesNotContain(MotivoParking.TipoNaoTratadoPrices.Name, await LerMotivosDaFilaParkedAsync());
     }
