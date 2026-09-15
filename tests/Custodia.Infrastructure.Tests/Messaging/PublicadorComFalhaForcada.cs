@@ -13,6 +13,7 @@ internal sealed class PublicadorComFalhaForcada(
     private readonly Func<string, int, Exception?> _lancarExcecaoAoPublicar = lancarExcecaoAoPublicar ?? ((_, _) => null);
     private readonly Dictionary<string, int> _tentativasPorExchange = [];
     private readonly List<(string Exchange, string RoutingKey, int Tentativa, Dictionary<string, object?> Cabecalhos)> _chamadas = [];
+    private readonly List<(string Exchange, string RoutingKey, int Tentativa)> _negacoesDeConfirm = [];
     private readonly object _cadeado = new();
 
     public IReadOnlyList<(string Exchange, string RoutingKey, int Tentativa, Dictionary<string, object?> Cabecalhos)> Chamadas
@@ -22,6 +23,17 @@ internal sealed class PublicadorComFalhaForcada(
             lock (_cadeado)
             {
                 return _chamadas.ToList();
+            }
+        }
+    }
+
+    public IReadOnlyList<(string Exchange, string RoutingKey, int Tentativa)> NegacoesDeConfirm
+    {
+        get
+        {
+            lock (_cadeado)
+            {
+                return _negacoesDeConfirm.ToList();
             }
         }
     }
@@ -46,6 +58,11 @@ internal sealed class PublicadorComFalhaForcada(
         if (_confirmar(exchange, tentativa))
         {
             return await interno.PublicarAsync(exchange, routingKey, cabecalhos, corpo, ct);
+        }
+
+        lock (_cadeado)
+        {
+            _negacoesDeConfirm.Add((exchange, routingKey, tentativa));
         }
 
         if (_entregaMesmoComConfirmNegado(exchange, tentativa))

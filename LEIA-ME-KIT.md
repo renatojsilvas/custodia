@@ -1578,3 +1578,100 @@ fluxo nunca esteve em questão, e ele pertence ao vocabulário de domínio, não
 *E o custo de detectar foi baixo só por sorte de linguagem:* num rename de símbolo C# o compilador
 acusa. A mesma extrapolação num valor de string — nome de métrica, motivo de parking, chave de
 configuração — não acusa nada, e a mensagem que ninguém mais encontra só aparece fases depois.
+
+---
+
+## O publicador de alertas disse "conexão caída", e era um 400 de validação
+
+No F6 da `custodia` (2026-09-14) o `scripts/grafana-cloud/apply-cloud.sh` do `tesouro-direto-api` saiu
+**duas vezes** com `exit 56` — no `curl`, "falha ao receber dados" —, sempre no PUT do grupo
+`custodia-alertas`, depois de publicar TD, Hub e Operações. O grupo tinha acabado de dobrar de tamanho, e
+a leitura óbvia era rede ou payload grande demais. As duas estavam erradas.
+
+Repetindo **a mesma chamada** fora do script, com `curl -sS -o <arquivo> -w '%{http_code}'`, a resposta
+real apareceu na primeira tentativa: **HTTP 400 `UID is longer than 40 symbols`**. Cinco uids passavam do
+teto. O publicador chama `curl -sf`: o `-f` descarta o corpo de toda resposta ≥ 400, e sobre HTTP/2 o
+erro saiu como 56 em vez do 22 que o manual promete.
+
+**Duas regras:**
+
+1. **O uid de regra do Grafana tem teto de 40 caracteres.** Conte antes de publicar
+   (`yq -r '.groups[].rules[].uid' rules-<repo>.yaml | awk '{print length}' | sort -n | tail -1`), e
+   liste **todos** os que estouram: o Grafana só reporta o primeiro, e corrigir um por vez custa uma
+   publicação por uid.
+2. **Diagnóstico de chamada HTTP de script nunca se faz pelo código de saída do `curl`.** É a seção
+   "`curl -s` transforma falha de conexão em saída vazia" na direção oposta: lá o silêncio escondia a
+   falha de conexão, aqui o `-f` fantasiou um erro de validação *como* falha de conexão. Refaça a chamada
+   mostrando código e corpo, e só então escolha a hipótese.
+
+*E a publicação continuou pela branch do `tesouro-direto-api`, não pela `main`:* push na `main` de lá
+dispara o deploy do TD. Isso deixa a nuvem **à frente** da `main` até o merge — e o `apply-cloud.sh`
+rodado da `main` nesse intervalo faz PUT do grupo antigo e **apaga em silêncio** as regras novas. Diga
+isso no topo do PR, onde quem mergeia vai ler.
+
+---
+
+## Segredo por pipe: o lado direito grava mesmo com o lado esquerdo quebrado
+
+Mesmo F6. Para a chave nunca passar pela conversa, ela ia da VPS direto ao cofre do GitHub:
+`ssh <vps> "grep ... | cut ..." | gh secret set NOME`. O comando remoto quebrou numa aspa aninhada
+(`unexpected EOF`), o `ssh` não imprimiu nada — e o `gh secret set` **gravou assim mesmo**, com o valor
+vazio. `set -o pipefail` só muda o código de saída do pipeline: não impede o lado direito de consumir a
+entrada vazia e escrever. O que denunciou foi o horário de atualização em `gh secret list`, que avançou
+quando nada devia ter sido gravado.
+
+**Regra:** segredo mandado por pipe se prova pelo que o **consumidor recebeu**, porque o cofre não
+devolve o valor para conferir depois. Gere o valor num script em heredoc (sem aspa aninhada), recuse
+dentro dele se o valor não tem a forma esperada, e conte os bytes **no meio** do pipe:
+`... | tee >(wc -c >&2) | gh secret set NOME`. O número tem de bater com o comprimento conhecido.
+E prove que a credencial **funciona** antes de cadastrar — aqui, `200` no endpoint real do Hub pela rede
+`plataforma` com a chave, `401` com uma chave errada.
+
+---
+
+## Três causas atribuídas sem reprodução, e a quarta era a certa
+
+No F6 da `custodia` (2026-09-13 a 2026-09-15) dois testes de trade passaram a falhar por timeout na suíte
+completa de `Custodia.Infrastructure.Tests`, verdes quando rodados isolados. Antes da causa real, a fase
+**aceitou três**:
+
+1. "contenção de recursos" — do executor, com uma observação e sem reprodução;
+2. "paralelismo entre coleções" — do revisor, com medição honesta (verde antes da fase, vermelho depois,
+   coleção isolada verde), mas cuja conclusão não foi testada **pela negação**: desligar o paralelismo
+   não resolveu;
+3. "memória desta máquina" — derrubada quando o **CI do GitHub**, num runner limpo, reproduziu as
+   mesmas duas falhas.
+
+A causa real era o limite de 20 providers internos do EF Core (ver a `PADROES` §10), e o que a separou
+foi **bisseção pelo conjunto de testes** mais **contagem da exceção nos logs** de cada corrida: zero
+nas verdes curtas, duas ou três nas vermelhas, sempre imediatamente antes da falha. E ela trazia um
+agravante que nenhuma das três hipóteses teria mostrado: em corridas **verdes** a exceção acontecia
+uma vez **dentro de um teste que passava** — dois testes esperavam um caminho de falha, e uma exceção
+de infraestrutura qualquer satisfazia a asserção.
+
+**Regras:**
+
+- **Correlação não é causa até resistir à negação.** Se a hipótese é X, a correção de X tem de fazer o
+  sintoma sumir. Se não sumiu, a hipótese morreu — não "ajudou em parte".
+- **Um segundo ambiente é o teste mais barato contra "é a minha máquina".** O CI já roda a suíte;
+  abrir o PR como rascunho custou um push e separou ambiente de defeito em minutos.
+- **Falha rápida não é contenção.** Contenção dá timeout; `IsSuccess == false` em 78 ms é lógica ou
+  estado.
+- **Ao achar a causa de uma falha intermitente, procure onde ela acontece SEM falhar.** É lá que mora o
+  teste vácuo.
+
+**E o erro de processo do mesmo episódio:** três agentes de investigação travaram pelo watchdog (600 s
+sem progresso) esperando `dotnet test` em primeiro plano, mudo. O terceiro travou só ao escrever o
+relatório, com o transcript grande demais. O que salvou a investigação foram os **logs que eles tinham
+deixado no scratchpad**, lidos pelo condutor. **Regra de despacho:** toda corrida de suíte vai com
+saída para arquivo e resumo por `grep` — e o prompt diz isso, porque o agente não descobre sozinho que
+esperar calado mata a sessão.
+
+**E o teto de tempo tem uma armadilha de plataforma que eu mesmo pisei:** escrevi `timeout 900 dotnet
+test ...` nos prompts, e **o macOS não tem `timeout`** (é do coreutils do GNU; aqui existe só se alguém
+instalou, como `gtimeout`). O shell responde `command not found`, o `dotnet test` **nunca roda**, e o
+resumo por `grep` sai **vazio** — `More than twenty` = 0, `[FAIL]` = 0 —, que é indistinguível de
+"passou tudo". É a §10.8 dentro da própria verificação: zero porque nada executou. **Regras:** teste o
+prefixo antes (`command -v gtimeout || command -v timeout`) e caia para nenhum teto quando a corrida
+já está em segundo plano; e **todo resumo de suíte imprime o `Total tests` e o código de saída** — se
+o total não aparecer, o resumo diz "NENHUM TESTE EXECUTOU", nunca silêncio.
